@@ -15,5 +15,15 @@ export default function QrPage() {
     );
   }
 
-  return <QrForm negozioId={Number(negozio)} />;
+  const negozioId = Number(negozio);
+
+  if (Number.isNaN(negozioId)) {
+    return (
+      <p style={{ padding: 20, fontWeight: 700 }}>
+        QR non valido: negozio non valido
+      </p>
+    );
+  }
+
+  return <QrForm negozioId={negozioId} />;
 }
