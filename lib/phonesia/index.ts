@@ -1,0 +1,2 @@
+export { registraPrivacyAccepted } from "./consensi";
+
