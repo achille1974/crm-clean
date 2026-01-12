@@ -3,7 +3,10 @@
 import { useState } from "react";
 import Image from "next/image";
 import { supabase } from "../../../lib/supabaseClient";
-import { registraPrivacyAccepted } from "../../../lib/phonesia";
+import {
+  registraPrivacyAccepted,
+  registraMarketingAccepted,
+} from "../../../lib/phonesia";
 
 import QrConsensi from "./QrConsensi";
 import QrSuccess from "./QrSuccess";
@@ -17,9 +20,20 @@ export default function QrForm({
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
 
+  // PASSO 1 — stato consensi
+  const [privacyAccepted, setPrivacyAccepted] = useState(false);
+  const [marketingAccepted, setMarketingAccepted] = useState(false);
+
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setLoading(true);
+
+    // PASSO 3 — BLOCCO HARD PRIVACY
+    if (!privacyAccepted) {
+      alert("Devi accettare la Privacy Policy per continuare.");
+      setLoading(false);
+      return;
+    }
 
     const form = e.currentTarget;
     const data = new FormData(form);
@@ -30,14 +44,14 @@ export default function QrForm({
     const { data: cliente, error: errCliente } = await supabase
       .from("phonesia_clienti")
       .insert({
-       nome: data.get("nome"),
-       cognome: data.get("cognome"),
-       telefono: data.get("telefono"),
-       email: data.get("email"),
-       codice_fiscale: data.get("codice_fiscale"),
-       qr_id: "phonesia_qr",
-       negozio_id: negozioId, // 👈 PROVENIENZA SALVATA
-    })
+        nome: data.get("nome"),
+        cognome: data.get("cognome"),
+        telefono: data.get("telefono"),
+        email: data.get("email"),
+        codice_fiscale: data.get("codice_fiscale"),
+        qr_id: "phonesia_qr",
+        negozio_id: negozioId,
+      })
       .select()
       .single();
 
@@ -64,6 +78,17 @@ export default function QrForm({
     }
 
     /* ===============================
+       2️⃣ BIS — EVENTO CONSENSO MARKETING (FACOLTATIVO)
+       =============================== */
+    if (marketingAccepted) {
+      await registraMarketingAccepted({
+        cliente_id: cliente.id,
+        qr_id: "phonesia_qr",
+        negozio_id: negozioId,
+      });
+    }
+
+    /* ===============================
        3️⃣ CHIAMATA API SERVER (WELCOME)
        =============================== */
     try {
@@ -77,7 +102,6 @@ export default function QrForm({
       });
     } catch (err) {
       console.error("Errore chiamata API welcome:", err);
-      // NON blocchiamo il flusso: cliente e consenso sono validi
     }
 
     setLoading(false);
@@ -90,7 +114,6 @@ export default function QrForm({
 
   return (
     <main style={{ maxWidth: 520, margin: "40px auto", padding: 24 }}>
-      {/* LOGO PHONESIA */}
       <div style={{ display: "flex", justifyContent: "center", marginBottom: 20 }}>
         <Image
           src="/phonesia/Logo_Phonesia-1.png"
@@ -118,15 +141,21 @@ export default function QrForm({
         />
         <input name="email" placeholder="Email (facoltativa)" />
 
-        <QrConsensi />
+        <QrConsensi
+          privacyAccepted={privacyAccepted}
+          onPrivacyChange={setPrivacyAccepted}
+          marketingAccepted={marketingAccepted}
+          onMarketingChange={setMarketingAccepted}
+        />
 
         <button
           type="submit"
-          disabled={loading}
+          disabled={loading || !privacyAccepted}
           style={{
             marginTop: 10,
             fontWeight: 900,
-            opacity: loading ? 0.6 : 1,
+            opacity: loading || !privacyAccepted ? 0.6 : 1,
+            cursor: loading || !privacyAccepted ? "not-allowed" : "pointer",
           }}
         >
           {loading ? "Invio..." : "Registrati"}

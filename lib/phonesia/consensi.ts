@@ -25,3 +25,25 @@ export async function registraPrivacyAccepted({
     welcome_message_link: "/phonesia/biglietto",
   });
 }
+
+/* ======================================================
+   PASSO 4.2 — EVENTO CONSENSO MARKETING (FACOLTATIVO)
+   ====================================================== */
+export async function registraMarketingAccepted({
+  cliente_id,
+  qr_id = "phonesia_qr",
+  negozio_id = null,
+}: {
+  cliente_id: number;
+  qr_id?: string;
+  negozio_id?: number | null;
+}) {
+  return supabase.from("phonesia_consensi").insert({
+    cliente_id,
+    tipo_evento: "marketing_accepted",
+    metodo: "qr",
+    qr_id,
+    negozio_id,
+    user_agent: navigator.userAgent,
+  });
+}

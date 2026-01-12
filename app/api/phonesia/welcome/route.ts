@@ -19,6 +19,23 @@ export async function POST(req: Request) {
       );
     }
 
+    /* ===============================
+       ✅ AGGIUNTA — VERIFICA PENDING
+       =============================== */
+    const { data: consenso, error: errCheck } = await supabase
+      .from("phonesia_consensi")
+      .select("id, welcome_message_pending")
+      .eq("cliente_id", cliente_id)
+      .eq("welcome_message_type", "welcome")
+      .eq("welcome_message_pending", true)
+      .limit(1)
+      .single();
+
+    if (errCheck || !consenso) {
+      // welcome già inviato o non previsto
+      return NextResponse.json({ ok: true });
+    }
+
     const bigliettoLink = "http://localhost:3000/phonesia/biglietto";
 
     const message = `Ciao 👋
@@ -38,19 +55,25 @@ quando hai bisogno: risponde sempre una persona reale.
 A presto,
 PHONESIA`;
 
-    // INVIO WHATSAPP
+    // ===============================
+    // INVIO WHATSAPP (TWILIO)
+    // ===============================
     await client.messages.create({
       from: "whatsapp:+14155238886",
       to: `whatsapp:${telefono}`,
       body: message,
     });
 
-    // SEGNA COME INVIATO
+    /* ===============================
+       ✅ AGGIUNTA — SEGNA COME INVIATO
+       =============================== */
     await supabase
       .from("phonesia_consensi")
-      .update({ welcome_message_pending: false })
-      .eq("cliente_id", cliente_id)
-      .eq("welcome_message_type", "welcome");
+      .update({
+        welcome_message_pending: false,
+        welcome_message_sent_at: new Date().toISOString(),
+      })
+      .eq("id", consenso.id);
 
     return NextResponse.json({ ok: true });
   } catch (err) {
