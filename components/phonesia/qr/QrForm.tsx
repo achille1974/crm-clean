@@ -8,7 +8,12 @@ import { registraPrivacyAccepted } from "../../../lib/phonesia";
 import QrConsensi from "./QrConsensi";
 import QrSuccess from "./QrSuccess";
 
-export default function QrForm() {
+export default function QrForm({
+  negozioId,
+}: {
+  negozioId: number;
+}) {
+
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
 
