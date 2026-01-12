@@ -31,7 +31,7 @@ export default function AttivitaForm({ clienteId }: { clienteId: number }) {
     <form onSubmit={handleSubmit} className="space-y-2">
       <textarea
         className="w-full border rounded p-2 text-sm"
-        placeholder="Descrivi l’attività svolta (es. Preventivo assicurazione, cambio piano, assistenza…)”
+        placeholder="Descrivi l’attività svolta (es. Preventivo assicurazione, cambio piano, assistenza…)"
         value={descrizione}
         onChange={(e) => setDescrizione(e.target.value)}
         rows={3}
