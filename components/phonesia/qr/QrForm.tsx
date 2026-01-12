@@ -30,13 +30,14 @@ export default function QrForm({
     const { data: cliente, error: errCliente } = await supabase
       .from("phonesia_clienti")
       .insert({
-        nome: data.get("nome"),
-        cognome: data.get("cognome"),
-        telefono: data.get("telefono"),
-        email: data.get("email"),
-        codice_fiscale: data.get("codice_fiscale"),
-        qr_id: "phonesia_qr",
-      })
+       nome: data.get("nome"),
+       cognome: data.get("cognome"),
+       telefono: data.get("telefono"),
+       email: data.get("email"),
+       codice_fiscale: data.get("codice_fiscale"),
+       qr_id: "phonesia_qr",
+       negozio_id: negozioId, // 👈 PROVENIENZA SALVATA
+    })
       .select()
       .single();
 
