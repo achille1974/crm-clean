@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import SupremeHeader from "@/components/supreme/SupremeHeader";
 
 /* =========================
    OPZIONI
@@ -86,7 +87,15 @@ export default function DashboardSupreme() {
   if (loading) return <div className="p-6">Caricamento…</div>;
 
   return (
+  <>
+    <SupremeHeader />
+
     <div className="max-w-7xl mx-auto p-6 space-y-8">
+      ...
+    </div>
+  </>
+);
+
 
       {/* HEADER NUMERI */}
       <div className="flex justify-between items-center">
