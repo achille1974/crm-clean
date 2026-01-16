@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
-import SupremeHeader from "../../../components/supreme/SupremeHeader";
+import SupremeHeader from "../_components/SupremeHeader";
 
 /* =========================
    OPZIONI
