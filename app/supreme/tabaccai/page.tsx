@@ -7,6 +7,8 @@ import { supabase } from "@/lib/supabaseClient";
 type Tabaccaio = {
   id: number;
   ragione_sociale: string;
+  indirizzo?: string;
+  cap?: string;
   comune: string;
   prov: string;
   telefono?: string;
@@ -26,7 +28,18 @@ export default function ListaTabaccaiSupreme() {
       const { data } = await supabase
         .from("tabaccai_master")
         .select(
-          "id, ragione_sociale, comune, prov, telefono, cellulare, stato_supreme, stato_consenso"
+          `
+          id,
+          ragione_sociale,
+          indirizzo,
+          cap,
+          comune,
+          prov,
+          telefono,
+          cellulare,
+          stato_supreme,
+          stato_consenso
+        `
         )
         .order("ragione_sociale");
 
@@ -39,12 +52,20 @@ export default function ListaTabaccaiSupreme() {
 
   const filtered = list.filter((t) => {
     const q = query.toLowerCase();
-    return (
-      t.ragione_sociale?.toLowerCase().includes(q) ||
-      t.comune?.toLowerCase().includes(q) ||
-      t.telefono?.includes(q) ||
-      t.cellulare?.includes(q)
-    );
+
+    const searchString = `
+      ${t.ragione_sociale ?? ""}
+      ${t.indirizzo ?? ""}
+      ${t.cap ?? ""}
+      ${t.comune ?? ""}
+      ${t.prov ?? ""}
+      ${t.telefono ?? ""}
+      ${t.cellulare ?? ""}
+      ${t.stato_supreme ?? ""}
+      ${t.stato_consenso ?? ""}
+    `.toLowerCase();
+
+    return searchString.includes(q);
   });
 
   function labelStato(v?: string) {
@@ -104,7 +125,7 @@ export default function ListaTabaccaiSupreme() {
 
         <input
           className="border p-3 rounded w-full"
-          placeholder="Cerca per nome, comune, telefono…"
+          placeholder="Cerca qualsiasi dato (nome, indirizzo, CAP, telefono…)"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
@@ -121,8 +142,12 @@ export default function ListaTabaccaiSupreme() {
                 <div className="font-semibold text-lg">
                   {t.ragione_sociale}
                 </div>
+
                 <div className="text-sm text-gray-500">
-                  {t.comune} — {t.prov}
+                  {t.indirizzo && <div>{t.indirizzo}</div>}
+                  <div>
+                    {t.cap && `${t.cap} `}{t.comune} — {t.prov}
+                  </div>
                 </div>
 
                 <div className="flex gap-4 text-sm mt-2">
