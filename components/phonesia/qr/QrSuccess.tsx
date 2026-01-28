@@ -10,36 +10,17 @@ export default function QrSuccess() {
       </p>
 
       <p>
-        📲 Per ricevere il nostro messaggio di benvenuto su WhatsApp
-        con il biglietto da visita digitale,
-        <b> devi confermare aprendo WhatsApp</b>.
+        📲 Ti abbiamo appena inviato un messaggio di benvenuto su
+        <b> WhatsApp</b> con il tuo biglietto da visita digitale Phonesia.
       </p>
 
-      <p style={{ marginTop: 20 }}>
-        👉 <b>Clicca qui e scrivici OK su WhatsApp</b>
+      <p style={{ marginTop: 16 }}>
+        Apri WhatsApp e rispondi <b>OK</b> al messaggio ricevuto
+        per attivare il canale di comunicazione.
       </p>
-
-      <a
-        href="https://wa.me/393473214561?text=OK"
-        target="_blank"
-        rel="noopener noreferrer"
-        style={{
-          display: "inline-block",
-          marginTop: 12,
-          padding: "12px 18px",
-          backgroundColor: "#25D366",
-          color: "#fff",
-          fontWeight: 700,
-          borderRadius: 8,
-          textDecoration: "none",
-        }}
-      >
-        Apri WhatsApp
-      </a>
 
       <p style={{ marginTop: 24, fontSize: 14, opacity: 0.8 }}>
-        Dopo aver scritto <b>OK</b>, riceverai automaticamente
-        il messaggio di benvenuto da Phonesia.
+        Non serve cliccare nessun pulsante: il messaggio è già stato inviato.
       </p>
     </main>
   );
