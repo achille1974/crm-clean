@@ -20,16 +20,12 @@ export async function POST(req: Request) {
   console.log("🚀 WELCOME API CHIAMATA");
 
   try {
-    // ===============================
-    // 1️⃣ BODY
-    // ===============================
     const body = await req.json();
     console.log("📦 BODY:", body);
 
     const { cliente_id, telefono } = body;
 
     if (!cliente_id || !telefono) {
-      console.log("❌ Parametri mancanti");
       return NextResponse.json(
         { error: "Parametri mancanti" },
         { status: 400 }
@@ -37,7 +33,7 @@ export async function POST(req: Request) {
     }
 
     // ===============================
-    // 2️⃣ CHECK: già inviato?
+    // CHECK: welcome già inviato
     // ===============================
     const { data: cliente, error } = await supabase
       .from("phonesia_clienti")
@@ -45,29 +41,24 @@ export async function POST(req: Request) {
       .eq("id", cliente_id)
       .single();
 
-    if (error) {
-      console.error("❌ Errore DB:", error);
-      return NextResponse.json({ ok: true });
-    }
-
-    if (cliente?.welcome_sent_at) {
-      console.log("⛔ Welcome già inviato");
+    if (error || cliente?.welcome_sent_at) {
       return NextResponse.json({ ok: true });
     }
 
     // ===============================
-    // 3️⃣ INVIO WHATSAPP TEMPLATE
+    // INVIO TEMPLATE WHATSAPP (FORMA CORRETTA)
     // ===============================
     console.log("📨 Invio WhatsApp a:", telefono);
 
     await client.messages.create({
-      from: "whatsapp:+18303568731", // ✅ WhatsApp Sender Twilio approvato
+      from: "whatsapp:+18303568731",
       to: `whatsapp:${telefono}`,
-      contentSid: process.env.TWILIO_WHATSAPP_TEMPLATE_SID!, // HX35b40b8b80f57c34676f5a5962f9cc64
+      contentSid: process.env.TWILIO_WHATSAPP_TEMPLATE_SID!, // HX...
+      contentVariables: "{}", // ⚠️ SEMPRE OBBLIGATORIO
     });
 
     // ===============================
-    // 4️⃣ LOG DB
+    // LOG DB
     // ===============================
     await supabase
       .from("phonesia_clienti")
