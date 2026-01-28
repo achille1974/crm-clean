@@ -1,5 +1,4 @@
-// ⚠️ FONDAMENTALE: forziamo il runtime Node.js
-// (Twilio NON funziona in Edge Runtime)
+// ⚠️ FONDAMENTALE: Twilio funziona SOLO in Node.js
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
@@ -22,7 +21,7 @@ export async function POST(req: Request) {
 
   try {
     // ===============================
-    // LETTURA BODY
+    // 1️⃣ BODY
     // ===============================
     const body = await req.json();
     console.log("📦 BODY:", body);
@@ -38,38 +37,37 @@ export async function POST(req: Request) {
     }
 
     // ===============================
-    // 1️⃣ VERIFICA: WELCOME GIÀ INVIATO?
+    // 2️⃣ CHECK: già inviato?
     // ===============================
-    const { data: cliente, error: errCliente } = await supabase
+    const { data: cliente, error } = await supabase
       .from("phonesia_clienti")
       .select("welcome_sent_at")
       .eq("id", cliente_id)
       .single();
 
-    if (errCliente) {
-      console.error("❌ Errore lettura cliente:", errCliente);
+    if (error) {
+      console.error("❌ Errore DB:", error);
       return NextResponse.json({ ok: true });
     }
 
     if (cliente?.welcome_sent_at) {
-      console.log("⛔ Welcome già inviato, stop");
+      console.log("⛔ Welcome già inviato");
       return NextResponse.json({ ok: true });
     }
 
     // ===============================
-    // 2️⃣ INVIO WHATSAPP (TWILIO) ✅
+    // 3️⃣ INVIO WHATSAPP TEMPLATE
     // ===============================
     console.log("📨 Invio WhatsApp a:", telefono);
 
     await client.messages.create({
-      from: "whatsapp:+18303568731", // NUMERO WHATSAPP TWILIO APPROVATO
+      from: "whatsapp:+18303568731", // ✅ WhatsApp Sender Twilio approvato
       to: `whatsapp:${telefono}`,
-      contentSid: process.env.TWILIO_WHATSAPP_TEMPLATE_SID!,
-      contentVariables: "{}", // ⚠️ STRINGA JSON OBBLIGATORIA (non oggetto)
+      contentSid: process.env.TWILIO_WHATSAPP_TEMPLATE_SID!, // HX35b40b8b80f57c34676f5a5962f9cc64
     });
 
     // ===============================
-    // 3️⃣ LOG INVIO (UNA SOLA VOLTA)
+    // 4️⃣ LOG DB
     // ===============================
     await supabase
       .from("phonesia_clienti")
@@ -80,14 +78,13 @@ export async function POST(req: Request) {
       })
       .eq("id", cliente_id);
 
-    console.log("✅ Welcome inviato e loggato");
+    console.log("✅ Welcome inviato correttamente");
 
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error("🔥 ERRORE INVIO WELCOME:", err);
-
     return NextResponse.json(
-      { error: "Errore invio messaggio" },
+      { error: "Errore invio welcome" },
       { status: 500 }
     );
   }
