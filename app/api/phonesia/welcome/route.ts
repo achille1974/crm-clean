@@ -56,12 +56,12 @@ export async function POST(req: Request) {
     }
 
     // ===============================
-    // 2️⃣ INVIO WHATSAPP (TWILIO)
+    // 2️⃣ INVIO WHATSAPP (TWILIO) ✅
     // ===============================
     console.log("📨 Invio WhatsApp a:", telefono);
 
     await client.messages.create({
-      messagingServiceSid: process.env.TWILIO_MESSAGING_SERVICE_SID!,
+      from: "whatsapp:+18303568731", // ← NUMERO WHATSAPP TWILIO APPROVATO
       to: `whatsapp:${telefono}`,
       contentSid: process.env.TWILIO_WHATSAPP_TEMPLATE_SID!,
     });
