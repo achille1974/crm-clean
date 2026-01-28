@@ -16,7 +16,6 @@ export default function QrForm({
 }: {
   negozioId: number;
 }) {
-
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -28,7 +27,7 @@ export default function QrForm({
     e.preventDefault();
     setLoading(true);
 
-    // PASSO 3 — BLOCCO HARD PRIVACY
+    // PASSO 2 — BLOCCO HARD PRIVACY
     if (!privacyAccepted) {
       alert("Devi accettare la Privacy Policy per continuare.");
       setLoading(false);
@@ -90,9 +89,10 @@ export default function QrForm({
 
     /* ===============================
        3️⃣ CHIAMATA API SERVER (WELCOME)
+       ⚠️ URL ASSOLUTO (fondamentale)
        =============================== */
     try {
-      await fetch("/api/phonesia/welcome", {
+      await fetch("https://crm-clean.vercel.app/api/phonesia/welcome", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
