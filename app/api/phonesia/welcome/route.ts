@@ -8,11 +8,16 @@ const client = twilio(
 );
 
 export async function POST(req: Request) {
+  console.log("🚀 WELCOME API CHIAMATA");
+
   try {
     const body = await req.json();
+    console.log("📦 BODY:", body);
+
     const { cliente_id, telefono } = body;
 
     if (!cliente_id || !telefono) {
+      console.log("❌ Parametri mancanti");
       return NextResponse.json(
         { error: "Parametri mancanti" },
         { status: 400 }
@@ -20,64 +25,53 @@ export async function POST(req: Request) {
     }
 
     /* ===============================
-       ✅ AGGIUNTA — VERIFICA PENDING
+       1️⃣ VERIFICA: WELCOME GIÀ INVIATO?
        =============================== */
-    const { data: consenso, error: errCheck } = await supabase
-      .from("phonesia_consensi")
-      .select("id, welcome_message_pending")
-      .eq("cliente_id", cliente_id)
-      .eq("welcome_message_type", "welcome")
-      .eq("welcome_message_pending", true)
-      .limit(1)
+    const { data: cliente, error: errCliente } = await supabase
+      .from("phonesia_clienti")
+      .select("welcome_sent_at")
+      .eq("id", cliente_id)
       .single();
 
-    if (errCheck || !consenso) {
-      // welcome già inviato o non previsto
+    if (errCliente) {
+      console.error("❌ Errore lettura cliente:", errCliente);
       return NextResponse.json({ ok: true });
     }
 
-    const bigliettoLink = "http://localhost:3000/phonesia/biglietto";
+    if (cliente?.welcome_sent_at) {
+      console.log("⛔ Welcome già inviato, stop");
+      return NextResponse.json({ ok: true });
+    }
 
-    const message = `Ciao 👋
-grazie per essere passato da PHONESIA.
+    /* ===============================
+       2️⃣ INVIO WHATSAPP (TEMPLATE + MESSAGING SERVICE)
+       =============================== */
+    console.log("📨 Invio WhatsApp a:", telefono);
 
-Siamo un negozio su strada:
-ci trovi qui oggi, domani e nel tempo.
-
-Qui trovi il tuo biglietto PHONESIA,
-con tutti i nostri riferimenti:
-
-👉 ${bigliettoLink}
-
-Puoi contattarci telefonicamente o su WhatsApp
-quando hai bisogno: risponde sempre una persona reale.
-
-A presto,
-PHONESIA`;
-
-    // ===============================
-    // INVIO WHATSAPP (TWILIO)
-    // ===============================
     await client.messages.create({
-      from: "whatsapp:+14155238886",
+      messagingServiceSid: process.env.TWILIO_MESSAGING_SERVICE_SID!,
       to: `whatsapp:${telefono}`,
-      body: message,
+      contentSid: process.env.TWILIO_WHATSAPP_TEMPLATE_SID!,
     });
 
     /* ===============================
-       ✅ AGGIUNTA — SEGNA COME INVIATO
+       3️⃣ LOG INVIO (UNA SOLA VOLTA)
        =============================== */
     await supabase
-      .from("phonesia_consensi")
+      .from("phonesia_clienti")
       .update({
-        welcome_message_pending: false,
-        welcome_message_sent_at: new Date().toISOString(),
+        welcome_sent_at: new Date().toISOString(),
+        welcome_channel: "whatsapp",
+        welcome_status: "sent",
       })
-      .eq("id", consenso.id);
+      .eq("id", cliente_id);
+
+    console.log("✅ Welcome inviato e loggato");
 
     return NextResponse.json({ ok: true });
   } catch (err) {
-    console.error("Errore invio welcome:", err);
+    console.error("🔥 ERRORE INVIO WELCOME:", err);
+
     return NextResponse.json(
       { error: "Errore invio messaggio" },
       { status: 500 }

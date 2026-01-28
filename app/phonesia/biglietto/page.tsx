@@ -66,10 +66,10 @@ export default function BigliettoPhonesiaPage() {
               Responsabile PHONESIA (tutti i negozi)
             </h2>
             <p className="font-medium">Marco Magnano</p>
-            <a href="tel:+393312572365" className="block text-blue-600">
-              📞 +39 331 257 2365
+            <a href="tel:+393917000017" className="block text-blue-600">
+              📞 +39 391 700 0017
             </a>
-            <a href="https://wa.me/393312572365" className="block text-green-600">
+            <a href="https://wa.me/393917000017" className="block text-green-600">
               💬 WhatsApp
             </a>
           </div>
@@ -153,10 +153,10 @@ export default function BigliettoPhonesiaPage() {
             </a>
 
             <p className="font-medium">Andrea</p>
-            <a href="tel:+393662000815" className="block text-blue-600">
-              📞 +39 366 200 0815
+            <a href="tel:+393313137775" className="block text-blue-600">
+              📞 +39 331 313 7775
             </a>
-            <a href="https://wa.me/393662000815" className="block text-green-600">
+            <a href="https://wa.me/393313137775" className="block text-green-600">
               💬 WhatsApp
             </a>
           </div>

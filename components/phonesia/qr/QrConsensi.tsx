@@ -19,7 +19,10 @@ export default function QrConsensi({
           checked={privacyAccepted}
           onChange={(e) => onPrivacyChange(e.target.checked)}
         />{" "}
-        Acconsento al trattamento dei dati personali.
+        Acconsento al trattamento dei miei dati personali da parte di Phonesia
+        per finalità di registrazione, contatto e assistenza, incluso l’invio
+        di un messaggio di benvenuto via WhatsApp, come descritto
+        nell’informativa privacy.
       </label>
 
       <label>
