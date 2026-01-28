@@ -1,4 +1,5 @@
-// ⚠️ FONDAMENTALE: forziamo il runtime Node.js (Twilio NON funziona in Edge)
+// ⚠️ FONDAMENTALE: forziamo il runtime Node.js
+// (Twilio NON funziona in Edge Runtime)
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
@@ -61,9 +62,10 @@ export async function POST(req: Request) {
     console.log("📨 Invio WhatsApp a:", telefono);
 
     await client.messages.create({
-      from: "whatsapp:+18303568731", // ← NUMERO WHATSAPP TWILIO APPROVATO
+      from: "whatsapp:+18303568731", // NUMERO WHATSAPP TWILIO APPROVATO
       to: `whatsapp:${telefono}`,
       contentSid: process.env.TWILIO_WHATSAPP_TEMPLATE_SID!,
+      contentVariables: {}, // ⚠️ OBBLIGATORIO PER I TEMPLATE WHATSAPP
     });
 
     // ===============================
