@@ -1,4 +1,4 @@
-// ⚠️ FONDAMENTALE: Twilio richiede Node.js runtime
+// ⚠️ Twilio richiede Node.js runtime
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
@@ -26,13 +26,13 @@ export async function POST(req: Request) {
     const { cliente_id, telefono } = body;
 
     if (!cliente_id || !telefono) {
-      console.log("❌ Parametri mancanti");
-      return NextResponse.json({ error: "Parametri mancanti" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Parametri mancanti" },
+        { status: 400 }
+      );
     }
 
-    // ===============================
-    // 1️⃣ CHECK: welcome già inviato?
-    // ===============================
+    // 1️⃣ Check welcome già inviato
     const { data: cliente } = await supabase
       .from("phonesia_clienti")
       .select("welcome_sent_at")
@@ -44,20 +44,20 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true });
     }
 
-    // ===============================
-    // 2️⃣ INVIO WHATSAPP TEMPLATE
-    // ===============================
+    // 2️⃣ INVIO WHATSAPP (TESTO)
     console.log("📨 Invio WhatsApp a:", telefono);
 
     await client.messages.create({
       messagingServiceSid: process.env.TWILIO_MESSAGING_SERVICE_SID!,
       to: `whatsapp:${telefono}`,
-      contentSid: process.env.TWILIO_WHATSAPP_TEMPLATE_SID!,
+      body:
+        "👋 Benvenuto in PHONESIA!\n\n" +
+        "Questa è la tua registrazione confermata.\n" +
+        "Tra poco riceverai il nostro biglietto digitale.\n\n" +
+        "Rispondi *OK* per continuare 💬",
     });
 
-    // ===============================
     // 3️⃣ LOG DB
-    // ===============================
     await supabase
       .from("phonesia_clienti")
       .update({
@@ -69,9 +69,11 @@ export async function POST(req: Request) {
 
     console.log("✅ Welcome inviato correttamente");
     return NextResponse.json({ ok: true });
-
   } catch (err) {
     console.error("🔥 ERRORE INVIO WELCOME:", err);
-    return NextResponse.json({ error: "Errore invio messaggio" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Errore invio messaggio" },
+      { status: 500 }
+    );
   }
 }
