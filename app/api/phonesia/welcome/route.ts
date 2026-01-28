@@ -44,16 +44,16 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true });
     }
 
-    // 2️⃣ INVIO WHATSAPP (TESTO)
+    // 2️⃣ INVIO WHATSAPP (FORZANDO FROM)
     console.log("📨 Invio WhatsApp a:", telefono);
 
     await client.messages.create({
-      messagingServiceSid: process.env.TWILIO_MESSAGING_SERVICE_SID!,
+      from: "whatsapp:+18303568731", // 🔥 QUESTO ERA IL BLOCCO
       to: `whatsapp:${telefono}`,
       body:
         "👋 Benvenuto in PHONESIA!\n\n" +
-        "Questa è la tua registrazione confermata.\n" +
-        "Tra poco riceverai il nostro biglietto digitale.\n\n" +
+        "La tua registrazione è avvenuta con successo.\n" +
+        "Tra poco riceverai il tuo biglietto digitale.\n\n" +
         "Rispondi *OK* per continuare 💬",
     });
 
@@ -69,6 +69,7 @@ export async function POST(req: Request) {
 
     console.log("✅ Welcome inviato correttamente");
     return NextResponse.json({ ok: true });
+
   } catch (err) {
     console.error("🔥 ERRORE INVIO WELCOME:", err);
     return NextResponse.json(
