@@ -65,7 +65,7 @@ export async function POST(req: Request) {
       from: "whatsapp:+18303568731", // NUMERO WHATSAPP TWILIO APPROVATO
       to: `whatsapp:${telefono}`,
       contentSid: process.env.TWILIO_WHATSAPP_TEMPLATE_SID!,
-      contentVariables: {}, // ⚠️ OBBLIGATORIO PER I TEMPLATE WHATSAPP
+      contentVariables: "{}", // ⚠️ STRINGA JSON OBBLIGATORIA (non oggetto)
     });
 
     // ===============================
