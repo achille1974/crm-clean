@@ -8,50 +8,8 @@ export async function POST(req: Request) {
     const from = formData.get("From")?.toString();
     const bodyRaw = formData.get("Body")?.toString();
 
-    if (!from || !bodyRaw) {
-      return new NextResponse(
-        '<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
-        {
-          status: 200,
-          headers: { "Content-Type": "text/xml" },
-        }
-      );
-    }
-
-    const body = bodyRaw.trim();
-    const telefono = from.replace("whatsapp:", "");
-
-    // 🔹 Cerchiamo il cliente
-    const { data: cliente } = await supabase
-      .from("phonesia_clienti")
-      .select("id")
-      .eq("telefono", telefono)
-      .maybeSingle();
-
-    // 🔹 Se il cliente esiste, salviamo l’operazione
-    if (cliente) {
-      await supabase.from("phonesia_operazioni").insert({
-        cliente_id: cliente.id,
-        tipo_operazione: "whatsapp_inbound",
-        descrizione: body,
-        data_operazione: new Date().toISOString(),
-        created_at: new Date().toISOString(),
-      });
-
-      // 🔹 Se scrive OK attiviamo WhatsApp
-      if (body.toUpperCase() === "OK") {
-        await supabase
-          .from("phonesia_clienti")
-          .update({
-            whatsapp_active: true,
-            whatsapp_activated_at: new Date().toISOString(),
-          })
-          .eq("id", cliente.id);
-      }
-    }
-
-    // 🔹 Risposta valida per Twilio (OBBLIGATORIA)
-    return new NextResponse(
+    // Risposta TwiML standard (riutilizzata sotto)
+    const twimlResponse = new NextResponse(
       '<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
       {
         status: 200,
@@ -59,10 +17,63 @@ export async function POST(req: Request) {
       }
     );
 
-  } catch (error) {
-    console.error("WhatsApp inbound error:", error);
+    if (!from || !bodyRaw) {
+      return twimlResponse;
+    }
 
-    // Anche in caso di errore dobbiamo rispondere XML
+    const body = bodyRaw.trim();
+    const telefono = from.replace("whatsapp:", "");
+
+    // 🔹 Cerchiamo il cliente
+    const { data: cliente, error: clienteError } = await supabase
+      .from("phonesia_clienti")
+      .select("id")
+      .eq("telefono", telefono)
+      .maybeSingle();
+
+    if (clienteError) {
+      console.error("Errore ricerca cliente:", clienteError);
+      return twimlResponse;
+    }
+
+    // 🔹 Se il cliente esiste, salviamo l’operazione
+    if (cliente) {
+      const { error: insertError } = await supabase
+        .from("phonesia_operazioni")
+        .insert({
+          cliente_id: cliente.id,
+          telefono_riferimento: telefono,
+          origine: "whatsapp_inbound",
+          descrizione: body,
+          data_operazione: new Date().toISOString(),
+          created_at: new Date().toISOString(),
+        });
+
+      if (insertError) {
+        console.error("Errore insert operazione:", insertError);
+      }
+
+      // 🔹 Se scrive OK attiviamo WhatsApp
+      if (body.toUpperCase() === "OK") {
+        const { error: updateError } = await supabase
+          .from("phonesia_clienti")
+          .update({
+            whatsapp_active: true,
+            whatsapp_activated_at: new Date().toISOString(),
+          })
+          .eq("id", cliente.id);
+
+        if (updateError) {
+          console.error("Errore update whatsapp:", updateError);
+        }
+      }
+    }
+
+    return twimlResponse;
+
+  } catch (error) {
+    console.error("WhatsApp inbound fatal error:", error);
+
     return new NextResponse(
       '<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
       {
