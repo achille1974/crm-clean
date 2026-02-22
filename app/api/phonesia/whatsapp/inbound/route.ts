@@ -8,7 +8,7 @@ export async function POST(req: Request) {
     const from = formData.get("From")?.toString();
     const bodyRaw = formData.get("Body")?.toString();
 
-    // Risposta TwiML standard (riutilizzata sotto)
+    // 🔹 Risposta TwiML obbligatoria per Twilio
     const twimlResponse = new NextResponse(
       '<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
       {
@@ -27,7 +27,7 @@ export async function POST(req: Request) {
     // 🔹 Cerchiamo il cliente
     const { data: cliente, error: clienteError } = await supabase
       .from("phonesia_clienti")
-      .select("id")
+      .select("id, whatsapp_active")
       .eq("telefono", telefono)
       .maybeSingle();
 
@@ -36,8 +36,9 @@ export async function POST(req: Request) {
       return twimlResponse;
     }
 
-    // 🔹 Se il cliente esiste, salviamo l’operazione
+    // 🔹 Se cliente esiste, salviamo inbound
     if (cliente) {
+
       const { error: insertError } = await supabase
         .from("phonesia_operazioni")
         .insert({
@@ -53,8 +54,9 @@ export async function POST(req: Request) {
         console.error("Errore insert operazione:", insertError);
       }
 
-      // 🔹 Se scrive OK attiviamo WhatsApp
-      if (body.toUpperCase() === "OK") {
+      // 🔹 Se scrive OK e non era già attivo
+      if (body.toUpperCase() === "OK" && !cliente.whatsapp_active) {
+
         const { error: updateError } = await supabase
           .from("phonesia_clienti")
           .update({
@@ -65,6 +67,25 @@ export async function POST(req: Request) {
 
         if (updateError) {
           console.error("Errore update whatsapp:", updateError);
+        } else {
+
+          // 🔹 Chiamiamo endpoint welcome separato
+          try {
+            await fetch(
+              `${process.env.NEXT_PUBLIC_BASE_URL}/api/phonesia/whatsapp/send-welcome`,
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  cliente_id: cliente.id,
+                }),
+              }
+            );
+          } catch (welcomeError) {
+            console.error("Errore chiamata send-welcome:", welcomeError);
+          }
         }
       }
     }
