@@ -14,7 +14,7 @@ const client = twilio(
 );
 
 // 🔥 NUMERO WHATSAPP CRM (Twilio)
-const CRM_WHATSAPP_NUMBER = "+18303568731"; // <-- tuo numero Twilio
+const CRM_WHATSAPP_NUMBER = "+18303568731";
 
 // ===============================
 // POST /api/phonesia/welcome
@@ -33,7 +33,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // 1️⃣ Controllo welcome già inviato
+    // 1️⃣ Verifica se welcome già inviato
     const { data: cliente, error: checkError } = await supabase
       .from("phonesia_clienti")
       .select("welcome_sent_at")
@@ -41,7 +41,7 @@ export async function POST(req: Request) {
       .single();
 
     if (checkError) {
-      console.error("Errore check cliente:", checkError);
+      console.error("❌ Errore check cliente:", checkError);
       return NextResponse.json(
         { error: "Errore check cliente" },
         { status: 500 }
@@ -53,27 +53,30 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true });
     }
 
-    // 2️⃣ Costruzione link WhatsApp CORRETTO (verso CRM)
+    // 2️⃣ Costruzione link WhatsApp verso CRM
     const crmNumberClean = CRM_WHATSAPP_NUMBER.replace("+", "");
     const waLink = `https://wa.me/${crmNumberClean}?text=OK`;
 
     console.log("📨 Invio SMS a:", telefono);
-    console.log("🔗 Link WA corretto:", waLink);
+    console.log("🔗 Link WA:", waLink);
 
     // 3️⃣ INVIO SMS
     const smsResponse = await client.messages.create({
-      from: CRM_WHATSAPP_NUMBER, // numero Twilio
+      from: CRM_WHATSAPP_NUMBER,
       to: telefono,
       body:
-        "👋 PHONESIA\n\n" +
-        "Grazie per la registrazione.\n\n" +
-        "Clicca qui per attivare WhatsApp:\n" +
-        waLink,
+        "👋 Benvenuto in PHONESIA\n\n" +
+        "La tua registrazione è stata completata con successo.\n\n" +
+        "Per attivare il canale WhatsApp e ricevere il tuo biglietto digitale,\n" +
+        "clicca sul link qui sotto e invia il messaggio automatico:\n\n" +
+        waLink +
+        "\n\n" +
+        "— Team PHONESIA",
     });
 
     console.log("📬 Twilio SID:", smsResponse.sid);
 
-    // 4️⃣ Aggiorno DB
+    // 4️⃣ Aggiornamento DB
     const { error: updateError } = await supabase
       .from("phonesia_clienti")
       .update({
@@ -84,7 +87,7 @@ export async function POST(req: Request) {
       .eq("id", cliente_id);
 
     if (updateError) {
-      console.error("Errore update DB:", updateError);
+      console.error("❌ Errore update DB:", updateError);
       return NextResponse.json(
         { error: "Errore update DB" },
         { status: 500 }
