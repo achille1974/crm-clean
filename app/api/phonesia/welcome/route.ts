@@ -30,28 +30,36 @@ export async function POST(req: Request) {
       );
     }
 
-    // 1️⃣ Check welcome già inviato
-    const { data: cliente } = await supabase
+    // 1️⃣ Controllo welcome già inviato
+    const { data: cliente, error: checkError } = await supabase
       .from("phonesia_clienti")
       .select("welcome_sent_at")
       .eq("id", cliente_id)
       .single();
+
+    if (checkError) {
+      console.error("Errore check cliente:", checkError);
+      return NextResponse.json(
+        { error: "Errore check cliente" },
+        { status: 500 }
+      );
+    }
 
     if (cliente?.welcome_sent_at) {
       console.log("⛔ Welcome già inviato");
       return NextResponse.json({ ok: true });
     }
 
-    // 2️⃣ COSTRUZIONE LINK WHATSAPP
+    // 2️⃣ Costruzione link WhatsApp
     const numeroClean = telefono.replace("+", "");
     const waLink = `https://wa.me/${numeroClean}?text=OK`;
 
     console.log("📨 Invio SMS a:", telefono);
     console.log("🔗 Link WA:", waLink);
 
-    // 3️⃣ INVIO SMS (NON PIÙ WHATSAPP DIRETTO)
-    await client.messages.create({
-      from: process.env.TWILIO_SMS_NUMBER!, // 🔥 IMPORTANTE
+    // 3️⃣ INVIO SMS (HARDCODED FROM)
+    const smsResponse = await client.messages.create({
+      from: "+18303568731", // 🔥 temporaneamente hard-coded
       to: telefono,
       body:
         "👋 PHONESIA\n\n" +
@@ -60,8 +68,10 @@ export async function POST(req: Request) {
         waLink,
     });
 
-    // 4️⃣ LOG DB
-    await supabase
+    console.log("📬 Twilio SID:", smsResponse.sid);
+
+    // 4️⃣ Aggiorno DB
+    const { error: updateError } = await supabase
       .from("phonesia_clienti")
       .update({
         welcome_sent_at: new Date().toISOString(),
@@ -69,6 +79,14 @@ export async function POST(req: Request) {
         welcome_status: "sent",
       })
       .eq("id", cliente_id);
+
+    if (updateError) {
+      console.error("Errore update DB:", updateError);
+      return NextResponse.json(
+        { error: "Errore update DB" },
+        { status: 500 }
+      );
+    }
 
     console.log("✅ SMS inviato correttamente");
     return NextResponse.json({ ok: true });
