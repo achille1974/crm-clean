@@ -10,17 +10,16 @@ export default function QrSuccess() {
       </p>
 
       <p>
-        📲 Ti abbiamo appena inviato un messaggio di benvenuto su
-        <b> WhatsApp</b> con il tuo biglietto da visita digitale Phonesia.
+        📩 Ti abbiamo inviato un <b>SMS</b> per attivare il canale WhatsApp.
       </p>
 
       <p style={{ marginTop: 16 }}>
-        Apri WhatsApp e rispondi <b>OK</b> al messaggio ricevuto
-        per attivare il canale di comunicazione.
+        Apri il messaggio ricevuto, clicca sul link e invia <b>OK</b>
+        per completare l’attivazione.
       </p>
 
       <p style={{ marginTop: 24, fontSize: 14, opacity: 0.8 }}>
-        Non serve cliccare nessun pulsante: il messaggio è già stato inviato.
+        Subito dopo riceverai il tuo biglietto digitale PHONESIA su WhatsApp.
       </p>
     </main>
   );
