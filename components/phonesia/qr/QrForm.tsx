@@ -19,7 +19,6 @@ export default function QrForm({
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // PASSO 1 — stato consensi
   const [privacyAccepted, setPrivacyAccepted] = useState(false);
   const [marketingAccepted, setMarketingAccepted] = useState(false);
 
@@ -27,7 +26,6 @@ export default function QrForm({
     e.preventDefault();
     setLoading(true);
 
-    // PASSO 2 — BLOCCO HARD PRIVACY
     if (!privacyAccepted) {
       alert("Devi accettare la Privacy Policy per continuare.");
       setLoading(false);
@@ -37,6 +35,17 @@ export default function QrForm({
     const form = e.currentTarget;
     const data = new FormData(form);
 
+    const telefonoRaw = String(data.get("telefono") || "").trim();
+
+    // Validazione numero italiano (9-10 cifre)
+    if (!/^[0-9]{9,10}$/.test(telefonoRaw)) {
+      alert("Inserisci un numero di telefono valido.");
+      setLoading(false);
+      return;
+    }
+
+    const telefonoFormatted = `+39${telefonoRaw}`;
+
     /* ===============================
        1️⃣ INSERIMENTO CLIENTE
        =============================== */
@@ -45,7 +54,7 @@ export default function QrForm({
       .insert({
         nome: data.get("nome"),
         cognome: data.get("cognome"),
-        telefono: data.get("telefono"),
+        telefono: telefonoFormatted,
         email: data.get("email"),
         codice_fiscale: data.get("codice_fiscale"),
         qr_id: "phonesia_qr",
@@ -77,7 +86,7 @@ export default function QrForm({
     }
 
     /* ===============================
-       2️⃣ BIS — EVENTO CONSENSO MARKETING (FACOLTATIVO)
+       2️⃣ BIS — CONSENSO MARKETING
        =============================== */
     if (marketingAccepted) {
       await registraMarketingAccepted({
@@ -88,8 +97,7 @@ export default function QrForm({
     }
 
     /* ===============================
-       3️⃣ CHIAMATA API SERVER (WELCOME)
-       ⚠️ URL ASSOLUTO (fondamentale)
+       3️⃣ CHIAMATA API SERVER (WELCOME → SMS)
        =============================== */
     try {
       await fetch("https://crm-clean.vercel.app/api/phonesia/welcome", {
@@ -97,7 +105,7 @@ export default function QrForm({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           cliente_id: cliente.id,
-          telefono: cliente.telefono,
+          telefono: telefonoFormatted,
         }),
       });
     } catch (err) {
@@ -133,12 +141,36 @@ export default function QrForm({
         <input name="nome" placeholder="Nome" required />
         <input name="cognome" placeholder="Cognome" required />
         <input name="codice_fiscale" placeholder="Codice Fiscale" required />
-        <input
-          name="telefono"
-          placeholder="Telefono"
-          defaultValue="+39"
-          required
-        />
+
+        {/* TELEFONO CON +39 BLOCCATO */}
+        <div style={{ display: "flex" }}>
+          <span
+            style={{
+              padding: "10px",
+              background: "#eee",
+              border: "1px solid #ccc",
+              borderRight: "none",
+              display: "flex",
+              alignItems: "center",
+            }}
+          >
+            +39
+          </span>
+
+          <input
+            name="telefono"
+            type="tel"
+            placeholder="3331234567"
+            pattern="[0-9]{9,10}"
+            required
+            style={{
+              flex: 1,
+              border: "1px solid #ccc",
+              padding: "10px",
+            }}
+          />
+        </div>
+
         <input name="email" placeholder="Email (facoltativa)" />
 
         <QrConsensi
