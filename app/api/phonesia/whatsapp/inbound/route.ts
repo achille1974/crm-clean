@@ -10,7 +10,7 @@ const client = twilio(
   process.env.TWILIO_AUTH_TOKEN!
 );
 
-const CRM_WHATSAPP_NUMBER = "whatsapp:+18303568731";
+const CRM_WHATSAPP_NUMBER = "whatsapp:+393278833590";
 const BASE_URL = "https://crm-clean.vercel.app";
 
 export async function POST(req: Request) {

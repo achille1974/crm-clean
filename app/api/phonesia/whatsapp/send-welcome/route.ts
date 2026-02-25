@@ -33,7 +33,7 @@ export async function POST(req: Request) {
 
     // 🔹 Invio WhatsApp welcome
     await client.messages.create({
-      from: "whatsapp:+18303568731",
+      from: "whatsapp:+393278833590",
       to: `whatsapp:${cliente.telefono}`,
       body: `Benvenuto in Phonesia!
 
