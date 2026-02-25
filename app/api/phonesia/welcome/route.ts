@@ -6,15 +6,28 @@ import twilio from "twilio";
 import { supabase } from "@/lib/supabaseClient";
 
 // ===============================
+// ENV VALIDATION
+// ===============================
+if (!process.env.TWILIO_ACCOUNT_SID) {
+  throw new Error("Missing TWILIO_ACCOUNT_SID");
+}
+if (!process.env.TWILIO_AUTH_TOKEN) {
+  throw new Error("Missing TWILIO_AUTH_TOKEN");
+}
+if (!process.env.TWILIO_SMS_FROM) {
+  throw new Error("Missing TWILIO_SMS_FROM");
+}
+if (!process.env.TWILIO_WHATSAPP_NUMBER) {
+  throw new Error("Missing TWILIO_WHATSAPP_NUMBER");
+}
+
+// ===============================
 // TWILIO CLIENT
 // ===============================
 const client = twilio(
-  process.env.TWILIO_ACCOUNT_SID!,
-  process.env.TWILIO_AUTH_TOKEN!
+  process.env.TWILIO_ACCOUNT_SID,
+  process.env.TWILIO_AUTH_TOKEN
 );
-
-// 🔥 NUMERO WHATSAPP CRM (Twilio)
-const CRM_WHATSAPP_NUMBER = "+393278833590";
 
 // ===============================
 // POST /api/phonesia/welcome
@@ -33,7 +46,9 @@ export async function POST(req: Request) {
       );
     }
 
-    // 1️⃣ Verifica se welcome già inviato
+    // ===============================
+    // 1️⃣ CHECK SE GIÀ INVIATO
+    // ===============================
     const { data: cliente, error: checkError } = await supabase
       .from("phonesia_clienti")
       .select("welcome_sent_at")
@@ -53,16 +68,23 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true });
     }
 
-    // 2️⃣ Costruzione link WhatsApp verso CRM
-    const crmNumberClean = CRM_WHATSAPP_NUMBER.replace("+", "");
-    const waLink = `https://wa.me/${crmNumberClean}?text=OK`;
+    // ===============================
+    // 2️⃣ COSTRUZIONE LINK WHATSAPP
+    // ===============================
+    const whatsappNumberClean =
+      process.env.TWILIO_WHATSAPP_NUMBER!.replace("+", "");
+
+    const waLink = `https://wa.me/${whatsappNumberClean}?text=OK`;
 
     console.log("📨 Invio SMS a:", telefono);
     console.log("🔗 Link WA:", waLink);
+    console.log("📞 SMS FROM:", process.env.TWILIO_SMS_FROM);
 
+    // ===============================
     // 3️⃣ INVIO SMS
+    // ===============================
     const smsResponse = await client.messages.create({
-      from: CRM_WHATSAPP_NUMBER,
+      from: process.env.TWILIO_SMS_FROM,
       to: telefono,
       body:
         "👋 Benvenuto in PHONESIA\n\n" +
@@ -76,7 +98,9 @@ export async function POST(req: Request) {
 
     console.log("📬 Twilio SID:", smsResponse.sid);
 
-    // 4️⃣ Aggiornamento DB
+    // ===============================
+    // 4️⃣ UPDATE DATABASE
+    // ===============================
     const { error: updateError } = await supabase
       .from("phonesia_clienti")
       .update({
@@ -95,10 +119,11 @@ export async function POST(req: Request) {
     }
 
     console.log("✅ SMS inviato correttamente");
+
     return NextResponse.json({ ok: true });
 
-  } catch (err) {
-    console.error("🔥 ERRORE INVIO SMS:", err);
+  } catch (err: any) {
+    console.error("🔥 ERRORE INVIO SMS:", err?.message || err);
     return NextResponse.json(
       { error: "Errore invio SMS" },
       { status: 500 }
