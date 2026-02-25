@@ -1,30 +1,22 @@
-// ⚠️ Twilio richiede Node.js runtime
+// ⚠️ Runtime Node necessario
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
-import twilio from "twilio";
 import { supabase } from "@/lib/supabaseClient";
-
-// ===============================
-// TWILIO CLIENT (no validation at build time)
-// ===============================
-const client = twilio(
-  process.env.TWILIO_ACCOUNT_SID,
-  process.env.TWILIO_AUTH_TOKEN
-);
 
 // ===============================
 // POST /api/phonesia/welcome
 // ===============================
 export async function POST(req: Request) {
-  console.log("🚀 WELCOME API CHIAMATA (SMS MODE)");
+  console.log("🚀 WELCOME API CHIAMATA (SMS MODE - PROMY)");
 
   try {
-    // 🔥 VALIDAZIONE ENV A RUNTIME (non a build time)
-    const smsFrom = process.env.TWILIO_SMS_FROM;
+    // 🔥 ENV runtime
+    const promyApiKey = process.env.PROMY_API_KEY;
+    const promySender = process.env.PROMY_SMS_SENDER;
     const whatsappNumber = process.env.TWILIO_WHATSAPP_NUMBER;
 
-    if (!smsFrom || !whatsappNumber) {
+    if (!promyApiKey || !whatsappNumber) {
       console.error("❌ Variabili ambiente mancanti");
       return NextResponse.json(
         { error: "Configurazione server incompleta" },
@@ -66,24 +58,42 @@ export async function POST(req: Request) {
     const whatsappNumberClean = whatsappNumber.replace("+", "");
     const waLink = `https://wa.me/${whatsappNumberClean}?text=OK`;
 
-    console.log("📞 SMS FROM:", smsFrom);
-    console.log("📨 Invio SMS a:", telefono);
+    console.log("📨 Invio SMS Promy a:", telefono);
 
-    // 3️⃣ Invio SMS
-    const smsResponse = await client.messages.create({
-      from: smsFrom,
-      to: telefono,
-      body:
-        "👋 Benvenuto in PHONESIA\n\n" +
-        "La tua registrazione è stata completata con successo.\n\n" +
-        "Per attivare il canale WhatsApp e ricevere il tuo biglietto digitale,\n" +
-        "clicca sul link qui sotto e invia il messaggio automatico:\n\n" +
-        waLink +
-        "\n\n" +
-        "— Team PHONESIA",
-    });
+    // 3️⃣ Invio SMS tramite Promy
+    const promyResponse = await fetch(
+      "https://api.promy.it/rest/v1/sms",
+      {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${promyApiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          sender: promySender || "PHONESIA",
+          recipients: [telefono],
+          message:
+            "👋 Benvenuto in PHONESIA\n\n" +
+            "La tua registrazione è stata completata con successo.\n\n" +
+            "Per attivare il canale WhatsApp e ricevere il tuo biglietto digitale,\n" +
+            "clicca sul link qui sotto e invia il messaggio automatico:\n\n" +
+            waLink +
+            "\n\n" +
+            "— Team PHONESIA",
+        }),
+      }
+    );
 
-    console.log("📬 Twilio SID:", smsResponse.sid);
+    const promyData = await promyResponse.text();
+    console.log("📬 Promy response:", promyData);
+
+    if (!promyResponse.ok) {
+      console.error("❌ Errore Promy SMS:", promyData);
+      return NextResponse.json(
+        { error: "Errore invio SMS Promy" },
+        { status: 500 }
+      );
+    }
 
     // 4️⃣ Update DB
     const { error: updateError } = await supabase
@@ -103,7 +113,7 @@ export async function POST(req: Request) {
       );
     }
 
-    console.log("✅ SMS inviato correttamente");
+    console.log("✅ SMS Promy inviato correttamente");
     return NextResponse.json({ ok: true });
 
   } catch (err: any) {
