@@ -1,4 +1,4 @@
-// ⚠️ Runtime Node necessario
+// ⚠️ Runtime Node necessario per Basic Auth
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
@@ -8,15 +8,16 @@ import { supabase } from "@/lib/supabaseClient";
 // POST /api/phonesia/welcome
 // ===============================
 export async function POST(req: Request) {
-  console.log("🚀 WELCOME API CHIAMATA (SMS MODE - PROMY)");
+  console.log("🚀 WELCOME API CHIAMATA (SMS MODE - ARUBA)");
 
   try {
     // 🔥 ENV runtime
-    const promyApiKey = process.env.PROMY_API_KEY;
-    const promySender = process.env.PROMY_SMS_SENDER;
+    const arubaUsername = process.env.ARUBA_SMS_USERNAME;
+    const arubaPassword = process.env.ARUBA_SMS_PASSWORD;
+    const arubaSender = process.env.ARUBA_SMS_SENDER;
     const whatsappNumber = process.env.TWILIO_WHATSAPP_NUMBER;
 
-    if (!promyApiKey || !whatsappNumber) {
+    if (!arubaUsername || !arubaPassword || !whatsappNumber) {
       console.error("❌ Variabili ambiente mancanti");
       return NextResponse.json(
         { error: "Configurazione server incompleta" },
@@ -58,20 +59,24 @@ export async function POST(req: Request) {
     const whatsappNumberClean = whatsappNumber.replace("+", "");
     const waLink = `https://wa.me/${whatsappNumberClean}?text=OK`;
 
-    console.log("📨 Invio SMS Promy a:", telefono);
+    console.log("📨 Invio SMS Aruba a:", telefono);
 
-    // 3️⃣ Invio SMS tramite Promy
-    const promyResponse = await fetch(
-      "https://api.promy.it/rest/v1/sms",
+    // 3️⃣ Basic Auth Aruba
+    const auth = Buffer.from(
+      `${arubaUsername}:${arubaPassword}`
+    ).toString("base64");
+
+    const arubaResponse = await fetch(
+      "https://sms.aruba.it/API/SendSMS",
       {
         method: "POST",
         headers: {
-          "Authorization": `Bearer ${promyApiKey}`,
-          "Content-Type": "application/json",
+          "Content-Type": "application/x-www-form-urlencoded",
+          "Authorization": `Basic ${auth}`,
         },
-        body: JSON.stringify({
-          sender: promySender || "PHONESIA",
-          recipients: [telefono],
+        body: new URLSearchParams({
+          sender: arubaSender || "PHONESIA",
+          recipient: telefono,
           message:
             "👋 Benvenuto in PHONESIA\n\n" +
             "La tua registrazione è stata completata con successo.\n\n" +
@@ -84,13 +89,13 @@ export async function POST(req: Request) {
       }
     );
 
-    const promyData = await promyResponse.text();
-    console.log("📬 Promy response:", promyData);
+    const arubaData = await arubaResponse.text();
+    console.log("📬 Aruba response:", arubaData);
 
-    if (!promyResponse.ok) {
-      console.error("❌ Errore Promy SMS:", promyData);
+    if (!arubaResponse.ok) {
+      console.error("❌ Errore Aruba SMS:", arubaData);
       return NextResponse.json(
-        { error: "Errore invio SMS Promy" },
+        { error: "Errore invio SMS Aruba" },
         { status: 500 }
       );
     }
@@ -113,7 +118,7 @@ export async function POST(req: Request) {
       );
     }
 
-    console.log("✅ SMS Promy inviato correttamente");
+    console.log("✅ SMS Aruba inviato correttamente");
     return NextResponse.json({ ok: true });
 
   } catch (err: any) {
