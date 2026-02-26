@@ -15,13 +15,19 @@ async function sendWithSkebby(telefono: string, message: string) {
     throw new Error("Skebby ENV mancanti");
   }
 
-  // Normalizza numero (rimuove eventuale +)
   const telefonoClean = telefono.replace("+", "");
   console.log("Numero normalizzato:", telefonoClean);
 
   /* =========================
-     LOGIN (POST CORRETTO)
+     LOGIN (POST SERIALIZZATO MANUALMENTE)
   ========================== */
+
+  const body =
+    "username=" +
+    encodeURIComponent(username) +
+    "&password=" +
+    encodeURIComponent(password);
+
   const loginRes = await fetch(
     "https://api.skebby.it/API/v1.0/REST/login",
     {
@@ -29,10 +35,7 @@ async function sendWithSkebby(telefono: string, message: string) {
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
       },
-      body: new URLSearchParams({
-        username,
-        password,
-      }),
+      body: body,
     }
   );
 
@@ -45,7 +48,6 @@ async function sendWithSkebby(telefono: string, message: string) {
     throw new Error("Skebby login failed");
   }
 
-  // Skebby restituisce: user_key;session_key
   const [user_key, session_key] = loginText.split(";");
 
   if (!user_key || !session_key) {
@@ -56,6 +58,7 @@ async function sendWithSkebby(telefono: string, message: string) {
   /* =========================
      SEND SMS
   ========================== */
+
   const smsRes = await fetch(
     "https://api.skebby.it/API/v1.0/REST/sms",
     {
@@ -100,9 +103,6 @@ export async function POST(req: Request) {
       );
     }
 
-    /* =========================
-       CHECK CLIENTE
-    ========================== */
     const { data: cliente, error: checkError } = await supabase
       .from("phonesia_clienti")
       .select("welcome_sent_at")
@@ -124,9 +124,6 @@ export async function POST(req: Request) {
       });
     }
 
-    /* =========================
-       LINK WHATSAPP
-    ========================== */
     const whatsappNumber = process.env.TWILIO_WHATSAPP_NUMBER;
 
     if (!whatsappNumber) {
@@ -146,14 +143,8 @@ export async function POST(req: Request) {
 
     console.log("Invio SMS con Skebby...");
 
-    /* =========================
-       INVIO SMS
-    ========================== */
     const providerUsed = await sendWithSkebby(telefono, message);
 
-    /* =========================
-       UPDATE DB
-    ========================== */
     await supabase
       .from("phonesia_clienti")
       .update({
@@ -170,7 +161,6 @@ export async function POST(req: Request) {
 
   } catch (err: any) {
     console.error("Errore generale welcome:", err);
-
     return NextResponse.json(
       { error: err.message || "Errore invio SMS" },
       { status: 500 }
