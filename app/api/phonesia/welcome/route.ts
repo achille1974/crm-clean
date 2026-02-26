@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabaseClient";
 
 /* =========================================================
-   🔵 SKEBBY SEND (VERSIONE STABILE)
+   🔵 SKEBBY SEND (VERSIONE DEFINITIVA)
 ========================================================= */
 async function sendWithSkebby(telefono: string, message: string) {
   const username = process.env.SKEBBY_USERNAME;
@@ -15,27 +15,22 @@ async function sendWithSkebby(telefono: string, message: string) {
     throw new Error("Skebby ENV mancanti");
   }
 
-  // Normalizza numero (Skebby non vuole +)
+  // Rimuove eventuale "+"
   const telefonoClean = telefono.replace("+", "");
 
   console.log("Numero normalizzato:", telefonoClean);
 
   /* =========================
-     LOGIN
+     LOGIN (GET CORRETTO)
   ========================== */
-  const loginRes = await fetch(
-    "https://api.skebby.it/API/v1.0/REST/login",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: new URLSearchParams({
-        username,
-        password,
-      }),
-    }
-  );
+  const loginUrl =
+    `https://api.skebby.it/API/v1.0/REST/login` +
+    `?username=${encodeURIComponent(username)}` +
+    `&password=${encodeURIComponent(password)}`;
+
+  const loginRes = await fetch(loginUrl, {
+    method: "GET",
+  });
 
   const loginText = await loginRes.text();
 
@@ -50,6 +45,7 @@ async function sendWithSkebby(telefono: string, message: string) {
   const [user_key, session_key] = loginText.split(";");
 
   if (!user_key || !session_key) {
+    console.error("Login parsing failed:", loginText);
     throw new Error("Skebby login parsing failed");
   }
 
@@ -62,8 +58,8 @@ async function sendWithSkebby(telefono: string, message: string) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "user_key": user_key,
-        "session_key": session_key,
+        "user_key": user_key.trim(),
+        "session_key": session_key.trim(),
       },
       body: JSON.stringify({
         message_type: "GP",
@@ -118,7 +114,10 @@ export async function POST(req: Request) {
     }
 
     if (cliente?.welcome_sent_at) {
-      return NextResponse.json({ ok: true, alreadySent: true });
+      return NextResponse.json({
+        ok: true,
+        alreadySent: true,
+      });
     }
 
     /* =========================
@@ -167,6 +166,7 @@ export async function POST(req: Request) {
 
   } catch (err: any) {
     console.error("Errore generale welcome:", err);
+
     return NextResponse.json(
       { error: err.message || "Errore invio SMS" },
       { status: 500 }
