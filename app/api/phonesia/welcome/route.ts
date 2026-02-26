@@ -1,32 +1,113 @@
-// ⚠️ Runtime Node necessario per Basic Auth
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabaseClient";
 
-// ===============================
-// POST /api/phonesia/welcome
-// ===============================
-export async function POST(req: Request) {
-  console.log("🚀 WELCOME API CHIAMATA (SMS MODE - ARUBA)");
+/* =========================================================
+   🔵 SKEBBY SEND
+========================================================= */
+async function sendWithSkebby(telefono: string, message: string) {
+  const username = process.env.SKEBBY_USERNAME;
+  const password = process.env.SKEBBY_PASSWORD;
+  const sender = process.env.SKEBBY_SENDER;
 
-  try {
-    // 🔥 ENV runtime
-    const arubaUsername = process.env.ARUBA_SMS_USERNAME;
-    const arubaPassword = process.env.ARUBA_SMS_PASSWORD;
-    const arubaSender = process.env.ARUBA_SMS_SENDER;
-    const whatsappNumber = process.env.TWILIO_WHATSAPP_NUMBER;
+  if (!username || !password || !sender) {
+    throw new Error("Skebby ENV mancanti");
+  }
 
-    if (!arubaUsername || !arubaPassword || !whatsappNumber) {
-      console.error("❌ Variabili ambiente mancanti");
-      return NextResponse.json(
-        { error: "Configurazione server incompleta" },
-        { status: 500 }
-      );
+  // LOGIN
+  const loginRes = await fetch(
+    "https://api.skebby.it/API/v1.0/REST/login",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        username,
+        password,
+      }),
     }
+  );
 
-    const body = await req.json();
-    const { cliente_id, telefono } = body;
+  if (!loginRes.ok) {
+    const err = await loginRes.text();
+    console.error("Skebby login error:", err);
+    throw new Error("Skebby login failed");
+  }
+
+  const { user_key, session_key } = await loginRes.json();
+
+  // SEND SMS
+  const smsRes = await fetch(
+    "https://api.skebby.it/API/v1.0/REST/sms",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        user_key,
+        Session_key: session_key,
+      },
+      body: JSON.stringify({
+        message_type: "GP",
+        message,
+        recipient: [telefono],
+        sender,
+      }),
+    }
+  );
+
+  if (!smsRes.ok) {
+    const err = await smsRes.text();
+    console.error("Skebby send error:", err);
+    throw new Error("Skebby send failed");
+  }
+
+  return "skebby";
+}
+
+/* =========================================================
+   🟠 ARUBA SEND
+========================================================= */
+async function sendWithAruba(telefono: string, message: string) {
+  const username = process.env.ARUBA_SMS_USERNAME;
+  const password = process.env.ARUBA_SMS_PASSWORD;
+  const sender = process.env.ARUBA_SMS_SENDER;
+
+  if (!username || !password || !sender) {
+    throw new Error("Aruba ENV mancanti");
+  }
+
+  const auth = Buffer.from(`${username}:${password}`).toString("base64");
+
+  const res = await fetch("https://sms.aruba.it/API/SendSMS", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Authorization: `Basic ${auth}`,
+    },
+    body: new URLSearchParams({
+      sender,
+      recipient: telefono,
+      message,
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    console.error("Aruba send error:", err);
+    throw new Error("Aruba send failed");
+  }
+
+  return "aruba";
+}
+
+/* =========================================================
+   🚀 WELCOME ROUTE
+========================================================= */
+export async function POST(req: Request) {
+  try {
+    const { cliente_id, telefono } = await req.json();
 
     if (!cliente_id || !telefono) {
       return NextResponse.json(
@@ -35,7 +116,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // 1️⃣ Check welcome già inviato
+    // Check cliente
     const { data: cliente, error: checkError } = await supabase
       .from("phonesia_clienti")
       .select("welcome_sent_at")
@@ -43,88 +124,73 @@ export async function POST(req: Request) {
       .single();
 
     if (checkError) {
-      console.error("❌ Errore check cliente:", checkError);
+      console.error("Errore check cliente:", checkError);
       return NextResponse.json(
-        { error: "Errore check cliente" },
+        { error: "Errore verifica cliente" },
         { status: 500 }
       );
     }
 
     if (cliente?.welcome_sent_at) {
-      console.log("⛔ Welcome già inviato");
-      return NextResponse.json({ ok: true });
+      return NextResponse.json({ ok: true, alreadySent: true });
     }
 
-    // 2️⃣ Link WhatsApp
-    const whatsappNumberClean = whatsappNumber.replace("+", "");
-    const waLink = `https://wa.me/${whatsappNumberClean}?text=OK`;
+    const whatsappNumber = process.env.TWILIO_WHATSAPP_NUMBER;
 
-    console.log("📨 Invio SMS Aruba a:", telefono);
-
-    // 3️⃣ Basic Auth Aruba
-    const auth = Buffer.from(
-      `${arubaUsername}:${arubaPassword}`
-    ).toString("base64");
-
-    const arubaResponse = await fetch(
-      "https://sms.aruba.it/API/SendSMS",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          "Authorization": `Basic ${auth}`,
-        },
-        body: new URLSearchParams({
-          sender: arubaSender || "PHONESIA",
-          recipient: telefono,
-          message:
-            "👋 Benvenuto in PHONESIA\n\n" +
-            "La tua registrazione è stata completata con successo.\n\n" +
-            "Per attivare il canale WhatsApp e ricevere il tuo biglietto digitale,\n" +
-            "clicca sul link qui sotto e invia il messaggio automatico:\n\n" +
-            waLink +
-            "\n\n" +
-            "— Team PHONESIA",
-        }),
-      }
-    );
-
-    const arubaData = await arubaResponse.text();
-    console.log("📬 Aruba response:", arubaData);
-
-    if (!arubaResponse.ok) {
-      console.error("❌ Errore Aruba SMS:", arubaData);
+    if (!whatsappNumber) {
       return NextResponse.json(
-        { error: "Errore invio SMS Aruba" },
+        { error: "WhatsApp number mancante" },
         { status: 500 }
       );
     }
 
-    // 4️⃣ Update DB
-    const { error: updateError } = await supabase
+    const waLink = `https://wa.me/${whatsappNumber.replace("+", "")}?text=OK`;
+
+    const message =
+      "👋 Benvenuto in PHONESIA\n\n" +
+      "La tua registrazione è stata completata con successo.\n\n" +
+      "Clicca qui per attivare WhatsApp:\n" +
+      waLink;
+
+    let providerUsed = "";
+    const provider = process.env.SMS_PROVIDER || "aruba";
+
+    console.log("Provider selezionato:", provider);
+
+    if (provider === "skebby") {
+      try {
+        providerUsed = await sendWithSkebby(telefono, message);
+      } catch (err) {
+        console.error("Skebby fallito, provo Aruba...");
+        providerUsed = await sendWithAruba(telefono, message);
+      }
+    } else {
+      try {
+        providerUsed = await sendWithAruba(telefono, message);
+      } catch (err) {
+        console.error("Aruba fallito, provo Skebby...");
+        providerUsed = await sendWithSkebby(telefono, message);
+      }
+    }
+
+    await supabase
       .from("phonesia_clienti")
       .update({
         welcome_sent_at: new Date().toISOString(),
-        welcome_channel: "sms",
+        welcome_channel: providerUsed,
         welcome_status: "sent",
       })
       .eq("id", cliente_id);
 
-    if (updateError) {
-      console.error("❌ Errore update DB:", updateError);
-      return NextResponse.json(
-        { error: "Errore update DB" },
-        { status: 500 }
-      );
-    }
-
-    console.log("✅ SMS Aruba inviato correttamente");
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({
+      ok: true,
+      provider: providerUsed,
+    });
 
   } catch (err: any) {
-    console.error("🔥 ERRORE INVIO SMS:", err?.message || err);
+    console.error("Errore generale welcome:", err);
     return NextResponse.json(
-      { error: "Errore invio SMS" },
+      { error: err.message || "Errore invio SMS" },
       { status: 500 }
     );
   }
