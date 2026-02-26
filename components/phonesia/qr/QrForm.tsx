@@ -47,25 +47,53 @@ export default function QrForm({
     const telefonoFormatted = `+39${telefonoRaw}`;
 
     /* ===============================
-       1️⃣ INSERIMENTO CLIENTE
+       1️⃣ RICERCA O CREAZIONE CLIENTE
        =============================== */
-    const { data: cliente, error: errCliente } = await supabase
+
+    // 🔎 Cerchiamo cliente esistente per telefono
+    const { data: clienteEsistente, error: searchError } = await supabase
       .from("phonesia_clienti")
-      .insert({
-        nome: data.get("nome"),
-        cognome: data.get("cognome"),
-        telefono: telefonoFormatted,
-        email: data.get("email"),
-        codice_fiscale: data.get("codice_fiscale"),
-        qr_id: "phonesia_qr",
-        negozio_id: negozioId,
-      })
-      .select()
+      .select("*")
+      .eq("telefono", telefonoFormatted)
       .single();
 
-    if (errCliente || !cliente) {
-      console.error("Errore cliente:", errCliente);
-      alert("Errore durante la registrazione del cliente");
+    if (searchError && searchError.code !== "PGRST116") {
+      console.error("Errore ricerca cliente:", searchError);
+      alert("Errore durante la verifica del cliente");
+      setLoading(false);
+      return;
+    }
+
+    let clienteFinale = clienteEsistente;
+
+    // 🆕 Se non esiste, lo creiamo
+    if (!clienteEsistente) {
+      const { data: nuovoCliente, error: insertError } = await supabase
+        .from("phonesia_clienti")
+        .insert({
+          nome: data.get("nome"),
+          cognome: data.get("cognome"),
+          telefono: telefonoFormatted,
+          email: data.get("email"),
+          codice_fiscale: data.get("codice_fiscale"),
+          qr_id: "phonesia_qr",
+          negozio_id: negozioId,
+        })
+        .select()
+        .single();
+
+      if (insertError || !nuovoCliente) {
+        console.error("Errore creazione cliente:", insertError);
+        alert("Errore durante la registrazione del cliente");
+        setLoading(false);
+        return;
+      }
+
+      clienteFinale = nuovoCliente;
+    }
+
+    if (!clienteFinale) {
+      alert("Errore imprevisto nella registrazione.");
       setLoading(false);
       return;
     }
@@ -74,7 +102,7 @@ export default function QrForm({
        2️⃣ EVENTO CONSENSO PRIVACY
        =============================== */
     const { error: errConsenso } = await registraPrivacyAccepted({
-      cliente_id: cliente.id,
+      cliente_id: clienteFinale.id,
       qr_id: "phonesia_qr",
     });
 
@@ -90,7 +118,7 @@ export default function QrForm({
        =============================== */
     if (marketingAccepted) {
       await registraMarketingAccepted({
-        cliente_id: cliente.id,
+        cliente_id: clienteFinale.id,
         qr_id: "phonesia_qr",
         negozio_id: negozioId,
       });
@@ -104,7 +132,7 @@ export default function QrForm({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          cliente_id: cliente.id,
+          cliente_id: clienteFinale.id,
           telefono: telefonoFormatted,
         }),
       });
@@ -142,7 +170,6 @@ export default function QrForm({
         <input name="cognome" placeholder="Cognome" required />
         <input name="codice_fiscale" placeholder="Codice Fiscale" required />
 
-        {/* TELEFONO CON +39 BLOCCATO */}
         <div style={{ display: "flex" }}>
           <span
             style={{
