@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabaseClient";
 
 /* =========================================================
-   🔵 SKEBBY SEND
+   🔵 SKEBBY SEND (VERSIONE STABILE)
 ========================================================= */
 async function sendWithSkebby(telefono: string, message: string) {
   const username = process.env.SKEBBY_USERNAME;
@@ -15,7 +15,14 @@ async function sendWithSkebby(telefono: string, message: string) {
     throw new Error("Skebby ENV mancanti");
   }
 
-  // LOGIN
+  // Normalizza numero (Skebby non vuole +)
+  const telefonoClean = telefono.replace("+", "");
+
+  console.log("Numero normalizzato:", telefonoClean);
+
+  /* =========================
+     LOGIN
+  ========================== */
   const loginRes = await fetch(
     "https://api.skebby.it/API/v1.0/REST/login",
     {
@@ -30,76 +37,53 @@ async function sendWithSkebby(telefono: string, message: string) {
     }
   );
 
+  const loginText = await loginRes.text();
+
   if (!loginRes.ok) {
-    const err = await loginRes.text();
-    console.error("Skebby login error:", err);
+    console.error("Skebby login error:", loginText);
     throw new Error("Skebby login failed");
   }
 
-  const { user_key, session_key } = await loginRes.json();
+  console.log("Skebby login response:", loginText);
 
-  // SEND SMS
+  // Skebby restituisce: user_key;session_key
+  const [user_key, session_key] = loginText.split(";");
+
+  if (!user_key || !session_key) {
+    throw new Error("Skebby login parsing failed");
+  }
+
+  /* =========================
+     SEND SMS
+  ========================== */
   const smsRes = await fetch(
     "https://api.skebby.it/API/v1.0/REST/sms",
     {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        user_key,
-        Session_key: session_key,
+        "user_key": user_key,
+        "session_key": session_key,
       },
       body: JSON.stringify({
         message_type: "GP",
         message,
-        recipient: [telefono],
+        recipient: [telefonoClean],
         sender,
       }),
     }
   );
 
+  const smsText = await smsRes.text();
+
   if (!smsRes.ok) {
-    const err = await smsRes.text();
-    console.error("Skebby send error:", err);
+    console.error("Skebby send error:", smsText);
     throw new Error("Skebby send failed");
   }
 
+  console.log("Skebby send response:", smsText);
+
   return "skebby";
-}
-
-/* =========================================================
-   🟠 ARUBA SEND
-========================================================= */
-async function sendWithAruba(telefono: string, message: string) {
-  const username = process.env.ARUBA_SMS_USERNAME;
-  const password = process.env.ARUBA_SMS_PASSWORD;
-  const sender = process.env.ARUBA_SMS_SENDER;
-
-  if (!username || !password || !sender) {
-    throw new Error("Aruba ENV mancanti");
-  }
-
-  const auth = Buffer.from(`${username}:${password}`).toString("base64");
-
-  const res = await fetch("https://sms.aruba.it/API/SendSMS", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Authorization: `Basic ${auth}`,
-    },
-    body: new URLSearchParams({
-      sender,
-      recipient: telefono,
-      message,
-    }),
-  });
-
-  if (!res.ok) {
-    const err = await res.text();
-    console.error("Aruba send error:", err);
-    throw new Error("Aruba send failed");
-  }
-
-  return "aruba";
 }
 
 /* =========================================================
@@ -116,7 +100,9 @@ export async function POST(req: Request) {
       );
     }
 
-    // Check cliente
+    /* =========================
+       CHECK CLIENTE
+    ========================== */
     const { data: cliente, error: checkError } = await supabase
       .from("phonesia_clienti")
       .select("welcome_sent_at")
@@ -135,6 +121,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, alreadySent: true });
     }
 
+    /* =========================
+       LINK WHATSAPP
+    ========================== */
     const whatsappNumber = process.env.TWILIO_WHATSAPP_NUMBER;
 
     if (!whatsappNumber) {
@@ -152,27 +141,16 @@ export async function POST(req: Request) {
       "Clicca qui per attivare WhatsApp:\n" +
       waLink;
 
-    let providerUsed = "";
-    const provider = process.env.SMS_PROVIDER || "aruba";
+    console.log("Invio SMS con Skebby...");
 
-    console.log("Provider selezionato:", provider);
+    /* =========================
+       INVIO SMS
+    ========================== */
+    const providerUsed = await sendWithSkebby(telefono, message);
 
-    if (provider === "skebby") {
-      try {
-        providerUsed = await sendWithSkebby(telefono, message);
-      } catch (err) {
-        console.error("Skebby fallito, provo Aruba...");
-        providerUsed = await sendWithAruba(telefono, message);
-      }
-    } else {
-      try {
-        providerUsed = await sendWithAruba(telefono, message);
-      } catch (err) {
-        console.error("Aruba fallito, provo Skebby...");
-        providerUsed = await sendWithSkebby(telefono, message);
-      }
-    }
-
+    /* =========================
+       UPDATE DB
+    ========================== */
     await supabase
       .from("phonesia_clienti")
       .update({
