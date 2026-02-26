@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabaseClient";
 
 /* =========================================================
-   🔵 SKEBBY SEND (VERSIONE DEFINITIVA)
+   🔵 SKEBBY SEND (VERSIONE DEFINITIVA STABILE)
 ========================================================= */
 async function sendWithSkebby(telefono: string, message: string) {
   const username = process.env.SKEBBY_USERNAME;
@@ -15,31 +15,35 @@ async function sendWithSkebby(telefono: string, message: string) {
     throw new Error("Skebby ENV mancanti");
   }
 
-  // Rimuove eventuale "+"
+  // Normalizza numero (rimuove eventuale +)
   const telefonoClean = telefono.replace("+", "");
-
   console.log("Numero normalizzato:", telefonoClean);
 
   /* =========================
-     LOGIN (GET CORRETTO)
+     LOGIN (POST CORRETTO)
   ========================== */
-  const loginUrl =
-    `https://api.skebby.it/API/v1.0/REST/login` +
-    `?username=${encodeURIComponent(username)}` +
-    `&password=${encodeURIComponent(password)}`;
-
-  const loginRes = await fetch(loginUrl, {
-    method: "GET",
-  });
+  const loginRes = await fetch(
+    "https://api.skebby.it/API/v1.0/REST/login",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        username,
+        password,
+      }),
+    }
+  );
 
   const loginText = await loginRes.text();
 
+  console.log("Login status:", loginRes.status);
+  console.log("Login text:", loginText);
+
   if (!loginRes.ok) {
-    console.error("Skebby login error:", loginText);
     throw new Error("Skebby login failed");
   }
-
-  console.log("Skebby login response:", loginText);
 
   // Skebby restituisce: user_key;session_key
   const [user_key, session_key] = loginText.split(";");
@@ -72,12 +76,12 @@ async function sendWithSkebby(telefono: string, message: string) {
 
   const smsText = await smsRes.text();
 
+  console.log("SMS status:", smsRes.status);
+  console.log("SMS response:", smsText);
+
   if (!smsRes.ok) {
-    console.error("Skebby send error:", smsText);
     throw new Error("Skebby send failed");
   }
-
-  console.log("Skebby send response:", smsText);
 
   return "skebby";
 }
