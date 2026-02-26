@@ -9,16 +9,13 @@ import {
 } from "../../../lib/phonesia";
 
 import QrConsensi from "./QrConsensi";
-import QrSuccess from "./QrSuccess";
 
 export default function QrForm({
   negozioId,
 }: {
   negozioId: number;
 }) {
-  const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
-
   const [privacyAccepted, setPrivacyAccepted] = useState(false);
   const [marketingAccepted, setMarketingAccepted] = useState(false);
 
@@ -50,7 +47,6 @@ export default function QrForm({
        1️⃣ RICERCA O CREAZIONE CLIENTE
        =============================== */
 
-    // 🔎 Cerchiamo cliente esistente per telefono
     const { data: clienteEsistente, error: searchError } = await supabase
       .from("phonesia_clienti")
       .select("*")
@@ -66,7 +62,6 @@ export default function QrForm({
 
     let clienteFinale = clienteEsistente;
 
-    // 🆕 Se non esiste, lo creiamo
     if (!clienteEsistente) {
       const { data: nuovoCliente, error: insertError } = await supabase
         .from("phonesia_clienti")
@@ -101,6 +96,7 @@ export default function QrForm({
     /* ===============================
        2️⃣ EVENTO CONSENSO PRIVACY
        =============================== */
+
     const { error: errConsenso } = await registraPrivacyAccepted({
       cliente_id: clienteFinale.id,
       qr_id: "phonesia_qr",
@@ -116,6 +112,7 @@ export default function QrForm({
     /* ===============================
        2️⃣ BIS — CONSENSO MARKETING
        =============================== */
+
     if (marketingAccepted) {
       await registraMarketingAccepted({
         cliente_id: clienteFinale.id,
@@ -125,27 +122,21 @@ export default function QrForm({
     }
 
     /* ===============================
-       3️⃣ CHIAMATA API SERVER (WELCOME → SMS)
+       3️⃣ REDIRECT DIRETTO WHATSAPP
        =============================== */
-    try {
-      await fetch("https://crm-clean.vercel.app/api/phonesia/welcome", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          cliente_id: clienteFinale.id,
-          telefono: telefonoFormatted,
-        }),
-      });
-    } catch (err) {
-      console.error("Errore chiamata API welcome:", err);
+
+    const waNumber = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER;
+
+    if (!waNumber) {
+      alert("Errore configurazione WhatsApp.");
+      setLoading(false);
+      return;
     }
 
     setLoading(false);
-    setSubmitted(true);
-  }
 
-  if (submitted) {
-    return <QrSuccess />;
+    window.location.href =
+      `https://wa.me/${waNumber.replace("+", "")}?text=OK`;
   }
 
   return (

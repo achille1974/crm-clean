@@ -5,13 +5,23 @@ import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabaseClient";
 import twilio from "twilio";
 
+/* ===============================
+   CONFIGURAZIONE
+   =============================== */
+
 const client = twilio(
   process.env.TWILIO_ACCOUNT_SID!,
   process.env.TWILIO_AUTH_TOKEN!
 );
 
-const CRM_WHATSAPP_NUMBER = "whatsapp:+393278833590";
+// ⚠ Deve essere salvato in ENV come +39XXXXXXXXXX (senza whatsapp:)
+const CRM_WHATSAPP_NUMBER = `whatsapp:${process.env.TWILIO_WHATSAPP_FROM}`;
+
 const BASE_URL = "https://crm-clean.vercel.app";
+
+/* ===============================
+   WEBHOOK INBOUND WHATSAPP
+   =============================== */
 
 export async function POST(req: Request) {
   try {
@@ -20,7 +30,7 @@ export async function POST(req: Request) {
     const from = formData.get("From")?.toString();
     const bodyRaw = formData.get("Body")?.toString();
 
-    const twimlResponse = new NextResponse(
+    const emptyResponse = new NextResponse(
       '<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
       {
         status: 200,
@@ -28,14 +38,19 @@ export async function POST(req: Request) {
       }
     );
 
-    if (!from || !bodyRaw) return twimlResponse;
+    if (!from || !bodyRaw) {
+      return emptyResponse;
+    }
 
     const body = bodyRaw.trim().toUpperCase();
     const telefono = from.replace("whatsapp:", "");
 
-    console.log("📩 WA INBOUND DA:", telefono, "MESSAGGIO:", body);
+    console.log("📩 WA INBOUND:", telefono, body);
 
-    // 🔎 Cerco cliente
+    /* ===============================
+       1️⃣ CERCA CLIENTE
+       =============================== */
+
     const { data: cliente, error: clienteError } = await supabase
       .from("phonesia_clienti")
       .select("id, whatsapp_active")
@@ -44,15 +59,18 @@ export async function POST(req: Request) {
 
     if (clienteError) {
       console.error("❌ Errore ricerca cliente:", clienteError);
-      return twimlResponse;
+      return emptyResponse;
     }
 
     if (!cliente) {
-      console.log("⚠️ Cliente non trovato per numero:", telefono);
-      return twimlResponse;
+      console.log("⚠ Cliente non trovato:", telefono);
+      return emptyResponse;
     }
 
-    // 📝 Log inbound
+    /* ===============================
+       2️⃣ LOG INBOUND
+       =============================== */
+
     await supabase.from("phonesia_operazioni").insert({
       cliente_id: cliente.id,
       telefono_riferimento: telefono,
@@ -62,12 +80,15 @@ export async function POST(req: Request) {
       created_at: new Date().toISOString(),
     });
 
-    // 🔥 SE RICEVE OK → ATTIVA + INVIA WELCOME
-    if (body === "OK") {
+    /* ===============================
+       3️⃣ SE RICEVE OK → ATTIVA + INVIA WELCOME
+       =============================== */
 
-      // Attivazione (solo se non attivo)
+    if (body === "OK" || body === "OK.") {
+
+      // Attiva solo se non già attivo
       if (!cliente.whatsapp_active) {
-        await supabase
+        const { error: updateError } = await supabase
           .from("phonesia_clienti")
           .update({
             whatsapp_active: true,
@@ -75,10 +96,17 @@ export async function POST(req: Request) {
           })
           .eq("id", cliente.id);
 
-        console.log("✅ Cliente attivato WhatsApp:", cliente.id);
+        if (updateError) {
+          console.error("❌ Errore attivazione:", updateError);
+        } else {
+          console.log("✅ WhatsApp attivato per cliente:", cliente.id);
+        }
       }
 
-      // Invio welcome WA
+      /* ===============================
+         4️⃣ INVIO BIGLIETTO DIGITALE
+         =============================== */
+
       try {
         const response = await client.messages.create({
           from: CRM_WHATSAPP_NUMBER,
@@ -92,14 +120,14 @@ export async function POST(req: Request) {
             "— Team PHONESIA",
         });
 
-        console.log("📬 WA Welcome inviato. SID:", response.sid);
+        console.log("📬 Welcome inviato. SID:", response.sid);
 
       } catch (twilioError) {
-        console.error("🔥 Errore invio WA welcome:", twilioError);
+        console.error("🔥 Errore invio welcome:", twilioError);
       }
     }
 
-    return twimlResponse;
+    return emptyResponse;
 
   } catch (error) {
     console.error("🔥 WhatsApp inbound fatal error:", error);
