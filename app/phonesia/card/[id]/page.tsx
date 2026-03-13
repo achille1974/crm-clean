@@ -1,3 +1,13 @@
-export default function Test() {
-  return <h1 style={{padding:40}}>TEST PAGINA CARD</h1>
+import { redirect } from "next/navigation";
+
+export default async function Card({
+  params,
+}: {
+  params: { id: string };
+}) {
+
+  // qui in futuro potremo registrare accessi cliente
+
+  redirect("/phonesia/biglietto");
+
 }
