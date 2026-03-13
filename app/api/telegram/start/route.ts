@@ -5,25 +5,29 @@ export async function POST(req: Request) {
 
   const body = await req.json()
 
-  const message = body.message
-
-  if (!message) {
+  // Telegram manda diversi tipi di update
+  if (!body.message) {
     return NextResponse.json({ ok: true })
   }
 
-  const telegramId = message.from.id
+  const message = body.message
+  const telegramId = message.from?.id
   const text = message.text || ""
 
+  if (!telegramId) {
+    return NextResponse.json({ ok: true })
+  }
+
+  // gestiamo solo /start
   if (!text.startsWith("/start")) {
     return NextResponse.json({ ok: true })
   }
 
   const parts = text.split(" ")
-
   const clienteId = parts[1]
 
   if (!clienteId) {
-    return NextResponse.json({ error: "cliente_id missing" })
+    return NextResponse.json({ ok: true })
   }
 
   const { error } = await supabase
@@ -36,11 +40,8 @@ export async function POST(req: Request) {
     .eq("id", clienteId)
 
   if (error) {
-    return NextResponse.json({ error })
+    console.error("SUPABASE ERROR:", error)
   }
 
-  return NextResponse.json({
-    success: true,
-    cliente_id: clienteId
-  })
+  return NextResponse.json({ ok: true })
 }
