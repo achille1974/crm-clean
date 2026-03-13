@@ -1,19 +1,21 @@
-"use client"
+"use client";
 
-import { useEffect, useState } from "react"
+import { useEffect, useState } from "react";
 
 export default function Dashboard() {
 
-  const [stats, setStats] = useState<any>(null)
+  const [stats, setStats] = useState<any>(null);
 
   useEffect(() => {
+
     fetch("/api/phonesia/stats")
-      .then(res => res.json())
-      .then(data => setStats(data))
-  }, [])
+      .then((res) => res.json())
+      .then((data) => setStats(data));
+
+  }, []);
 
   if (!stats) {
-    return <p style={{ padding: 20 }}>Caricamento dashboard…</p>
+    return <p style={{ padding: 20 }}>Caricamento statistiche...</p>;
   }
 
   return (
@@ -23,27 +25,34 @@ export default function Dashboard() {
         Dashboard PHONESIA
       </h1>
 
-      <hr />
+      <div style={{ marginTop: 30 }}>
 
-      <h2>Statistiche generali</h2>
+        <p>
+          <strong>Clienti totali:</strong> {stats.totale_clienti}
+        </p>
 
-      <p><b>Clienti registrati:</b> {stats.totale_clienti}</p>
-      <p><b>Telegram attivi:</b> {stats.telegram_attivi}</p>
+        <p>
+          <strong>Telegram attivi:</strong> {stats.telegram_attivi}
+        </p>
 
-      <hr />
+      </div>
 
-      <h2>Clienti per negozio</h2>
+      <h2 style={{ marginTop: 40 }}>Clienti per negozio</h2>
 
-{Object.entries(stats.clienti_per_negozio).map(([id, count]) => {
-  const numero = count as number
+      <ul style={{ marginTop: 10 }}>
 
-  return (
-    <p key={id}>
-      Negozio {id}: {numero}
-    </p>
-  )
-})}
+        {Object.entries(stats.clienti_per_negozio).map(
+          ([nome, numero]: any) => (
+
+            <li key={nome}>
+              {nome}: {numero}
+            </li>
+
+          )
+        )}
+
+      </ul>
 
     </main>
-  )
+  );
 }
