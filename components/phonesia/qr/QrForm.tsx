@@ -137,18 +137,35 @@ export default function QrForm({
       });
     }
 
-    const telegramBot = process.env.NEXT_PUBLIC_TELEGRAM_BOT;
+/* ===============================
+   CLIENTE CON TELEGRAM GIÀ ATTIVO
+   =============================== */
 
-    if (!telegramBot) {
-      alert("Errore configurazione Telegram.");
-      setLoading(false);
-      return;
-    }
+if (clienteFinale.telegram_active) {
+  setLoading(false);
 
-    setLoading(false);
+  window.location.href =
+    `/phonesia/card/${clienteFinale.id}`;
 
-    window.location.href = `https://t.me/${telegramBot}?start=${clienteFinale.id}`;
-  }
+  return;
+}
+
+/* ===============================
+   REDIRECT TELEGRAM BOT
+   =============================== */
+
+const telegramBot = process.env.NEXT_PUBLIC_TELEGRAM_BOT;
+
+if (!telegramBot) {
+  alert("Errore configurazione Telegram.");
+  setLoading(false);
+  return;
+}
+
+setLoading(false);
+
+window.location.href =
+  `https://t.me/${telegramBot}?start=${clienteFinale.id}`;
 
   return (
     <main style={{ maxWidth: 520, margin: "40px auto", padding: 24 }}>
