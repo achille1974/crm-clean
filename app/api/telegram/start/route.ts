@@ -43,6 +43,22 @@ export async function POST(req: Request) {
   if (error) {
     console.error("SUPABASE ERROR:", error)
   }
+  
+  await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json"
+  },
+  body: JSON.stringify({
+    chat_id: telegramId,
+    text: `Benvenuto in Phonesia! 🎉
+
+La tua registrazione è stata attivata con successo.
+
+Qui trovi il tuo biglietto digitale:
+https://crm-clean.vercel.app/phonesia/card/${clienteId}`
+  })
+})
 
   return NextResponse.json({ ok: true })
 }
