@@ -145,7 +145,7 @@ if (clienteFinale.telegram_active) {
   setLoading(false);
 
   window.location.href =
-    `/phonesia/card/${clienteFinale.id}`;
+    `/phonesia/welcome?id=${clienteFinale.id}`;
 
   return;
 }
