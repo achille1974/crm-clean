@@ -69,7 +69,7 @@ export default function QrForm({
           nome: data.get("nome"),
           cognome: data.get("cognome"),
           telefono: telefonoFormatted,
-          email: data.get("email"),
+          email: data.get("email") || null,
           codice_fiscale: data.get("codice_fiscale"),
           qr_id: "phonesia_qr",
           negozio_id: negozioId,
