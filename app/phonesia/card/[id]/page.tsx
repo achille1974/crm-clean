@@ -1,19 +1,29 @@
-import { supabase } from "@/lib/supabaseClient"
+import { supabase } from "@/lib/supabaseClient";
 
-export default async function Card({ params }: any) {
+export default async function Card({
+  params,
+}: {
+  params: { id: string };
+}) {
 
-  const { data } = await supabase
+  const clienteId = Number(params.id);
+
+  const { data, error } = await supabase
     .from("phonesia_clienti")
     .select("*")
-    .eq("id", params.id)
-    .single()
+    .eq("id", clienteId)
+    .single();
 
-  if (!data) {
-    return <div>Cliente non trovato</div>
+  if (error || !data) {
+    return (
+      <div style={{ padding: 40, fontFamily: "sans-serif" }}>
+        Cliente non trovato
+      </div>
+    );
   }
 
   return (
-    <div style={{padding:40,fontFamily:"sans-serif"}}>
+    <div style={{ padding: 40, fontFamily: "sans-serif" }}>
       <h1>Biglietto Digitale Phonesia</h1>
 
       <p><b>Nome:</b> {data.nome}</p>
@@ -24,5 +34,5 @@ export default async function Card({ params }: any) {
 
       <p>Cliente registrato nel sistema Phonesia.</p>
     </div>
-  )
+  );
 }
