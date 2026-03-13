@@ -21,9 +21,9 @@ const NEGOZI: Record<number, string> = {
 export default function QrForm({
   negozioId,
 }: {
-  const nomeNegozio = NEGOZI[negozioId] || "Negozio";
   negozioId: number;
 }) {
+  const nomeNegozio = NEGOZI[negozioId] || "Negozio";
   const [loading, setLoading] = useState(false);
   const [privacyAccepted, setPrivacyAccepted] = useState(false);
   const [marketingAccepted, setMarketingAccepted] = useState(false);
