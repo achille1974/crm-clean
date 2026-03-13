@@ -13,6 +13,13 @@ export async function GET() {
 
   const totaleClienti = clienti?.length || 0;
 
+ const oggi = new Date().toISOString().slice(0, 10);
+
+const clientiOggi =
+  clienti?.filter((c: any) =>
+    c.created_at?.startsWith(oggi)
+  ).length || 0;  
+
   const telegramAttivi =
     clienti?.filter((c) => c.telegram_active === true).length || 0;
 
@@ -29,6 +36,7 @@ export async function GET() {
 
   return NextResponse.json({
     totale_clienti: totaleClienti,
+    clienti_oggi: clientiOggi,
     telegram_attivi: telegramAttivi,
     clienti_per_negozio: clientiPerNegozio,
   });
