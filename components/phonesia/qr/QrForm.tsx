@@ -60,31 +60,58 @@ export default function QrForm({
       return;
     }
 
-    let clienteFinale = clienteEsistente;
+/* ===============================
+   CREAZIONE O AGGIORNAMENTO CLIENTE
+   =============================== */
 
-    if (!clienteEsistente) {
-      const { data: nuovoCliente, error: insertError } = await supabase
-        .from("phonesia_clienti")
-        .insert({
-          nome: data.get("nome"),
-          cognome: data.get("cognome"),
-          telefono: telefonoFormatted,
-          email: data.get("email") || null,
-          codice_fiscale: data.get("codice_fiscale"),
-          qr_id: "phonesia_qr",
-          negozio_id: negozioId,
-        })
-        .select()
-        .single();
+let clienteFinale = clienteEsistente;
 
-      if (insertError || !nuovoCliente) {
-        console.error("Errore creazione cliente:", insertError);
-        alert("Errore durante la registrazione del cliente");
-        setLoading(false);
-        return;
-      }
+if (clienteEsistente) {
 
-      clienteFinale = nuovoCliente;
+  const { error: updateError } = await supabase
+    .from("phonesia_clienti")
+    .update({
+      nome: data.get("nome"),
+      cognome: data.get("cognome"),
+      email: data.get("email") || null,
+      codice_fiscale: data.get("codice_fiscale"),
+      negozio_id: negozioId
+    })
+    .eq("id", clienteEsistente.id);
+
+  if (updateError) {
+    console.error("Errore aggiornamento cliente:", updateError);
+  }
+
+  clienteFinale = clienteEsistente;
+
+} else {
+
+  const { data: nuovoCliente, error: insertError } = await supabase
+    .from("phonesia_clienti")
+    .insert({
+      nome: data.get("nome"),
+      cognome: data.get("cognome"),
+      telefono: telefonoFormatted,
+      email: data.get("email") || null,
+      codice_fiscale: data.get("codice_fiscale"),
+      qr_id: "phonesia_qr",
+      negozio_id: negozioId,
+    })
+    .select()
+    .single();
+
+  if (insertError || !nuovoCliente) {
+    console.error("Errore creazione cliente:", insertError);
+    alert("Errore durante la registrazione del cliente");
+    setLoading(false);
+    return;
+  }
+
+  clienteFinale = nuovoCliente;
+
+}
+
     }
 
     if (!clienteFinale) {
