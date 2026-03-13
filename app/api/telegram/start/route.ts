@@ -2,7 +2,8 @@ import { NextResponse } from "next/server"
 import { supabase } from "@/lib/supabaseClient"
 
 export async function POST(req: Request) {
-
+  
+  console.log("TELEGRAM WEBHOOK HIT")
   const body = await req.json()
 
   // Telegram manda diversi tipi di update
