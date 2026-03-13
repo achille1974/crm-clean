@@ -34,7 +34,6 @@ export default function QrForm({
 
     const telefonoRaw = String(data.get("telefono") || "").trim();
 
-    // Validazione numero italiano (9-10 cifre)
     if (!/^[0-9]{9,10}$/.test(telefonoRaw)) {
       alert("Inserisci un numero di telefono valido.");
       setLoading(false);
@@ -42,10 +41,6 @@ export default function QrForm({
     }
 
     const telefonoFormatted = `+39${telefonoRaw}`;
-
-    /* ===============================
-       1️⃣ RICERCA O CREAZIONE CLIENTE
-       =============================== */
 
     const { data: clienteEsistente, error: searchError } = await supabase
       .from("phonesia_clienti")
@@ -60,58 +55,51 @@ export default function QrForm({
       return;
     }
 
-/* ===============================
-   CREAZIONE O AGGIORNAMENTO CLIENTE
-   =============================== */
+    let clienteFinale = clienteEsistente;
 
-let clienteFinale = clienteEsistente;
+    if (clienteEsistente) {
+      const { error: updateError } = await supabase
+        .from("phonesia_clienti")
+        .update({
+          nome: data.get("nome"),
+          cognome: data.get("cognome"),
+          email: data.get("email") || null,
+          codice_fiscale: data.get("codice_fiscale"),
+          negozio_id: negozioId,
+        })
+        .eq("id", clienteEsistente.id);
 
-if (clienteEsistente) {
+      if (updateError) {
+        console.error("Errore aggiornamento cliente:", updateError);
+        alert("Errore aggiornamento cliente");
+        setLoading(false);
+        return;
+      }
 
-  const { error: updateError } = await supabase
-    .from("phonesia_clienti")
-    .update({
-      nome: data.get("nome"),
-      cognome: data.get("cognome"),
-      email: data.get("email") || null,
-      codice_fiscale: data.get("codice_fiscale"),
-      negozio_id: negozioId
-    })
-    .eq("id", clienteEsistente.id);
+      clienteFinale = clienteEsistente;
+    } else {
+      const { data: nuovoCliente, error: insertError } = await supabase
+        .from("phonesia_clienti")
+        .insert({
+          nome: data.get("nome"),
+          cognome: data.get("cognome"),
+          telefono: telefonoFormatted,
+          email: data.get("email") || null,
+          codice_fiscale: data.get("codice_fiscale"),
+          qr_id: "phonesia_qr",
+          negozio_id: negozioId,
+        })
+        .select()
+        .single();
 
-  if (updateError) {
-    console.error("Errore aggiornamento cliente:", updateError);
-  }
+      if (insertError || !nuovoCliente) {
+        console.error("Errore creazione cliente:", insertError);
+        alert("Errore durante la registrazione del cliente");
+        setLoading(false);
+        return;
+      }
 
-  clienteFinale = clienteEsistente;
-
-} else {
-
-  const { data: nuovoCliente, error: insertError } = await supabase
-    .from("phonesia_clienti")
-    .insert({
-      nome: data.get("nome"),
-      cognome: data.get("cognome"),
-      telefono: telefonoFormatted,
-      email: data.get("email") || null,
-      codice_fiscale: data.get("codice_fiscale"),
-      qr_id: "phonesia_qr",
-      negozio_id: negozioId,
-    })
-    .select()
-    .single();
-
-  if (insertError || !nuovoCliente) {
-    console.error("Errore creazione cliente:", insertError);
-    alert("Errore durante la registrazione del cliente");
-    setLoading(false);
-    return;
-  }
-
-  clienteFinale = nuovoCliente;
-
-}
-
+      clienteFinale = nuovoCliente;
     }
 
     if (!clienteFinale) {
@@ -119,10 +107,6 @@ if (clienteEsistente) {
       setLoading(false);
       return;
     }
-
-    /* ===============================
-       2️⃣ EVENTO CONSENSO PRIVACY
-       =============================== */
 
     const { error: errConsenso } = await registraPrivacyAccepted({
       cliente_id: clienteFinale.id,
@@ -136,10 +120,6 @@ if (clienteEsistente) {
       return;
     }
 
-    /* ===============================
-       2️⃣ BIS — CONSENSO MARKETING
-       =============================== */
-
     if (marketingAccepted) {
       await registraMarketingAccepted({
         cliente_id: clienteFinale.id,
@@ -148,22 +128,17 @@ if (clienteEsistente) {
       });
     }
 
-/* ===============================
-   3️⃣ REDIRECT TELEGRAM BOT
-   =============================== */
+    const telegramBot = process.env.NEXT_PUBLIC_TELEGRAM_BOT;
 
-const telegramBot = process.env.NEXT_PUBLIC_TELEGRAM_BOT;
+    if (!telegramBot) {
+      alert("Errore configurazione Telegram.");
+      setLoading(false);
+      return;
+    }
 
-if (!telegramBot) {
-  alert("Errore configurazione Telegram.");
-  setLoading(false);
-  return;
-}
+    setLoading(false);
 
-setLoading(false);
-
-window.location.href =
-  `https://t.me/${telegramBot}?start=${clienteFinale.id}`;
+    window.location.href = `https://t.me/${telegramBot}?start=${clienteFinale.id}`;
   }
 
   return (
