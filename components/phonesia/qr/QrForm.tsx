@@ -168,7 +168,7 @@ export default function QrForm({
       </h1>
 
       <p style={{ fontWeight: 700, marginBottom: 16 }}>
-  	Negozio: PHONESIA {nomeNegozio}
+  	{nomeNegozio}
       </p>      
 
       <form onSubmit={handleSubmit} style={{ display: "grid", gap: 12 }}>
