@@ -34,11 +34,15 @@ export default function Dashboard() {
 
       <h2>Clienti per negozio</h2>
 
-      {Object.entries(stats.clienti_per_negozio).map(([id, count]) => (
-        <p key={id}>
-          Negozio {id}: {count}
-        </p>
-      ))}
+{Object.entries(stats.clienti_per_negozio).map(([id, count]) => {
+  const numero = count as number
+
+  return (
+    <p key={id}>
+      Negozio {id}: {numero}
+    </p>
+  )
+})}
 
     </main>
   )
