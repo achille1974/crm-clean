@@ -121,22 +121,22 @@ export default function QrForm({
       });
     }
 
-    /* ===============================
-       3️⃣ REDIRECT DIRETTO WHATSAPP
-       =============================== */
+/* ===============================
+   3️⃣ REDIRECT TELEGRAM BOT
+   =============================== */
 
-    const waNumber = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER;
+const telegramBot = process.env.NEXT_PUBLIC_TELEGRAM_BOT;
 
-    if (!waNumber) {
-      alert("Errore configurazione WhatsApp.");
-      setLoading(false);
-      return;
-    }
+if (!telegramBot) {
+  alert("Errore configurazione Telegram.");
+  setLoading(false);
+  return;
+}
 
-    setLoading(false);
+setLoading(false);
 
-    window.location.href =
-      `https://wa.me/${waNumber.replace("+", "")}?text=OK`;
+window.location.href =
+  `https://t.me/${telegramBot}?start=${clienteFinale.id}`;
   }
 
   return (
