@@ -32,6 +32,10 @@ export default function Dashboard() {
         </p>
 
         <p>
+  	  <strong>Clienti registrati oggi:</strong> {stats.clienti_oggi}
+	</p>
+	
+	<p>
           <strong>Telegram attivi:</strong> {stats.telegram_attivi}
         </p>
 
