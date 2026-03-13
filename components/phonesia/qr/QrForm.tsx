@@ -23,12 +23,15 @@ export default function QrForm({
 }: {
   negozioId: number;
 }) {
+
   const nomeNegozio = NEGOZI[negozioId] || "Negozio";
+
   const [loading, setLoading] = useState(false);
   const [privacyAccepted, setPrivacyAccepted] = useState(false);
   const [marketingAccepted, setMarketingAccepted] = useState(false);
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+
     e.preventDefault();
     setLoading(true);
 
@@ -67,6 +70,7 @@ export default function QrForm({
     let clienteFinale = clienteEsistente;
 
     if (clienteEsistente) {
+
       const { error: updateError } = await supabase
         .from("phonesia_clienti")
         .update({
@@ -86,7 +90,9 @@ export default function QrForm({
       }
 
       clienteFinale = clienteEsistente;
+
     } else {
+
       const { data: nuovoCliente, error: insertError } = await supabase
         .from("phonesia_clienti")
         .insert({
@@ -137,38 +143,34 @@ export default function QrForm({
       });
     }
 
-/* ===============================
-   CLIENTE CON TELEGRAM GIÀ ATTIVO
-   =============================== */
+    if (clienteFinale.telegram_active) {
 
-if (clienteFinale.telegram_active) {
-  setLoading(false);
+      setLoading(false);
 
-  window.location.href =
-    `/phonesia/welcome?id=${clienteFinale.id}`;
+      window.location.href =
+        `/phonesia/welcome?id=${clienteFinale.id}`;
 
-  return;
-}
+      return;
+    }
 
-/* ===============================
-   REDIRECT TELEGRAM BOT
-   =============================== */
+    const telegramBot = process.env.NEXT_PUBLIC_TELEGRAM_BOT;
 
-const telegramBot = process.env.NEXT_PUBLIC_TELEGRAM_BOT;
+    if (!telegramBot) {
+      alert("Errore configurazione Telegram.");
+      setLoading(false);
+      return;
+    }
 
-if (!telegramBot) {
-  alert("Errore configurazione Telegram.");
-  setLoading(false);
-  return;
-}
+    setLoading(false);
 
-setLoading(false);
-
-window.location.href =
-  `https://t.me/${telegramBot}?start=${clienteFinale.id}`;
+    window.location.href =
+      `https://t.me/${telegramBot}?start=${clienteFinale.id}`;
+  }
 
   return (
+
     <main style={{ maxWidth: 520, margin: "40px auto", padding: 24 }}>
+
       <div style={{ display: "flex", justifyContent: "center", marginBottom: 20 }}>
         <Image
           src="/phonesia/Logo_Phonesia-1.png"
@@ -181,44 +183,44 @@ window.location.href =
       </div>
 
       <h1 style={{ fontSize: 26, fontWeight: 900, marginBottom: 4 }}>
-       Registrazione PHONESIA
+        Registrazione PHONESIA
       </h1>
 
       <p style={{ fontWeight: 700, marginBottom: 16 }}>
-  	{nomeNegozio}
-      </p>      
+        {nomeNegozio}
+      </p>
 
       <form onSubmit={handleSubmit} style={{ display: "grid", gap: 12 }}>
 
-	<div style={{ display: "flex", alignItems: "center", border: "1px solid #ccc", padding: "10px" }}>
-  <span style={{ marginRight: 8 }}>👤</span>
-  <input
-    name="nome"
-    placeholder="Nome"
-    required
-    style={{ border: "none", outline: "none", flex: 1 }}
-  />
-</div>
+        <div style={{ display: "flex", alignItems: "center", border: "1px solid #ccc", padding: "10px" }}>
+          <span style={{ marginRight: 8 }}>👤</span>
+          <input
+            name="nome"
+            placeholder="Nome"
+            required
+            style={{ border: "none", outline: "none", flex: 1 }}
+          />
+        </div>
 
-<div style={{ display: "flex", alignItems: "center", border: "1px solid #ccc", padding: "10px" }}>
-  <span style={{ marginRight: 8 }}>👤</span>
-  <input
-    name="cognome"
-    placeholder="Cognome"
-    required
-    style={{ border: "none", outline: "none", flex: 1 }}
-  />
-</div>
+        <div style={{ display: "flex", alignItems: "center", border: "1px solid #ccc", padding: "10px" }}>
+          <span style={{ marginRight: 8 }}>👤</span>
+          <input
+            name="cognome"
+            placeholder="Cognome"
+            required
+            style={{ border: "none", outline: "none", flex: 1 }}
+          />
+        </div>
 
-<div style={{ display: "flex", alignItems: "center", border: "1px solid #ccc", padding: "10px" }}>
-  <span style={{ marginRight: 8 }}>🪪</span>
-  <input
-    name="codice_fiscale"
-    placeholder="Codice Fiscale"
-    required
-    style={{ border: "none", outline: "none", flex: 1 }}
-  />
-</div>
+        <div style={{ display: "flex", alignItems: "center", border: "1px solid #ccc", padding: "10px" }}>
+          <span style={{ marginRight: 8 }}>🪪</span>
+          <input
+            name="codice_fiscale"
+            placeholder="Codice Fiscale"
+            required
+            style={{ border: "none", outline: "none", flex: 1 }}
+          />
+        </div>
 
         <div style={{ display: "flex" }}>
           <span
@@ -248,14 +250,14 @@ window.location.href =
           />
         </div>
 
-	<div style={{ display: "flex", alignItems: "center", border: "1px solid #ccc", padding: "10px" }}>
-  <span style={{ marginRight: 8 }}>📧</span>
-  <input
-    name="email"
-    placeholder="Email (facoltativa)"
-    style={{ border: "none", outline: "none", flex: 1 }}
-  />
-</div>
+        <div style={{ display: "flex", alignItems: "center", border: "1px solid #ccc", padding: "10px" }}>
+          <span style={{ marginRight: 8 }}>📧</span>
+          <input
+            name="email"
+            placeholder="Email (facoltativa)"
+            style={{ border: "none", outline: "none", flex: 1 }}
+          />
+        </div>
 
         <QrConsensi
           privacyAccepted={privacyAccepted}
@@ -264,28 +266,27 @@ window.location.href =
           onMarketingChange={setMarketingAccepted}
         />
 
-<button
-  type="submit"
-  disabled={loading || !privacyAccepted}
-  style={{
-    marginTop: 16,
-    padding: "14px",
-    fontSize: "18px",
-    fontWeight: "bold",
-    background: "#ff7a00",
-    color: "white",
-    border: "none",
-    borderRadius: "6px",
-    cursor: loading || !privacyAccepted ? "not-allowed" : "pointer",
-    opacity: loading || !privacyAccepted ? 0.6 : 1
-  }}
->
-  {loading ? "Invio..." : "Registrati"}
-</button>
-      
-    {loading ? "Invio..." : "Registrati"}
+        <button
+          type="submit"
+          disabled={loading || !privacyAccepted}
+          style={{
+            marginTop: 16,
+            padding: "14px",
+            fontSize: "18px",
+            fontWeight: "bold",
+            background: "#ff7a00",
+            color: "white",
+            border: "none",
+            borderRadius: "6px",
+            cursor: loading || !privacyAccepted ? "not-allowed" : "pointer",
+            opacity: loading || !privacyAccepted ? 0.6 : 1
+          }}
+        >
+          {loading ? "Invio..." : "Registrati"}
         </button>
+
       </form>
+
     </main>
   );
 }
