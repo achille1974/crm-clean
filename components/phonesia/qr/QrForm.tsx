@@ -264,7 +264,7 @@ window.location.href =
           onMarketingChange={setMarketingAccepted}
         />
 
-	<button
+<button
   type="submit"
   disabled={loading || !privacyAccepted}
   style={{

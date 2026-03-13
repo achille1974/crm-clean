@@ -13,8 +13,6 @@ export async function GET() {
 
   const totaleClienti = clienti?.length || 0;
 
- const oggi = new Date().toISOString().slice(0, 10);
-
 const clientiOggi =
   clienti?.filter((c: any) =>
     c.created_at?.startsWith(oggi)
