@@ -20,8 +20,8 @@ export default function QrConsensi({
           onChange={(e) => onPrivacyChange(e.target.checked)}
         />{" "}
         Acconsento al trattamento dei miei dati personali da parte di Phonesia
-        per finalità di registrazione, contatto e assistenza, incluso l’invio
-        di un messaggio di benvenuto via WhatsApp, come descritto
+        per finalità di registrazione, contatto e assistenza, comunicazioni, incluso l’invio
+        di un messaggio di benvenuto, tramite canali digitali, come descritto
         nell’informativa privacy.
       </label>
 
@@ -41,7 +41,7 @@ export default function QrConsensi({
           target="_blank"
           rel="noopener noreferrer"
         >
-          https://app.crm-supreme.it/phonesia/privacy
+          https://crm-clean.vercel.app/phonesia/privacy
         </a>
       </p>
     </div>
