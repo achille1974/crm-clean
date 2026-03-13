@@ -10,9 +10,18 @@ import {
 
 import QrConsensi from "./QrConsensi";
 
+const NEGOZI: Record<number, string> = {
+  1: "Floridia",
+  2: "Augusta",
+  3: "Siracusa",
+  4: "Avola",
+  5: "Tabacchino Floridia",
+};
+
 export default function QrForm({
   negozioId,
 }: {
+  const nomeNegozio = NEGOZI[negozioId] || "Negozio";
   negozioId: number;
 }) {
   const [loading, setLoading] = useState(false);
@@ -154,9 +163,13 @@ export default function QrForm({
         />
       </div>
 
-      <h1 style={{ fontSize: 26, fontWeight: 900, marginBottom: 12 }}>
-        Registrazione PHONESIA
+      <h1 style={{ fontSize: 26, fontWeight: 900, marginBottom: 4 }}>
+       Registrazione PHONESIA
       </h1>
+
+      <p style={{ fontWeight: 700, marginBottom: 16 }}>
+  	Negozio: PHONESIA {nomeNegozio}
+      </p>      
 
       <form onSubmit={handleSubmit} style={{ display: "grid", gap: 12 }}>
         <input name="nome" placeholder="Nome" required />
