@@ -5,7 +5,7 @@ export async function GET() {
 
   const { data: clienti } = await supabase
     .from("phonesia_clienti")
-    .select("negozio_id, telegram_active");
+    .select("negozio_id, telegram_active, created_at");
 
   const { data: negozi } = await supabase
     .from("phonesia_negozi")
@@ -24,6 +24,10 @@ const clientiOggi =
     clienti?.filter((c) => c.telegram_active === true).length || 0;
 
   const clientiPerNegozio: Record<string, number> = {};
+  
+  const clientiOggiPerNegozio: Record<string, number> = {};
+
+  const oggi = new Date().toISOString().slice(0, 10);
 
   clienti?.forEach((c) => {
     const negozio = negozi?.find((n) => n.codice === c.negozio_id);
@@ -32,6 +36,11 @@ const clientiOggi =
 
     clientiPerNegozio[nomeNegozio] =
       (clientiPerNegozio[nomeNegozio] || 0) + 1;
+
+    if (c.created_at?.startsWith(oggi)) {
+    clientiOggiPerNegozio[nomeNegozio] =
+      (clientiOggiPerNegozio[nomeNegozio] || 0) + 1;
+  }
   });
 
   return NextResponse.json({
@@ -39,5 +48,6 @@ const clientiOggi =
     clienti_oggi: clientiOggi,
     telegram_attivi: telegramAttivi,
     clienti_per_negozio: clientiPerNegozio,
+    clienti_oggi_per_negozio: clientiOggiPerNegozio,
   });
 }
