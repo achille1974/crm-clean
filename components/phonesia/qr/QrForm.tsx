@@ -189,9 +189,36 @@ window.location.href =
       </p>      
 
       <form onSubmit={handleSubmit} style={{ display: "grid", gap: 12 }}>
-        <input name="nome" placeholder="Nome" required />
-        <input name="cognome" placeholder="Cognome" required />
-        <input name="codice_fiscale" placeholder="Codice Fiscale" required />
+
+	<div style={{ display: "flex", alignItems: "center", border: "1px solid #ccc", padding: "10px" }}>
+  <span style={{ marginRight: 8 }}>👤</span>
+  <input
+    name="nome"
+    placeholder="Nome"
+    required
+    style={{ border: "none", outline: "none", flex: 1 }}
+  />
+</div>
+
+<div style={{ display: "flex", alignItems: "center", border: "1px solid #ccc", padding: "10px" }}>
+  <span style={{ marginRight: 8 }}>👤</span>
+  <input
+    name="cognome"
+    placeholder="Cognome"
+    required
+    style={{ border: "none", outline: "none", flex: 1 }}
+  />
+</div>
+
+<div style={{ display: "flex", alignItems: "center", border: "1px solid #ccc", padding: "10px" }}>
+  <span style={{ marginRight: 8 }}>🪪</span>
+  <input
+    name="codice_fiscale"
+    placeholder="Codice Fiscale"
+    required
+    style={{ border: "none", outline: "none", flex: 1 }}
+  />
+</div>
 
         <div style={{ display: "flex" }}>
           <span
@@ -221,7 +248,14 @@ window.location.href =
           />
         </div>
 
-        <input name="email" placeholder="Email (facoltativa)" />
+	<div style={{ display: "flex", alignItems: "center", border: "1px solid #ccc", padding: "10px" }}>
+  <span style={{ marginRight: 8 }}>📧</span>
+  <input
+    name="email"
+    placeholder="Email (facoltativa)"
+    style={{ border: "none", outline: "none", flex: 1 }}
+  />
+</div>
 
         <QrConsensi
           privacyAccepted={privacyAccepted}
@@ -230,17 +264,26 @@ window.location.href =
           onMarketingChange={setMarketingAccepted}
         />
 
-        <button
-          type="submit"
-          disabled={loading || !privacyAccepted}
-          style={{
-            marginTop: 10,
-            fontWeight: 900,
-            opacity: loading || !privacyAccepted ? 0.6 : 1,
-            cursor: loading || !privacyAccepted ? "not-allowed" : "pointer",
-          }}
-        >
-          {loading ? "Invio..." : "Registrati"}
+	<button
+  type="submit"
+  disabled={loading || !privacyAccepted}
+  style={{
+    marginTop: 16,
+    padding: "14px",
+    fontSize: "18px",
+    fontWeight: "bold",
+    background: "#ff7a00",
+    color: "white",
+    border: "none",
+    borderRadius: "6px",
+    cursor: loading || !privacyAccepted ? "not-allowed" : "pointer",
+    opacity: loading || !privacyAccepted ? 0.6 : 1
+  }}
+>
+  {loading ? "Invio..." : "Registrati"}
+</button>
+      
+    {loading ? "Invio..." : "Registrati"}
         </button>
       </form>
     </main>
