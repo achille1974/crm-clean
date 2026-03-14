@@ -55,7 +55,7 @@ export async function POST(req: Request) {
 
 La tua registrazione è stata attivata con successo.
 
-Qui trovi il tuo biglietto digitale:
+Qui trovi il nostro biglietto da visita digitale:
 https://crm-clean.vercel.app/phonesia/card/${clienteId}`
   })
 })
