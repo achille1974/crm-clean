@@ -23,7 +23,7 @@ export async function POST(req: Request) {
 // se NON è /start → manda il messaggio all'AI
 if (!text.startsWith("/start")) {
 
-  const aiResponse = await fetch("http://localhost:8099/chat", {
+  const aiResponse = await fetch("https://syndetically-reverent-verdell.ngrok-free.dev/chat", {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
