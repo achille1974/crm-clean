@@ -20,10 +20,34 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true })
   }
 
-  // Gestiamo solo il comando /start
-  if (!text.startsWith("/start")) {
-    return NextResponse.json({ ok: true })
-  }
+// se NON è /start → manda il messaggio all'AI
+if (!text.startsWith("/start")) {
+
+  const aiResponse = await fetch("http://localhost:8099/chat", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      message: text
+    })
+  })
+
+  const aiData = await aiResponse.json()
+
+  await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      chat_id: telegramId,
+      text: aiData.response
+    })
+  })
+
+  return NextResponse.json({ ok: true })
+}
 
   const parts = text.split(" ")
   const clienteId = parts[1]
