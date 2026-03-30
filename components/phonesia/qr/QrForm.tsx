@@ -34,7 +34,7 @@ export default function QrForm({
     setLoading(true);
 
     if (!privacyAccepted) {
-      alert("Devi accettare la Privacy Policy per continuare.");
+      alert("Devi confermare di aver letto l’informativa privacy per continuare.");
       setLoading(false);
       return;
     }
@@ -187,8 +187,9 @@ export default function QrForm({
 
                 <p className="mx-auto max-w-2xl text-base leading-relaxed text-slate-700 md:text-lg">
                   Registrati per restare in contatto con il tuo punto vendita{" "}
-                  <strong>PHONESIA {nomeNegozio.toUpperCase()}</strong> e ricevere
-                  assistenza, comunicazioni utili e supporto diretto.
+                  <strong>PHONESIA {nomeNegozio.toUpperCase()}</strong>, ricevere
+                  assistenza diretta e, se lo vorrai, accedere anche a offerte
+                  personalizzate e comunicazioni utili sui servizi più adatti a te.
                 </p>
               </div>
 

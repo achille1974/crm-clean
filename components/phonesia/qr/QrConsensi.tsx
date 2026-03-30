@@ -24,13 +24,14 @@ export default function QrConsensi({
 
           <div className="text-sm leading-relaxed text-slate-700">
             <div className="font-semibold text-slate-900">
-              Acconsento al trattamento dei dati personali
+              Confermo di aver letto l’informativa privacy
             </div>
 
             <p className="mt-1">
               Dichiaro di aver letto e compreso l’informativa privacy e autorizzo
-              il trattamento dei miei dati per le finalità connesse alla
-              registrazione e alla gestione del rapporto con PHONESIA.
+              il trattamento dei miei dati per le finalità necessarie alla
+              registrazione, alla gestione del rapporto con PHONESIA e alle
+              comunicazioni di servizio.
             </p>
 
             <p className="mt-2">
@@ -44,11 +45,19 @@ export default function QrConsensi({
                 QUI
               </a>
             </p>
+
+            <p className="mt-2 text-slate-500">
+              Questo passaggio è necessario per completare la registrazione.
+            </p>
           </div>
         </label>
       </div>
 
-      <div className="rounded-2xl border border-slate-200 bg-white p-4">
+      <div className="rounded-2xl border border-orange-200 bg-gradient-to-br from-orange-50 via-white to-amber-50 p-4 shadow-[0_8px_24px_rgba(249,115,22,0.08)]">
+        <div className="mb-3 inline-flex rounded-full border border-orange-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-orange-700">
+          Offerte e vantaggi personalizzati
+        </div>
+
         <label className="flex items-start gap-3">
           <input
             type="checkbox"
@@ -59,16 +68,30 @@ export default function QrConsensi({
 
           <div className="text-sm leading-relaxed text-slate-700">
             <div className="font-semibold text-slate-900">
-              Acconsento alle comunicazioni commerciali
+              Sì, desidero ricevere offerte commerciali e comunicazioni promozionali
             </div>
 
             <p className="mt-1">
-              Accetto di ricevere aggiornamenti, offerte, promozioni e comunicazioni
-              informative da parte di PHONESIA tramite i canali di contatto forniti.
+              Potremo inviarti solo comunicazioni utili e pertinenti ai tuoi servizi,
+              come proposte per risparmiare, migliorare la tua offerta o attivare
+              servizi che ti mancano.
             </p>
 
-            <p className="mt-2 text-slate-500">
-              Consenso facoltativo. Puoi registrarti anche senza attivarlo.
+            <div className="mt-3 rounded-2xl border border-orange-100 bg-white/80 p-3">
+              <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                Esempi di comunicazioni
+              </div>
+
+              <ul className="mt-2 space-y-1.5 text-sm text-slate-700">
+                <li>• offerte per abbassare la spesa mensile</li>
+                <li>• promo su mobile, fisso o energia</li>
+                <li>• vantaggi e opportunità riservati ai clienti registrati</li>
+              </ul>
+            </div>
+
+            <p className="mt-3 text-slate-500">
+              Consenso facoltativo. Puoi registrarti anche senza attivarlo e
+              potrai revocarlo in qualsiasi momento in modo semplice.
             </p>
           </div>
         </label>
