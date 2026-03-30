@@ -1,4 +1,3 @@
-import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -12,10 +11,7 @@ if (!supabaseUrl || !supabaseServiceRoleKey) {
 }
 
 const supabase = createClient(supabaseUrl, supabaseServiceRoleKey, {
-  auth: {
-    persistSession: false,
-    autoRefreshToken: false,
-  },
+  auth: { persistSession: false, autoRefreshToken: false },
 });
 
 type TelegramUser = {
@@ -58,7 +54,6 @@ async function sendTelegramMessage(chatId: number | string, text: string) {
     body: JSON.stringify({
       chat_id: chatId,
       text,
-      disable_web_page_preview: false,
     }),
   });
 
@@ -176,16 +171,15 @@ async function linkClienteTelegram(params: {
 
 export async function POST(req: Request) {
   try {
-    console.log("TELEGRAM WEBHOOK HIT");
-
     const update = (await req.json()) as TelegramUpdate;
+
     const message = update.message;
     const text = message?.text?.trim() || "";
     const from = message?.from;
     const chat = message?.chat;
 
     if (!message || !from || !chat) {
-      return NextResponse.json({ ok: true });
+      return Response.json({ ok: true });
     }
 
     const telegramUserId = String(from.id);
@@ -198,8 +192,7 @@ export async function POST(req: Request) {
       const clienteId = Number(startPayload);
 
       if (!Number.isFinite(clienteId)) {
-        const risposta =
-          "Link non valido. Per favore registrati di nuovo tramite il QR del negozio.";
+        const risposta = "Link non valido. Per favore registrati di nuovo tramite il QR del negozio.";
         await sendTelegramMessage(chat.id, risposta);
 
         await logConversation({
@@ -216,7 +209,7 @@ export async function POST(req: Request) {
           metadata: { startPayload },
         });
 
-        return NextResponse.json({ ok: true });
+        return Response.json({ ok: true });
       }
 
       const cliente = await findClienteById(clienteId);
@@ -240,7 +233,7 @@ export async function POST(req: Request) {
           metadata: { clienteId },
         });
 
-        return NextResponse.json({ ok: true });
+        return Response.json({ ok: true });
       }
 
       const existingByTelegram = await findClienteByTelegramUserId(telegramUserId);
@@ -268,7 +261,7 @@ export async function POST(req: Request) {
           },
         });
 
-        return NextResponse.json({ ok: true });
+        return Response.json({ ok: true });
       }
 
       await linkClienteTelegram({
@@ -278,16 +271,13 @@ export async function POST(req: Request) {
         telegramUsername,
       });
 
-      const link = `https://crm-clean.vercel.app/phonesia/card/${clienteId}`;
-
-      const risposta = `Benvenuto in PHONESIA! 🎉
-
-La tua registrazione è stata completata con successo.
-
-Da questo momento puoi contattarci direttamente qui su Telegram ogni volta che hai bisogno di informazioni, assistenza o consigli sui nostri servizi.
-
-Qui trovi il nostro biglietto da visita digitale:
-${link}`;
+      const risposta =
+        `Ciao ${cliente.nome ?? ""}, il tuo profilo Phonesia è stato collegato correttamente a Telegram.\n\n` +
+        `Da questo momento puoi scrivermi messaggi come:\n` +
+        `- Qual è la mia offerta?\n` +
+        `- Ho un contratto registrato?\n` +
+        `- In quale negozio sono associato?\n\n` +
+        `Se non riesco ad aiutarti, ti passo a un operatore.`;
 
       await sendTelegramMessage(chat.id, risposta);
 
@@ -308,7 +298,7 @@ ${link}`;
         },
       });
 
-      return NextResponse.json({ ok: true });
+      return Response.json({ ok: true });
     }
 
     const cliente = await findClienteByTelegramUserId(telegramUserId);
@@ -330,16 +320,11 @@ ${link}`;
         stato: "completato",
       });
 
-      return NextResponse.json({ ok: true });
+      return Response.json({ ok: true });
     }
 
-    const link = `https://crm-clean.vercel.app/phonesia/card/${cliente.id}`;
-
-    const risposta = `Il tuo profilo PHONESIA è attivo correttamente su Telegram.
-
-Qui trovi il tuo biglietto da visita digitale:
-${link}`;
-
+    const risposta =
+      "Ti ho riconosciuto correttamente. La prossima fase sarà l’agente Phonesia, così potrò rispondere sulla tua offerta e sui tuoi contratti.";
     await sendTelegramMessage(chat.id, risposta);
 
     await logConversation({
@@ -354,9 +339,9 @@ ${link}`;
       stato: "completato",
     });
 
-    return NextResponse.json({ ok: true });
+    return Response.json({ ok: true });
   } catch (error) {
     console.error("Telegram /start route error:", error);
-    return NextResponse.json({ ok: false }, { status: 200 });
+    return Response.json({ ok: false }, { status: 200 });
   }
 }

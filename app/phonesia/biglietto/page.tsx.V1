@@ -2,6 +2,7 @@ export default function BigliettoPhonesiaPage() {
   return (
     <main className="min-h-screen bg-[#f8fafc] text-slate-900">
       <div className="mx-auto w-full max-w-6xl px-5 py-8 md:px-8 md:py-12">
+
         {/* HERO */}
         <section className="mb-8 overflow-hidden rounded-[36px] border border-slate-200 bg-white shadow-[0_10px_40px_rgba(15,23,42,0.06)]">
           <div className="relative px-6 py-10 md:px-10 md:py-14">
@@ -16,7 +17,7 @@ export default function BigliettoPhonesiaPage() {
                 />
               </div>
 
-              <div className="mx-auto mb-6 max-w-max rounded-full border border-orange-200 bg-orange-50 px-4 py-1.5 text-xs font-semibold uppercase tracking-[0.22em] text-orange-700">
+              <div className="mx-auto mb-8 max-w-max rounded-full border border-orange-200 bg-orange-50 px-4 py-1.5 text-xs font-semibold uppercase tracking-[0.22em] text-orange-700">
                 Assistenza reale • Negozi reali • Persone reali
               </div>
 
@@ -38,12 +39,14 @@ export default function BigliettoPhonesiaPage() {
                     Siamo un negozio su strada.
                   </p>
 
-                  <p>Ci trovi qui oggi, domani e nel tempo.</p>
+                  <p>
+                    Ci trovi qui oggi, domani e nel tempo.
+                  </p>
 
                   <p>
                     I nostri numeri sono a tua disposizione{" "}
-                    <strong>sia telefonicamente che su WhatsApp</strong>, per
-                    aiutarti, consigliarti e seguirti in tutto ciò che trattiamo.
+                    <strong>sia telefonicamente che su WhatsApp</strong>, per aiutarti,
+                    consigliarti e seguirti in tutto ciò che trattiamo.
                   </p>
 
                   <p>
@@ -72,32 +75,13 @@ export default function BigliettoPhonesiaPage() {
                     Noi siamo PHONESIA.
                   </p>
                 </div>
-
-                <div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
-                  <a
-                    href="#responsabile"
-                    className="inline-flex items-center justify-center rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
-                  >
-                    Parla con il responsabile
-                  </a>
-
-                  <a
-                    href="#negozi"
-                    className="inline-flex items-center justify-center rounded-2xl border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                  >
-                    Vai ai negozi
-                  </a>
-                </div>
               </div>
             </div>
           </div>
         </section>
 
         {/* RESPONSABILE */}
-        <section
-          id="responsabile"
-          className="mb-8 rounded-[32px] border border-slate-200 bg-white p-6 shadow-[0_10px_40px_rgba(15,23,42,0.06)] md:p-8"
-        >
+        <section className="mb-8 rounded-[32px] border border-slate-200 bg-white p-6 shadow-[0_10px_40px_rgba(15,23,42,0.06)] md:p-8">
           <div className="mb-5">
             <div className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
               Responsabile generale
@@ -134,7 +118,7 @@ export default function BigliettoPhonesiaPage() {
         </section>
 
         {/* TITOLO SEZIONE */}
-        <section id="negozi" className="mb-6">
+        <section className="mb-6">
           <div className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
             Rete PHONESIA
           </div>
@@ -142,77 +126,140 @@ export default function BigliettoPhonesiaPage() {
             Contatti negozi
           </h2>
           <p className="mt-2 max-w-2xl text-sm text-slate-600 md:text-base">
-            Contatta direttamente il punto vendita o la persona giusta per
-            ricevere assistenza, supporto e informazioni sui servizi PHONESIA.
+            Contatta direttamente il punto vendita o la persona giusta per ricevere assistenza,
+            supporto e informazioni sui servizi PHONESIA.
           </p>
         </section>
 
         {/* GRID NEGOZI */}
         <section className="grid gap-6 lg:grid-cols-2">
-          <StoreCard
-            nome="PHONESIA FLORIDIA"
-            mapsUrl="https://www.google.com/maps/search/?api=1&query=Corso+Vittorio+Emanuele+735+Floridia"
-            indirizzo="Corso Vittorio Emanuele 735/737 – Floridia"
-          >
-            <StaffCard
-              nome="Alba"
-              tel="+393349474319"
-              wa="https://wa.me/393349474319"
-            />
-            <StaffCard
-              nome="Rosy"
-              tel="+393282607113"
-              wa="https://wa.me/393282607113"
-            />
-          </StoreCard>
 
-          <StoreCard
-            nome="PHONESIA AUGUSTA"
-            mapsUrl="https://www.google.com/maps/search/?api=1&query=Viale+Italia+195+Augusta"
-            indirizzo="Viale Italia 195/197 – Augusta"
-          >
-            <StaffCard
-              nome="Federico"
-              tel="+393202927455"
-              wa="https://wa.me/393202927455"
-            />
-            <StaffCard
-              nome="Damiano"
-              tel="+393761162326"
-              wa="https://wa.me/393761162326"
-            />
-          </StoreCard>
+          {/* FLORIDIA */}
+          <div className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-[0_10px_40px_rgba(15,23,42,0.05)] md:p-7">
+            <div className="mb-5">
+              <h3 className="text-2xl font-black tracking-tight text-slate-950">
+                PHONESIA FLORIDIA
+              </h3>
+              <a
+                href="https://www.google.com/maps/search/?api=1&query=Corso+Vittorio+Emanuele+735+Floridia"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-2 inline-block text-sm text-slate-600 underline underline-offset-4"
+              >
+                📍 Corso Vittorio Emanuele 735/737 – Floridia
+              </a>
+            </div>
 
-          <StoreCard
-            nome="PHONESIA SIRACUSA"
-            mapsUrl="https://www.google.com/maps/search/?api=1&query=Corso+Gelone+41+Siracusa"
-            indirizzo="Corso Gelone 41 – Siracusa"
-          >
-            <StaffCard
-              nome="Andrea"
-              tel="+393313137775"
-              wa="https://wa.me/393313137775"
-            />
-          </StoreCard>
+            <div className="space-y-4">
+              <StaffCard
+                nome="Alba"
+                tel="+393349474319"
+                wa="https://wa.me/393349474319"
+              />
+              <StaffCard
+                nome="Rosy"
+                tel="+393282607113"
+                wa="https://wa.me/393282607113"
+              />
+            </div>
+          </div>
 
-          <StoreCard
-            nome="PHONESIA AVOLA"
-            mapsUrl="https://www.google.com/maps/search/?api=1&query=Corso+Vittorio+Emanuele+281+Avola"
-            indirizzo="Corso Vittorio Emanuele 281/283 – Avola"
-          >
-            <StaffCard
-              nome="Gaetano"
-              tel="+393917510115"
-              wa="https://wa.me/393917510115"
-            />
-          </StoreCard>
+          {/* AUGUSTA */}
+          <div className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-[0_10px_40px_rgba(15,23,42,0.05)] md:p-7">
+            <div className="mb-5">
+              <h3 className="text-2xl font-black tracking-tight text-slate-950">
+                PHONESIA AUGUSTA
+              </h3>
+              <a
+                href="https://www.google.com/maps/search/?api=1&query=Viale+Italia+195+Augusta"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-2 inline-block text-sm text-slate-600 underline underline-offset-4"
+              >
+                📍 Viale Italia 195/197 – Augusta
+              </a>
+            </div>
 
-          <StoreCard
-            nome="PHONESIA TABACCHI BELTRAMI"
-            mapsUrl="https://www.google.com/maps/search/?api=1&query=Via+Archimede+202+Siracusa"
-            indirizzo="Via Archimede 202 – Siracusa"
-            fullWidth
-          >
+            <div className="space-y-4">
+              <StaffCard
+                nome="Federico"
+                tel="+393202927455"
+                wa="https://wa.me/393202927455"
+              />
+              <StaffCard
+                nome="Damiano"
+                tel="+393761162326"
+                wa="https://wa.me/393761162326"
+              />
+            </div>
+          </div>
+
+          {/* SIRACUSA */}
+          <div className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-[0_10px_40px_rgba(15,23,42,0.05)] md:p-7">
+            <div className="mb-5">
+              <h3 className="text-2xl font-black tracking-tight text-slate-950">
+                PHONESIA SIRACUSA
+              </h3>
+              <a
+                href="https://www.google.com/maps/search/?api=1&query=Corso+Gelone+41+Siracusa"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-2 inline-block text-sm text-slate-600 underline underline-offset-4"
+              >
+                📍 Corso Gelone 41 – Siracusa
+              </a>
+            </div>
+
+            <div className="space-y-4">
+              <StaffCard
+                nome="Andrea"
+                tel="+393313137775"
+                wa="https://wa.me/393313137775"
+              />
+            </div>
+          </div>
+
+          {/* AVOLA */}
+          <div className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-[0_10px_40px_rgba(15,23,42,0.05)] md:p-7">
+            <div className="mb-5">
+              <h3 className="text-2xl font-black tracking-tight text-slate-950">
+                PHONESIA AVOLA
+              </h3>
+              <a
+                href="https://www.google.com/maps/search/?api=1&query=Corso+Vittorio+Emanuele+281+Avola"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-2 inline-block text-sm text-slate-600 underline underline-offset-4"
+              >
+                📍 Corso Vittorio Emanuele 281/283 – Avola
+              </a>
+            </div>
+
+            <div className="space-y-4">
+              <StaffCard
+                nome="Gaetano"
+                tel="+393917510115"
+                wa="https://wa.me/393917510115"
+              />
+            </div>
+          </div>
+
+          {/* TABACCHI BELTRAMI */}
+          <div className="rounded-[30px] border border-slate-200 bg-white p-6 shadow-[0_10px_40px_rgba(15,23,42,0.05)] md:p-7 lg:col-span-2">
+            <div className="mb-5">
+              <h3 className="text-2xl font-black tracking-tight text-slate-950">
+                PHONESIA TABACCHI BELTRAMI
+              </h3>
+              <a
+                href="https://www.google.com/maps/search/?api=1&query=Via+Archimede+202+Siracusa"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-2 inline-block text-sm text-slate-600 underline underline-offset-4"
+              >
+                📍 Via Archimede 202 – Siracusa
+              </a>
+            </div>
+
             <div className="max-w-md">
               <StaffCard
                 nome="Achille"
@@ -220,90 +267,10 @@ export default function BigliettoPhonesiaPage() {
                 wa="https://wa.me/393473214561"
               />
             </div>
-          </StoreCard>
-        </section>
-
-        {/* CTA FINALE */}
-        <section className="mt-8 rounded-[32px] border border-slate-200 bg-white p-6 shadow-[0_10px_40px_rgba(15,23,42,0.05)] md:p-8">
-          <div className="mx-auto max-w-3xl text-center">
-            <div className="mb-3 text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
-              Sempre a disposizione
-            </div>
-
-            <h2 className="text-2xl font-black tracking-tight text-slate-950 md:text-3xl">
-              Quando hai bisogno, PHONESIA c’è
-            </h2>
-
-            <p className="mt-3 text-sm leading-relaxed text-slate-600 md:text-base">
-              Per assistenza, informazioni o consigli sui servizi, puoi contattarci
-              direttamente dal negozio più vicino oppure scrivere al responsabile
-              generale della rete PHONESIA.
-            </p>
-
-            <div className="mt-6 flex flex-col justify-center gap-3 sm:flex-row">
-              <a
-                href="tel:+393917000017"
-                className="inline-flex items-center justify-center rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
-              >
-                📞 Chiama Marco
-              </a>
-
-              <a
-                href="https://wa.me/393917000017"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center justify-center rounded-2xl bg-green-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-green-700"
-              >
-                💬 WhatsApp Marco
-              </a>
-            </div>
           </div>
         </section>
       </div>
     </main>
-  );
-}
-
-function StoreCard({
-  nome,
-  mapsUrl,
-  indirizzo,
-  children,
-  fullWidth = false,
-}: {
-  nome: string;
-  mapsUrl: string;
-  indirizzo: string;
-  children: React.ReactNode;
-  fullWidth?: boolean;
-}) {
-  return (
-    <div
-      className={[
-        "rounded-[30px] border border-slate-200 bg-white p-6 shadow-[0_10px_40px_rgba(15,23,42,0.05)] md:p-7",
-        fullWidth ? "lg:col-span-2" : "",
-      ].join(" ")}
-    >
-      <div className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h3 className="text-2xl font-black tracking-tight text-slate-950">
-            {nome}
-          </h3>
-          <p className="mt-2 text-sm text-slate-600">{indirizzo}</p>
-        </div>
-
-        <a
-          href={mapsUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center justify-center rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-        >
-          📍 Apri su Maps
-        </a>
-      </div>
-
-      <div className="space-y-4">{children}</div>
-    </div>
   );
 }
 

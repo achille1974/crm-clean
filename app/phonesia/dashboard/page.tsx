@@ -1,13 +1,11 @@
-import KpiCards from "@/components/phonesia/dashboard/KpiCards";
-import SimpleBarChart from "@/components/phonesia/dashboard/SimpleBarChart";
-import ConversionTable from "@/components/phonesia/dashboard/ConversionTable";
+import Link from "next/link";
+
 import Filters from "@/components/phonesia/dashboard/Filters";
 import {
   getContrattiPerNegozio,
   getContrattiPerOperatore,
   getConversionePerNegozio,
   getDashboardKpis,
-  getLeadPerNegozio,
   getNegozioOptions,
   type DashboardFilters,
 } from "@/lib/phonesia/dashboard";
@@ -27,6 +25,29 @@ function getSingleValue(value: string | string[] | undefined): string | undefine
   return value;
 }
 
+function buildHref(path: string, filters: DashboardFilters) {
+  const params = new URLSearchParams();
+
+  if (filters.negozioCodice) {
+    params.set("negozio", String(filters.negozioCodice));
+  }
+
+  if (filters.dateFrom) {
+    params.set("from", filters.dateFrom);
+  }
+
+  if (filters.dateTo) {
+    params.set("to", filters.dateTo);
+  }
+
+  const query = params.toString();
+  return query ? `${path}?${query}` : path;
+}
+
+function formatPct(value: number) {
+  return `${value}%`;
+}
+
 export default async function PhonesiaDashboardPage({ searchParams }: Props) {
   const resolvedParams = searchParams ? await searchParams : {};
 
@@ -35,32 +56,86 @@ export default async function PhonesiaDashboardPage({ searchParams }: Props) {
   const toRaw = getSingleValue(resolvedParams.to);
 
   const filters: DashboardFilters = {
-    negozioCodice:
-      negozioRaw && negozioRaw !== "all" ? Number(negozioRaw) : null,
+    negozioCodice: negozioRaw && negozioRaw !== "all" ? Number(negozioRaw) : null,
     dateFrom: fromRaw || null,
     dateTo: toRaw || null,
   };
 
-  const [
-    kpis,
-    leadPerNegozio,
-    contrattiPerNegozio,
-    conversionePerNegozio,
-    contrattiPerOperatore,
-    negozioOptions,
-  ] = await Promise.all([
-    getDashboardKpis(filters),
-    getLeadPerNegozio(filters),
-    getContrattiPerNegozio(filters),
-    getConversionePerNegozio(filters),
-    getContrattiPerOperatore(filters),
-    getNegozioOptions(),
-  ]);
+  const [kpis, contrattiPerNegozio, conversionePerNegozio, contrattiPerOperatore, negozioOptions] =
+    await Promise.all([
+      getDashboardKpis(filters),
+      getContrattiPerNegozio(filters),
+      getConversionePerNegozio(filters),
+      getContrattiPerOperatore(filters),
+      getNegozioOptions(),
+    ]);
+
+  const nonAssociati =
+    contrattiPerNegozio.find((item) => item.negozioCodice === null)?.totale ?? 0;
+
+  const migliorNegozio = [...conversionePerNegozio]
+    .filter((item) => item.leadQr > 0)
+    .sort((a, b) => b.conversionePct - a.conversionePct)[0];
+
+  const topOperatore = contrattiPerOperatore[0];
+
+  const detailContrattiHref = buildHref("/phonesia/dashboard/contratti", filters);
+  const detailNegoziHref = buildHref("/phonesia/dashboard/negozi", filters);
+  const detailOperatoriHref = buildHref("/phonesia/dashboard/operatori", filters);
+
+  const cards = [
+    {
+      title: "Contratti",
+      value: String(kpis.contrattiTotali),
+      subtitle: "Totale contratti filtrati",
+      href: detailContrattiHref,
+      accent: "orange" as const,
+    },
+    {
+      title: "Clienti con contratto",
+      value: String(kpis.contrattiCollegatiQr),
+      subtitle: "Contratti collegati a un cliente QR",
+      href: detailContrattiHref,
+      accent: "slate" as const,
+    },
+    {
+      title: "Telefonia",
+      value: String(kpis.contrattiTelefonia),
+      subtitle: "Mobile + fisso",
+      href: detailContrattiHref,
+      accent: "slate" as const,
+    },
+    {
+      title: "Energia",
+      value: String(kpis.contrattiEnergia),
+      subtitle: "Luce e gas",
+      href: detailContrattiHref,
+      accent: "slate" as const,
+    },
+    {
+      title: "Negozi",
+      value: migliorNegozio ? migliorNegozio.negozio : "—",
+      subtitle: migliorNegozio
+        ? `Migliore conversione: ${formatPct(migliorNegozio.conversionePct)}`
+        : "Apri il dettaglio per analizzare i negozi",
+      href: detailNegoziHref,
+      accent: "slate" as const,
+    },
+    {
+      title: "Operatori",
+      value: topOperatore ? topOperatore.operatore : "—",
+      subtitle: topOperatore
+        ? `Più venduto: ${topOperatore.totale}`
+        : "Apri il dettaglio per analizzare gli operatori",
+      href: detailOperatoriHref,
+      accent: "slate" as const,
+    },
+  ];
 
   return (
-    <main className="min-h-screen bg-slate-50 px-5 py-8 md:px-8 xl:px-10">
-      <div className="mx-auto max-w-7xl space-y-6">
-        <section className="rounded-3xl border border-slate-200 bg-white px-6 py-6 shadow-sm md:px-8">
+    <main className="min-h-screen bg-slate-50 px-4 py-6 md:px-8">
+      <div className="mx-auto max-w-7xl space-y-5">
+        <section className="rounded-3xl border border-slate-200 bg-white px-5 py-5 shadow-sm md:px-8 md:py-7">
           <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
             <div>
               <div className="mb-2 inline-flex rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-orange-700">
@@ -70,51 +145,107 @@ export default async function PhonesiaDashboardPage({ searchParams }: Props) {
                 Dashboard Phonesia
               </h1>
               <p className="mt-2 max-w-3xl text-sm text-slate-600 md:text-base">
-                Vista sintetica di lead QR, contratti, conversione e distribuzione per negozio.
+                Hub compatto: apri il dettaglio che ti interessa e analizza solo quello.
               </p>
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-              Dati aggiornati in tempo reale dal nuovo database Phonesia
+              Vista mobile ottimizzata con pagine dedicate
             </div>
           </div>
         </section>
 
         <Filters negozi={negozioOptions} filters={filters} />
 
-        <KpiCards kpis={kpis} />
+        <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {cards.map((card) => {
+            const accentClasses =
+              card.accent === "orange"
+                ? "border-orange-200 bg-orange-50/50"
+                : "border-slate-200 bg-white";
 
-        <section className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-          <SimpleBarChart
-            title="Lead QR per negozio"
-            subtitle="Numero di clienti registrati tramite QR in ogni punto vendita"
-            items={leadPerNegozio.map((item) => ({
-              label: item.negozio,
-              value: item.totale,
-            }))}
-          />
+            return (
+              <Link
+                key={card.title}
+                href={card.href}
+                className={`group rounded-3xl border px-5 py-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${accentClasses}`}
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="text-sm font-medium text-slate-500">{card.title}</div>
+                    <div className="mt-2 text-3xl font-black tracking-tight text-slate-950">
+                      {card.value}
+                    </div>
+                    <div className="mt-2 text-sm text-slate-600">{card.subtitle}</div>
+                  </div>
 
-          <SimpleBarChart
-            title="Contratti per negozio"
-            subtitle="Contratti attualmente associati ai negozi o ancora non collegati"
-            items={contrattiPerNegozio.map((item) => ({
-              label: item.negozio,
-              value: item.totale,
-            }))}
-          />
+                  <div className="rounded-full border border-slate-200 bg-white px-3 py-1 text-sm font-semibold text-slate-700 group-hover:border-orange-300 group-hover:text-orange-700">
+                    Apri
+                  </div>
+                </div>
+              </Link>
+            );
+          })}
         </section>
 
-        <section className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-          <ConversionTable rows={conversionePerNegozio} />
+        <section className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          <div className="rounded-3xl border border-slate-200 bg-white px-5 py-5 shadow-sm">
+            <h2 className="text-xl font-black text-slate-950">Focus rapido</h2>
+            <div className="mt-4 space-y-3">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                <div className="text-sm font-medium text-slate-500">Conversione lead</div>
+                <div className="mt-1 text-2xl font-black text-orange-600">
+                  {formatPct(kpis.conversionePct)}
+                </div>
+                <div className="mt-1 text-sm text-slate-600">
+                  Rapporto lead QR convertiti / lead totali.
+                </div>
+              </div>
 
-          <SimpleBarChart
-            title="Contratti per operatore"
-            subtitle="Distribuzione dei contratti per brand o operatore commerciale"
-            items={contrattiPerOperatore.map((item) => ({
-              label: item.operatore,
-              value: item.totale,
-            }))}
-          />
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                <div className="text-sm font-medium text-slate-500">Contratti non associati</div>
+                <div className="mt-1 text-2xl font-black text-slate-950">{nonAssociati}</div>
+                <div className="mt-1 text-sm text-slate-600">
+                  Record senza negozio o ancora da collegare.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-slate-200 bg-white px-5 py-5 shadow-sm">
+            <h2 className="text-xl font-black text-slate-950">Azioni rapide</h2>
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Link
+                href={detailContrattiHref}
+                className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-left transition hover:border-orange-300 hover:bg-orange-50"
+              >
+                <div className="text-base font-bold text-slate-950">Vai ai contratti</div>
+                <div className="mt-1 text-sm text-slate-600">
+                  Lista compatta, date, operatore e negozio.
+                </div>
+              </Link>
+
+              <Link
+                href={detailNegoziHref}
+                className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-left transition hover:border-orange-300 hover:bg-orange-50"
+              >
+                <div className="text-base font-bold text-slate-950">Vai ai negozi</div>
+                <div className="mt-1 text-sm text-slate-600">
+                  Conversione e distribuzione per punto vendita.
+                </div>
+              </Link>
+
+              <Link
+                href={detailOperatoriHref}
+                className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-left transition hover:border-orange-300 hover:bg-orange-50 sm:col-span-2"
+              >
+                <div className="text-base font-bold text-slate-950">Vai agli operatori</div>
+                <div className="mt-1 text-sm text-slate-600">
+                  Vedi subito chi vende di più e con quali volumi.
+                </div>
+              </Link>
+            </div>
+          </div>
         </section>
       </div>
     </main>

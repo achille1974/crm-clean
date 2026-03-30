@@ -8,16 +8,18 @@ type Props = {
 export default function Filters({ negozi, filters }: Props) {
   return (
     <form
-      className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"
+      className="w-full overflow-hidden rounded-3xl border border-slate-200 bg-white p-5 shadow-sm md:p-6"
       method="get"
     >
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.1fr_1fr_1fr_auto_auto] xl:items-end">
-        <div>
-          <label className="mb-2 block text-sm font-medium text-slate-600">Negozio</label>
+      <div className="grid w-full grid-cols-1 gap-4 xl:grid-cols-[1.1fr_1fr_1fr_auto_auto] xl:items-end">
+        <div className="w-full">
+          <label className="mb-2 block text-sm font-medium text-slate-600">
+            Negozio
+          </label>
           <select
             name="negozio"
             defaultValue={filters.negozioCodice?.toString() ?? ""}
-            className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-orange-500"
+            className="block h-[54px] w-full rounded-2xl border border-slate-300 bg-white px-4 text-sm text-slate-800 outline-none transition focus:border-orange-500"
           >
             <option value="">Tutti i negozi</option>
             {negozi.map((negozio) => (
@@ -28,36 +30,44 @@ export default function Filters({ negozi, filters }: Props) {
           </select>
         </div>
 
-        <div>
-          <label className="mb-2 block text-sm font-medium text-slate-600">Dal</label>
+        <div className="w-full">
+          <label className="mb-2 block text-sm font-medium text-slate-600">
+            Dal
+          </label>
           <input
             name="from"
-            type="date"
+            type="text"
+            inputMode="numeric"
+            placeholder="aaaa-mm-gg"
             defaultValue={filters.dateFrom ?? ""}
-            className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-orange-500"
+            className="block h-[54px] w-full rounded-2xl border border-slate-300 bg-white px-4 text-sm text-slate-800 outline-none transition focus:border-orange-500"
           />
         </div>
 
-        <div>
-          <label className="mb-2 block text-sm font-medium text-slate-600">Al</label>
+        <div className="w-full">
+          <label className="mb-2 block text-sm font-medium text-slate-600">
+            Al
+          </label>
           <input
             name="to"
-            type="date"
+            type="text"
+            inputMode="numeric"
+            placeholder="aaaa-mm-gg"
             defaultValue={filters.dateTo ?? ""}
-            className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-orange-500"
+            className="block h-[54px] w-full rounded-2xl border border-slate-300 bg-white px-4 text-sm text-slate-800 outline-none transition focus:border-orange-500"
           />
         </div>
 
         <button
           type="submit"
-          className="rounded-2xl bg-orange-500 px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-orange-600"
+          className="h-[54px] w-full rounded-2xl bg-orange-500 px-6 text-sm font-semibold text-white shadow-sm transition hover:bg-orange-600 xl:w-auto"
         >
           Applica filtri
         </button>
 
         <a
           href="/phonesia/dashboard"
-          className="inline-flex items-center justify-center rounded-2xl border border-slate-300 bg-white px-5 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+          className="inline-flex h-[54px] w-full items-center justify-center rounded-2xl border border-slate-300 bg-white px-5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 xl:w-auto"
         >
           Reset
         </a>

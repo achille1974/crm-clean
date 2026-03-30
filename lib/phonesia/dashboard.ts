@@ -15,6 +15,9 @@ const supabase = createClient(supabaseUrl, supabaseServiceRoleKey, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
+const LEAD_DATE_FIELD = "created_at";
+const CONTRACT_DATE_FIELD = "data_stipula";
+
 export type DashboardFilters = {
   negozioCodice?: number | null;
   dateFrom?: string | null;
@@ -51,8 +54,9 @@ export type ContrattiPerOperatoreStat = {
 };
 
 export type ContrattoRecente = {
-  id: number;
+  id: string;
   createdAt: string | null;
+  dataStipula: string | null;
   nome: string | null;
   cognome: string | null;
   operatore: string | null;
@@ -87,15 +91,22 @@ function applyDateRange<T extends { gte: Function; lte: Function }>(
   query: T,
   field: string,
   filters?: DashboardFilters,
+  mode: "date" | "datetime" = "datetime",
 ): T {
   let next = query;
 
   if (filters?.dateFrom) {
-    next = next.gte(field, `${filters.dateFrom}T00:00:00`);
+    next =
+      mode === "date"
+        ? next.gte(field, filters.dateFrom)
+        : next.gte(field, `${filters.dateFrom}T00:00:00`);
   }
 
   if (filters?.dateTo) {
-    next = next.lte(field, `${filters.dateTo}T23:59:59`);
+    next =
+      mode === "date"
+        ? next.lte(field, filters.dateTo)
+        : next.lte(field, `${filters.dateTo}T23:59:59`);
   }
 
   return next;
@@ -114,11 +125,11 @@ export async function getDashboardKpis(filters?: DashboardFilters): Promise<Dash
     leadQuery = leadQuery.eq("negozio_id", filters.negozioCodice);
   }
 
-  leadQuery = applyDateRange(leadQuery, "created_at", filters);
+  leadQuery = applyDateRange(leadQuery, LEAD_DATE_FIELD, filters, "datetime");
 
   let contractQuery = supabase
     .from("phonesia_contratti")
-    .select("id, categoria, cliente_id, negozio_id, created_at", {
+    .select("id, categoria, cliente_id, negozio_id, data_stipula", {
       count: "exact",
       head: true,
     });
@@ -127,66 +138,65 @@ export async function getDashboardKpis(filters?: DashboardFilters): Promise<Dash
     contractQuery = contractQuery.eq("negozio_id", filters.negozioCodice);
   }
 
-  contractQuery = applyDateRange(contractQuery, "created_at", filters);
+  contractQuery = applyDateRange(contractQuery, CONTRACT_DATE_FIELD, filters, "date");
+
+  const baseLinkedContractsQuery = filters?.negozioCodice
+    ? supabase
+        .from("phonesia_contratti")
+        .select("id", { count: "exact", head: true })
+        .eq("negozio_id", filters.negozioCodice)
+        .not("cliente_id", "is", null)
+    : supabase
+        .from("phonesia_contratti")
+        .select("id", { count: "exact", head: true })
+        .not("cliente_id", "is", null);
+
+  const baseTelefoniaQuery = filters?.negozioCodice
+    ? supabase
+        .from("phonesia_contratti")
+        .select("id", { count: "exact", head: true })
+        .eq("negozio_id", filters.negozioCodice)
+        .in("categoria", ["telefonia", "internet"])
+    : supabase
+        .from("phonesia_contratti")
+        .select("id", { count: "exact", head: true })
+        .in("categoria", ["telefonia", "internet"]);
+
+  const baseEnergiaQuery = filters?.negozioCodice
+    ? supabase
+        .from("phonesia_contratti")
+        .select("id", { count: "exact", head: true })
+        .eq("negozio_id", filters.negozioCodice)
+        .eq("categoria", "energia")
+    : supabase
+        .from("phonesia_contratti")
+        .select("id", { count: "exact", head: true })
+        .eq("categoria", "energia");
 
   const [leadCountRes, contractCountRes, linkedContractsRes, telefoniaRes, energiaRes] =
     await Promise.all([
       leadQuery,
       contractQuery,
-      applyDateRange(
-        (filters?.negozioCodice
-          ? supabase
-              .from("phonesia_contratti")
-              .select("id", { count: "exact", head: true })
-              .eq("negozio_id", filters.negozioCodice)
-              .not("cliente_id", "is", null)
-          : supabase
-              .from("phonesia_contratti")
-              .select("id", { count: "exact", head: true })
-              .not("cliente_id", "is", null)) as any,
-        "created_at",
-        filters,
-      ),
-      applyDateRange(
-        (filters?.negozioCodice
-          ? supabase
-              .from("phonesia_contratti")
-              .select("id", { count: "exact", head: true })
-              .eq("negozio_id", filters.negozioCodice)
-              .neq("categoria", "energia")
-          : supabase
-              .from("phonesia_contratti")
-              .select("id", { count: "exact", head: true })
-              .neq("categoria", "energia")) as any,
-        "created_at",
-        filters,
-      ),
-      applyDateRange(
-        (filters?.negozioCodice
-          ? supabase
-              .from("phonesia_contratti")
-              .select("id", { count: "exact", head: true })
-              .eq("negozio_id", filters.negozioCodice)
-              .eq("categoria", "energia")
-          : supabase
-              .from("phonesia_contratti")
-              .select("id", { count: "exact", head: true })
-              .eq("categoria", "energia")) as any,
-        "created_at",
-        filters,
-      ),
+      applyDateRange(baseLinkedContractsQuery as any, CONTRACT_DATE_FIELD, filters, "date"),
+      applyDateRange(baseTelefoniaQuery as any, CONTRACT_DATE_FIELD, filters, "date"),
+      applyDateRange(baseEnergiaQuery as any, CONTRACT_DATE_FIELD, filters, "date"),
     ]);
 
   let linkedLeadsQuery = supabase
     .from("phonesia_contratti")
-    .select("cliente_id, negozio_id, created_at")
+    .select("cliente_id, negozio_id, data_stipula")
     .not("cliente_id", "is", null);
 
   if (filters?.negozioCodice) {
     linkedLeadsQuery = linkedLeadsQuery.eq("negozio_id", filters.negozioCodice);
   }
 
-  linkedLeadsQuery = applyDateRange(linkedLeadsQuery as any, "created_at", filters) as any;
+  linkedLeadsQuery = applyDateRange(
+    linkedLeadsQuery as any,
+    CONTRACT_DATE_FIELD,
+    filters,
+    "date",
+  ) as any;
 
   const { data: linkedLeadsRows } = await linkedLeadsQuery;
 
@@ -215,7 +225,7 @@ export async function getDashboardKpis(filters?: DashboardFilters): Promise<Dash
 
 export async function getLeadPerNegozio(filters?: DashboardFilters): Promise<NegozioStat[]> {
   let query = supabase.from("phonesia_clienti").select("id, negozio_id, created_at");
-  query = applyDateRange(query as any, "created_at", filters) as any;
+  query = applyDateRange(query as any, LEAD_DATE_FIELD, filters, "datetime") as any;
 
   if (filters?.negozioCodice) {
     query = query.eq("negozio_id", filters.negozioCodice);
@@ -245,8 +255,8 @@ export async function getLeadPerNegozio(filters?: DashboardFilters): Promise<Neg
 }
 
 export async function getContrattiPerNegozio(filters?: DashboardFilters): Promise<NegozioStat[]> {
-  let query = supabase.from("phonesia_contratti").select("id, negozio_id, created_at");
-  query = applyDateRange(query as any, "created_at", filters) as any;
+  let query = supabase.from("phonesia_contratti").select("id, negozio_id, data_stipula");
+  query = applyDateRange(query as any, CONTRACT_DATE_FIELD, filters, "date") as any;
 
   if (filters?.negozioCodice) {
     query = query.eq("negozio_id", filters.negozioCodice);
@@ -279,7 +289,7 @@ export async function getConversionePerNegozio(
   filters?: DashboardFilters,
 ): Promise<ConversioneNegozioStat[]> {
   let leadQuery = supabase.from("phonesia_clienti").select("id, negozio_id, created_at");
-  leadQuery = applyDateRange(leadQuery as any, "created_at", filters) as any;
+  leadQuery = applyDateRange(leadQuery as any, LEAD_DATE_FIELD, filters, "datetime") as any;
 
   if (filters?.negozioCodice) {
     leadQuery = leadQuery.eq("negozio_id", filters.negozioCodice);
@@ -287,8 +297,8 @@ export async function getConversionePerNegozio(
 
   let contractQuery = supabase
     .from("phonesia_contratti")
-    .select("id, cliente_id, negozio_id, created_at");
-  contractQuery = applyDateRange(contractQuery as any, "created_at", filters) as any;
+    .select("id, cliente_id, negozio_id, data_stipula");
+  contractQuery = applyDateRange(contractQuery as any, CONTRACT_DATE_FIELD, filters, "date") as any;
 
   if (filters?.negozioCodice) {
     contractQuery = contractQuery.eq("negozio_id", filters.negozioCodice);
@@ -338,9 +348,7 @@ export async function getConversionePerNegozio(
         leadQr: leadQrCount,
         leadConvertiti: leadConvertitiCount,
         contratti: contrattiCount,
-        conversionePct: leadQrCount
-          ? round2((leadConvertitiCount / leadQrCount) * 100)
-          : 0,
+        conversionePct: leadQrCount ? round2((leadConvertitiCount / leadQrCount) * 100) : 0,
       };
     });
 }
@@ -348,8 +356,8 @@ export async function getConversionePerNegozio(
 export async function getContrattiPerOperatore(
   filters?: DashboardFilters,
 ): Promise<ContrattiPerOperatoreStat[]> {
-  let query = supabase.from("phonesia_contratti").select("operatore, negozio_id, created_at");
-  query = applyDateRange(query as any, "created_at", filters) as any;
+  let query = supabase.from("phonesia_contratti").select("operatore, negozio_id, data_stipula");
+  query = applyDateRange(query as any, CONTRACT_DATE_FIELD, filters, "date") as any;
 
   if (filters?.negozioCodice) {
     query = query.eq("negozio_id", filters.negozioCodice);
@@ -372,12 +380,12 @@ export async function getContrattiRecenti(filters?: DashboardFilters): Promise<C
   let query = supabase
     .from("phonesia_contratti")
     .select(
-      "id, created_at, nome, cognome, operatore, categoria, tipo_contratto, numero_contratto, telefono, email, negozio_id, origine_cliente",
+      "id, created_at, data_stipula, nome, cognome, operatore, categoria, tipo_contratto, numero_contratto, telefono, email, negozio_id, origine_cliente",
     )
     .order("created_at", { ascending: false })
     .limit(50);
 
-  query = applyDateRange(query as any, "created_at", filters) as any;
+  query = applyDateRange(query as any, CONTRACT_DATE_FIELD, filters, "date") as any;
 
   if (filters?.negozioCodice) {
     query = query.eq("negozio_id", filters.negozioCodice);
@@ -392,8 +400,9 @@ export async function getContrattiRecenti(filters?: DashboardFilters): Promise<C
   (negozi ?? []).forEach((n: any) => negozioMap.set(Number(n.codice), n.nome));
 
   return (contratti ?? []).map((row: any) => ({
-    id: row.id,
+    id: String(row.id),
     createdAt: row.created_at,
+    dataStipula: row.data_stipula,
     nome: row.nome,
     cognome: row.cognome,
     operatore: row.operatore,
@@ -418,7 +427,7 @@ export async function getLeadRecenti(filters?: DashboardFilters): Promise<LeadRe
     .order("created_at", { ascending: false })
     .limit(50);
 
-  query = applyDateRange(query as any, "created_at", filters) as any;
+  query = applyDateRange(query as any, LEAD_DATE_FIELD, filters, "datetime") as any;
 
   if (filters?.negozioCodice) {
     query = query.eq("negozio_id", filters.negozioCodice);
