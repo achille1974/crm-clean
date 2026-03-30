@@ -6,6 +6,7 @@ import {
   getContrattiPerOperatore,
   getConversionePerNegozio,
   getDashboardKpis,
+  getLeadOpportunityRows,
   getNegozioOptions,
   type DashboardFilters,
 } from "@/lib/phonesia/dashboard";
@@ -61,14 +62,21 @@ export default async function PhonesiaDashboardPage({ searchParams }: Props) {
     dateTo: toRaw || null,
   };
 
-  const [kpis, contrattiPerNegozio, conversionePerNegozio, contrattiPerOperatore, negozioOptions] =
-    await Promise.all([
-      getDashboardKpis(filters),
-      getContrattiPerNegozio(filters),
-      getConversionePerNegozio(filters),
-      getContrattiPerOperatore(filters),
-      getNegozioOptions(),
-    ]);
+  const [
+    kpis,
+    contrattiPerNegozio,
+    conversionePerNegozio,
+    contrattiPerOperatore,
+    leadOpportunityRows,
+    negozioOptions,
+  ] = await Promise.all([
+    getDashboardKpis(filters),
+    getContrattiPerNegozio(filters),
+    getConversionePerNegozio(filters),
+    getContrattiPerOperatore(filters),
+    getLeadOpportunityRows(filters),
+    getNegozioOptions(),
+  ]);
 
   const nonAssociati =
     contrattiPerNegozio.find((item) => item.negozioCodice === null)?.totale ?? 0;
@@ -78,18 +86,27 @@ export default async function PhonesiaDashboardPage({ searchParams }: Props) {
     .sort((a, b) => b.conversionePct - a.conversionePct)[0];
 
   const topOperatore = contrattiPerOperatore[0];
+  const leadDaLavorare = leadOpportunityRows.filter((row) => !row.hasContract).length;
 
   const detailContrattiHref = buildHref("/phonesia/dashboard/contratti", filters);
   const detailNegoziHref = buildHref("/phonesia/dashboard/negozi", filters);
   const detailOperatoriHref = buildHref("/phonesia/dashboard/operatori", filters);
+  const detailClientiHref = buildHref("/phonesia/dashboard/clienti", filters);
 
   const cards = [
+    {
+      title: "Clienti / Opportunità",
+      value: String(leadDaLavorare),
+      subtitle: "Lead senza contratto da lavorare",
+      href: detailClientiHref,
+      accent: "orange" as const,
+    },
     {
       title: "Contratti",
       value: String(kpis.contrattiTotali),
       subtitle: "Totale contratti filtrati",
       href: detailContrattiHref,
-      accent: "orange" as const,
+      accent: "slate" as const,
     },
     {
       title: "Clienti con contratto",
@@ -216,6 +233,16 @@ export default async function PhonesiaDashboardPage({ searchParams }: Props) {
             <h2 className="text-xl font-black text-slate-950">Azioni rapide</h2>
             <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Link
+                href={detailClientiHref}
+                className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-left transition hover:border-orange-300 hover:bg-orange-50"
+              >
+                <div className="text-base font-bold text-slate-950">Vai a clienti / opportunità</div>
+                <div className="mt-1 text-sm text-slate-600">
+                  Lead da lavorare, convertiti e ultimi ingressi.
+                </div>
+              </Link>
+
+              <Link
                 href={detailContrattiHref}
                 className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-left transition hover:border-orange-300 hover:bg-orange-50"
               >
@@ -237,7 +264,7 @@ export default async function PhonesiaDashboardPage({ searchParams }: Props) {
 
               <Link
                 href={detailOperatoriHref}
-                className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-left transition hover:border-orange-300 hover:bg-orange-50 sm:col-span-2"
+                className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-left transition hover:border-orange-300 hover:bg-orange-50"
               >
                 <div className="text-base font-bold text-slate-950">Vai agli operatori</div>
                 <div className="mt-1 text-sm text-slate-600">

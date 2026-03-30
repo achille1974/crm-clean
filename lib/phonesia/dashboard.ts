@@ -82,6 +82,21 @@ export type LeadRecente = {
   negozioNome: string;
 };
 
+export type LeadOpportunityRow = {
+  id: number;
+  createdAt: string | null;
+  nome: string | null;
+  cognome: string | null;
+  telefono: string | null;
+  email: string | null;
+  codiceFiscale: string | null;
+  negozioId: number | null;
+  negozioNome: string;
+  hasContract: boolean;
+  contractCount: number;
+  lastContractDate: string | null;
+};
+
 export type NegozioOption = {
   codice: number;
   nome: string;
@@ -455,6 +470,95 @@ export async function getLeadRecenti(filters?: DashboardFilters): Promise<LeadRe
         ? negozioMap.get(Number(row.negozio_id)) ?? `Negozio ${row.negozio_id}`
         : "(non associato)",
   }));
+}
+
+export async function getLeadOpportunityRows(
+  filters?: DashboardFilters,
+): Promise<LeadOpportunityRow[]> {
+  let leadQuery = supabase
+    .from("phonesia_clienti")
+    .select("id, created_at, nome, cognome, telefono, email, codice_fiscale, negozio_id")
+    .order("created_at", { ascending: false });
+
+  leadQuery = applyDateRange(leadQuery as any, LEAD_DATE_FIELD, filters, "datetime") as any;
+
+  if (filters?.negozioCodice) {
+    leadQuery = leadQuery.eq("negozio_id", filters.negozioCodice);
+  }
+
+  let contractQuery = supabase
+    .from("phonesia_contratti")
+    .select("cliente_id, negozio_id, data_stipula, created_at")
+    .not("cliente_id", "is", null);
+
+  contractQuery = applyDateRange(contractQuery as any, CONTRACT_DATE_FIELD, filters, "date") as any;
+
+  if (filters?.negozioCodice) {
+    contractQuery = contractQuery.eq("negozio_id", filters.negozioCodice);
+  }
+
+  const [{ data: leads }, { data: contracts }, { data: negozi }] = await Promise.all([
+    leadQuery,
+    contractQuery,
+    supabase.from("phonesia_negozi").select("codice, nome"),
+  ]);
+
+  const negozioMap = new Map<number, string>();
+  (negozi ?? []).forEach((n: any) => negozioMap.set(Number(n.codice), n.nome));
+
+  const contractSummary = new Map<
+    number,
+    { count: number; lastContractDate: string | null }
+  >();
+
+  (contracts ?? []).forEach((row: any) => {
+    const clienteId = Number(row.cliente_id);
+    if (Number.isNaN(clienteId)) return;
+
+    const prev = contractSummary.get(clienteId);
+    const currentDate = row.data_stipula || row.created_at || null;
+
+    if (!prev) {
+      contractSummary.set(clienteId, {
+        count: 1,
+        lastContractDate: currentDate,
+      });
+      return;
+    }
+
+    const nextDate =
+      currentDate && (!prev.lastContractDate || currentDate > prev.lastContractDate)
+        ? currentDate
+        : prev.lastContractDate;
+
+    contractSummary.set(clienteId, {
+      count: prev.count + 1,
+      lastContractDate: nextDate,
+    });
+  });
+
+  return (leads ?? []).map((row: any) => {
+    const leadId = Number(row.id);
+    const summary = contractSummary.get(leadId);
+
+    return {
+      id: leadId,
+      createdAt: row.created_at,
+      nome: row.nome,
+      cognome: row.cognome,
+      telefono: row.telefono,
+      email: row.email,
+      codiceFiscale: row.codice_fiscale,
+      negozioId: row.negozio_id != null ? Number(row.negozio_id) : null,
+      negozioNome:
+        row.negozio_id != null
+          ? negozioMap.get(Number(row.negozio_id)) ?? `Negozio ${row.negozio_id}`
+          : "(non associato)",
+      hasContract: Boolean(summary),
+      contractCount: summary?.count ?? 0,
+      lastContractDate: summary?.lastContractDate ?? null,
+    };
+  });
 }
 
 export async function getNegozioOptions(): Promise<NegozioOption[]> {
