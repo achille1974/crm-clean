@@ -42,6 +42,37 @@ type TelegramUpdate = {
   message?: TelegramMessage;
 };
 
+type ClienteRow = {
+  id: number;
+  nome?: string | null;
+  cognome?: string | null;
+  telefono?: string | null;
+  email?: string | null;
+  codice_fiscale?: string | null;
+  negozio_id?: number | null;
+  telegram_user_id?: string | null;
+  telegram_chat_id?: string | null;
+  telegram_active?: boolean | null;
+};
+
+type AgentResponse = {
+  ok: boolean;
+  reply?: string;
+  used_local_agent?: boolean;
+  matched_customer?: {
+    id: number;
+    nome: string | null;
+    cognome: string | null;
+    telefono: string | null;
+    email: string | null;
+    codice_fiscale: string | null;
+    negozio_id: number | null;
+  } | null;
+  contract_count?: number;
+  error?: string;
+  detail?: string;
+};
+
 async function sendTelegramMessage(chatId: number | string, text: string) {
   if (!telegramBotToken) {
     console.error("Missing TELEGRAM_BOT_TOKEN");
@@ -60,6 +91,7 @@ async function sendTelegramMessage(chatId: number | string, text: string) {
       text,
       disable_web_page_preview: false,
     }),
+    cache: "no-store",
   });
 
   if (!response.ok) {
@@ -84,6 +116,39 @@ function extractStartPayload(text?: string): string | null {
   }
 
   return parts[1] || null;
+}
+
+function normalizeText(value?: string | null): string | null {
+  if (!value) return null;
+  const trimmed = String(value).trim();
+  return trimmed.length ? trimmed : null;
+}
+
+function normalizeEmail(value?: string | null): string | null {
+  const text = normalizeText(value);
+  return text ? text.toLowerCase() : null;
+}
+
+function normalizeCf(value?: string | null): string | null {
+  const text = normalizeText(value);
+  return text ? text.toUpperCase() : null;
+}
+
+function normalizePhone(value?: string | null): string | null {
+  const text = normalizeText(value);
+  if (!text) return null;
+
+  let digits = text.replace(/\D/g, "");
+
+  if (digits.startsWith("39") && digits.length > 10) {
+    digits = digits.slice(2);
+  }
+
+  if (digits.length >= 9 && digits.length <= 11) {
+    return `+39${digits}`;
+  }
+
+  return text;
 }
 
 async function logConversation(params: {
@@ -122,10 +187,14 @@ async function logConversation(params: {
   }
 }
 
-async function findClienteByTelegramUserId(telegramUserId: string) {
+async function findClienteByTelegramUserId(
+  telegramUserId: string,
+): Promise<ClienteRow | null> {
   const { data, error } = await supabase
     .from("phonesia_clienti")
-    .select("id, nome, cognome, telegram_user_id, telegram_chat_id, telegram_active")
+    .select(
+      "id, nome, cognome, telefono, email, codice_fiscale, negozio_id, telegram_user_id, telegram_chat_id, telegram_active",
+    )
     .eq("telegram_user_id", telegramUserId)
     .limit(1)
     .maybeSingle();
@@ -134,13 +203,15 @@ async function findClienteByTelegramUserId(telegramUserId: string) {
     throw error;
   }
 
-  return data;
+  return (data as ClienteRow | null) ?? null;
 }
 
-async function findClienteById(clienteId: number) {
+async function findClienteById(clienteId: number): Promise<ClienteRow | null> {
   const { data, error } = await supabase
     .from("phonesia_clienti")
-    .select("id, nome, cognome, telefono, email, codice_fiscale, negozio_id, telegram_user_id, telegram_chat_id")
+    .select(
+      "id, nome, cognome, telefono, email, codice_fiscale, negozio_id, telegram_user_id, telegram_chat_id, telegram_active",
+    )
     .eq("id", clienteId)
     .limit(1)
     .maybeSingle();
@@ -149,7 +220,7 @@ async function findClienteById(clienteId: number) {
     throw error;
   }
 
-  return data;
+  return (data as ClienteRow | null) ?? null;
 }
 
 async function linkClienteTelegram(params: {
@@ -172,6 +243,55 @@ async function linkClienteTelegram(params: {
   if (error) {
     throw error;
   }
+}
+
+function buildLinkedWelcomeMessage(cliente: ClienteRow) {
+  const nomeCliente = [cliente.nome, cliente.cognome].filter(Boolean).join(" ").trim();
+  const saluto = nomeCliente ? `Ciao ${nomeCliente}!` : "Ciao!";
+
+  return `${saluto}
+
+Il tuo profilo PHONESIA è attivo correttamente su Telegram.
+
+Da questo momento puoi scriverci direttamente qui per ricevere informazioni sui tuoi servizi e sulla tua offerta.
+
+Esempi:
+• Qual è la mia offerta?
+• Che contratti ho con voi?
+• Quando ho firmato l’ultimo contratto?`;
+}
+
+async function callAgent(req: Request, params: {
+  message: string;
+  telefono?: string | null;
+  codice_fiscale?: string | null;
+  email?: string | null;
+}): Promise<AgentResponse> {
+  const sharedSecret = process.env.PHONESIA_AGENT_SHARED_SECRET;
+  const url = new URL("/api/phonesia/agent/message", req.url);
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+
+  if (sharedSecret) {
+    headers["x-phonesia-secret"] = sharedSecret;
+  }
+
+  const response = await fetch(url.toString(), {
+    method: "POST",
+    headers,
+    body: JSON.stringify(params),
+    cache: "no-store",
+  });
+
+  const data = (await response.json()) as AgentResponse;
+
+  if (!response.ok) {
+    throw new Error(data.detail || data.error || "Unknown agent error");
+  }
+
+  return data;
 }
 
 export async function POST(req: Request) {
@@ -287,7 +407,12 @@ La tua registrazione è stata completata con successo.
 Da questo momento puoi contattarci direttamente qui su Telegram ogni volta che hai bisogno di informazioni, assistenza o consigli sui nostri servizi.
 
 Qui trovi il nostro biglietto da visita digitale:
-${link}`;
+${link}
+
+Puoi anche scrivermi domande come:
+• Qual è la mia offerta?
+• Che contratti ho con voi?
+• Quando ho firmato l’ultimo contratto?`;
 
       await sendTelegramMessage(chat.id, risposta);
 
@@ -333,28 +458,82 @@ ${link}`;
       return NextResponse.json({ ok: true });
     }
 
-    const link = `https://crm-clean.vercel.app/phonesia/card/${cliente.id}`;
+    if (!text || text === "/start" || text === "/help") {
+      const risposta = buildLinkedWelcomeMessage(cliente);
+      await sendTelegramMessage(chat.id, risposta);
 
-    const risposta = `Il tuo profilo PHONESIA è attivo correttamente su Telegram.
+      await logConversation({
+        clienteId: Number(cliente.id),
+        channelUserId: telegramUserId,
+        channelChatId: telegramChatId,
+        channelUsername: telegramUsername,
+        messaggioUtente: text || "(messaggio vuoto)",
+        intent: "telegram_help",
+        toolUsato: "build_linked_welcome_message",
+        rispostaAgente: risposta,
+        stato: "completato",
+      });
 
-Qui trovi il tuo biglietto da visita digitale:
-${link}`;
+      return NextResponse.json({ ok: true });
+    }
 
-    await sendTelegramMessage(chat.id, risposta);
+    try {
+      const agentResponse = await callAgent(req, {
+        message: text,
+        telefono: normalizePhone(cliente.telefono),
+        codice_fiscale: normalizeCf(cliente.codice_fiscale),
+        email: normalizeEmail(cliente.email),
+      });
 
-    await logConversation({
-      clienteId: Number(cliente.id),
-      channelUserId: telegramUserId,
-      channelChatId: telegramChatId,
-      channelUsername: telegramUsername,
-      messaggioUtente: text || "(messaggio vuoto)",
-      intent: "telegram_message_placeholder",
-      toolUsato: "find_cliente_by_telegram_user_id",
-      rispostaAgente: risposta,
-      stato: "completato",
-    });
+      const risposta =
+        agentResponse.reply ||
+        "Ho ricevuto la tua richiesta, ma in questo momento non sono riuscito a preparare una risposta utile.";
 
-    return NextResponse.json({ ok: true });
+      await sendTelegramMessage(chat.id, risposta);
+
+      await logConversation({
+        clienteId: Number(cliente.id),
+        channelUserId: telegramUserId,
+        channelChatId: telegramChatId,
+        channelUsername: telegramUsername,
+        messaggioUtente: text,
+        intent: "telegram_agent_customer_message",
+        toolUsato: agentResponse.used_local_agent
+          ? "phonesia_agent_message_route_local_agent"
+          : "phonesia_agent_message_route_crm_fallback",
+        rispostaAgente: risposta,
+        stato: "completato",
+        metadata: {
+          used_local_agent: agentResponse.used_local_agent ?? false,
+          contract_count: agentResponse.contract_count ?? 0,
+        },
+      });
+
+      return NextResponse.json({ ok: true });
+    } catch (agentError) {
+      console.error("Errore chiamata agent Telegram cliente:", agentError);
+
+      const risposta =
+        "Sto avendo un problema temporaneo nel recuperare i tuoi dati. Riprova tra poco oppure contatta il punto vendita PHONESIA.";
+
+      await sendTelegramMessage(chat.id, risposta);
+
+      await logConversation({
+        clienteId: Number(cliente.id),
+        channelUserId: telegramUserId,
+        channelChatId: telegramChatId,
+        channelUsername: telegramUsername,
+        messaggioUtente: text,
+        intent: "telegram_agent_customer_message",
+        toolUsato: "phonesia_agent_message_route_error",
+        rispostaAgente: risposta,
+        stato: "errore",
+        errore: agentError instanceof Error ? agentError.message : "unknown_agent_error",
+        handoffRichiesto: true,
+      });
+
+      return NextResponse.json({ ok: true });
+    }
   } catch (error) {
     console.error("Telegram /start route error:", error);
     return NextResponse.json({ ok: false }, { status: 200 });
