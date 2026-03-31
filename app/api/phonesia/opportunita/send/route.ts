@@ -117,9 +117,9 @@ function serviceLabel(service: ServiceFamily): string {
       return "sicurezza";
     case "FOTOVOLTAICO":
       return "fotovoltaico";
-    default:
-      return service.toLowerCase();
   }
+
+  return "servizio";
 }
 
 function buildOfferText(services: ServiceFamily[]): string {
@@ -192,12 +192,15 @@ async function sendTelegramMessage(params: {
   }
 }
 
-async function logOpportunitySend(supabase: ReturnType<typeof getSupabaseAdmin>, params: {
-  clienteId: number;
-  services: ServiceFamily[];
-  responseText: string;
-  negozioContatto: string;
-}) {
+async function logOpportunitySend(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  params: {
+    clienteId: number;
+    services: ServiceFamily[];
+    responseText: string;
+    negozioContatto: string;
+  },
+) {
   try {
     await supabase.from("phonesia_conversazioni").insert({
       cliente_id: params.clienteId,
