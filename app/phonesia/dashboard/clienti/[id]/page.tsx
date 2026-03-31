@@ -2,6 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 
+import ClienteOpportunityPanel from "@/components/phonesia/dashboard/ClienteOpportunityPanel";
+
 export const dynamic = "force-dynamic";
 
 const SERVICE_COLUMNS = [
@@ -190,6 +192,7 @@ export default async function DashboardClienteOpportunitaPage({
     { data: clienteData, error: clienteError },
     { data: serviziData, error: serviziError },
     { data: contrattiData, error: contrattiError },
+    { data: marketingConsentData, error: marketingConsentError },
   ] = await Promise.all([
     supabase
       .from("phonesia_clienti")
@@ -211,11 +214,21 @@ export default async function DashboardClienteOpportunitaPage({
       .eq("cliente_id", clienteId)
       .order("data_stipula", { ascending: false })
       .order("created_at", { ascending: false }),
+    supabase
+      .from("phonesia_consensi")
+      .select("id")
+      .eq("cliente_id", clienteId)
+      .eq("tipo_evento", "marketing_accepted")
+      .limit(1)
+      .maybeSingle(),
   ]);
 
   if (clienteError) throw new Error(`Errore lettura cliente: ${clienteError.message}`);
   if (serviziError) throw new Error(`Errore lettura servizi cliente: ${serviziError.message}`);
   if (contrattiError) throw new Error(`Errore lettura contratti cliente: ${contrattiError.message}`);
+  if (marketingConsentError) {
+    throw new Error(`Errore lettura consenso marketing: ${marketingConsentError.message}`);
+  }
 
   const cliente = clienteData as ClienteRow | null;
   if (!cliente) notFound();
@@ -239,7 +252,12 @@ export default async function DashboardClienteOpportunitaPage({
 
   const negozioQr = negozioLabel(cliente.negozio_id);
   const negozioContratto = formatDistinctStoreLabels(contratti.map((row) => row.negozio_id));
-  const proponibili = SERVICE_COLUMNS.filter((service) => !activeFamilies.has(service));
+  const contactStoreId =
+    contratti.find((row) => row.negozio_id != null)?.negozio_id ??
+    cliente.negozio_id ??
+    1;
+  const contactStoreLabel = negozioLabel(contactStoreId);
+  const marketingConsented = Boolean(marketingConsentData);
 
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-6 md:px-8">
@@ -281,7 +299,12 @@ export default async function DashboardClienteOpportunitaPage({
           <InfoCard label="Codice fiscale" value={cliente.codice_fiscale || "—"} mono />
           <InfoCard label="Negozio QR" value={negozioQr} />
           <InfoCard label="Negozio contratto" value={negozioContratto} />
+          <InfoCard label="Negozio messaggio" value={contactStoreLabel} />
           <InfoCard label="Telegram" value={cliente.telegram_active ? "Attivo" : "Non attivo"} />
+          <InfoCard
+            label="Consenso marketing"
+            value={marketingConsented ? "Autorizzato" : "Non autorizzato"}
+          />
           <InfoCard label="Ultima stipula" value={formatDate(ultimaStipula)} />
           <InfoCard label="Contratti collegati" value={String(contratti.length)} />
         </section>
@@ -319,56 +342,14 @@ export default async function DashboardClienteOpportunitaPage({
           </div>
         </section>
 
-        <section className="rounded-3xl border border-slate-200 bg-white px-5 py-5 shadow-sm md:px-6">
-          <div className="mb-4">
-            <h2 className="text-xl font-black text-slate-950">Servizi da proporre</h2>
-            <p className="mt-1 text-sm text-slate-600">
-              Qui vedi i servizi non ancora attivi. Nel prossimo step li colleghiamo al popup di conferma e all’invio messaggio.
-            </p>
-          </div>
-
-          {proponibili.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
-              Questo cliente ha già tutti i servizi presenti nella matrice.
-            </div>
-          ) : (
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-              {proponibili.map((service) => (
-                <label
-                  key={service}
-                  className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white p-4"
-                >
-                  <input
-                    type="checkbox"
-                    disabled
-                    className="mt-1 h-4 w-4 rounded border-slate-300 text-orange-500"
-                  />
-
-                  <div>
-                    <div className="font-semibold text-slate-950">{service}</div>
-                    <div className="mt-1 text-sm text-slate-600">
-                      Servizio non attivo, proponibile al cliente.
-                    </div>
-                  </div>
-                </label>
-              ))}
-            </div>
-          )}
-
-          <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-            <button
-              type="button"
-              disabled
-              className="inline-flex items-center justify-center rounded-2xl bg-orange-300 px-5 py-3 text-sm font-semibold text-white"
-            >
-              Invia messaggio
-            </button>
-
-            <p className="mt-2 text-xs text-slate-500">
-              Il pulsante è nella posizione definitiva. Nel prossimo step lo colleghiamo al popup di conferma e all’invio del messaggio.
-            </p>
-          </div>
-        </section>
+        <ClienteOpportunityPanel
+          clienteId={cliente.id}
+          clienteNome={[cliente.nome, cliente.cognome].filter(Boolean).join(" ") || "Cliente"}
+          activeServices={[...activeFamilies]}
+          telegramActive={cliente.telegram_active === true}
+          marketingConsented={marketingConsented}
+          contactStoreLabel={contactStoreLabel}
+        />
       </div>
     </main>
   );
