@@ -265,6 +265,13 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
       <div className="mx-auto max-w-[1700px] space-y-5">
         <section className="rounded-3xl border border-slate-200 bg-white px-5 py-5 shadow-sm md:px-8 md:py-7">
           <div className="flex flex-col gap-4">
+            <Link
+              href="/phonesia/dashboard"
+              className="inline-flex w-fit rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-orange-300 hover:text-orange-700"
+            >
+              ← Torna alla dashboard
+            </Link>
+
             <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
               <div>
                 <div className="mb-2 inline-flex rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-orange-700">
@@ -398,12 +405,12 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
                       ))}
 
                       <td className="px-4 py-4">
-                        <button
-                          type="button"
-                          className="inline-flex rounded-2xl border border-orange-200 bg-orange-50 px-4 py-2 text-sm font-semibold text-orange-700"
+                        <Link
+                          href={`/phonesia/dashboard/clienti/${row.cliente.id}`}
+                          className="inline-flex rounded-2xl border border-orange-200 bg-orange-50 px-4 py-2 text-sm font-semibold text-orange-700 transition hover:border-orange-300 hover:bg-orange-100"
                         >
                           Opportunità
-                        </button>
+                        </Link>
                       </td>
                     </tr>
                   ))
