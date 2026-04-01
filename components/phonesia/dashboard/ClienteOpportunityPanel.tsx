@@ -29,6 +29,145 @@ type SendState =
   | { type: "success"; message: string }
   | { type: "error"; message: string };
 
+type OpportunityRecommendation = {
+  service: ServiceFamily;
+  reason: string;
+  priority: "Alta" | "Media" | "Bassa";
+};
+
+const PRIORITY_ORDER: Record<OpportunityRecommendation["priority"], number> = {
+  Alta: 0,
+  Media: 1,
+  Bassa: 2,
+};
+
+const FALLBACK_ORDER: ServiceFamily[] = [
+  "FISSO",
+  "MOBILE",
+  "ENERGIA",
+  "TV",
+  "SMARTPHONE",
+  "ACCESSORI",
+  "SICUREZZA",
+  "FOTOVOLTAICO",
+];
+
+function buildOpportunityRecommendations(
+  activeServices: ServiceFamily[],
+): OpportunityRecommendation[] {
+  const activeSet = new Set<ServiceFamily>(activeServices);
+  const recommendations: OpportunityRecommendation[] = [];
+
+  function add(
+    service: ServiceFamily,
+    reason: string,
+    priority: OpportunityRecommendation["priority"],
+  ) {
+    if (activeSet.has(service)) return;
+    if (recommendations.some((item) => item.service === service)) return;
+
+    recommendations.push({
+      service,
+      reason,
+      priority,
+    });
+  }
+
+  const hasMobile = activeSet.has("MOBILE");
+  const hasFisso = activeSet.has("FISSO");
+  const hasEnergia = activeSet.has("ENERGIA");
+  const hasTv = activeSet.has("TV");
+  const hasSmartphone = activeSet.has("SMARTPHONE");
+  const hasAccessori = activeSet.has("ACCESSORI");
+  const hasSicurezza = activeSet.has("SICUREZZA");
+  const hasFotovoltaico = activeSet.has("FOTOVOLTAICO");
+
+  if (hasMobile && !hasFisso) {
+    add("FISSO", "Ha già il mobile: buona occasione per proporre fibra o linea casa.", "Alta");
+  }
+
+  if (hasFisso && !hasMobile) {
+    add("MOBILE", "Ha già il fisso: si può completare l’offerta con una linea mobile.", "Alta");
+  }
+
+  if ((hasMobile || hasFisso) && !hasEnergia) {
+    add(
+      "ENERGIA",
+      "Ha già un servizio TLC attivo: è un buon profilo per una proposta energia.",
+      "Alta",
+    );
+  }
+
+  if (hasFisso && !hasTv) {
+    add("TV", "Con il fisso attivo si può proporre una soluzione TV collegata alla casa.", "Media");
+  }
+
+  if (hasMobile && !hasSmartphone) {
+    add(
+      "SMARTPHONE",
+      "Ha una linea mobile attiva: si può proporre anche cambio telefono o nuovo device.",
+      "Media",
+    );
+  }
+
+  if (hasSmartphone && !hasAccessori) {
+    add(
+      "ACCESSORI",
+      "Ha già acquistato o usa uno smartphone: è un cross-sell naturale per accessori.",
+      "Media",
+    );
+  }
+
+  if ((hasFisso || hasEnergia) && !hasSicurezza) {
+    add(
+      "SICUREZZA",
+      "Chi ha casa, linea fissa o energia è un buon candidato per soluzioni sicurezza.",
+      "Media",
+    );
+  }
+
+  if (hasEnergia && !hasFotovoltaico) {
+    add(
+      "FOTOVOLTAICO",
+      "Ha già l’energia attiva: è il profilo più coerente per una proposta fotovoltaico.",
+      "Alta",
+    );
+  }
+
+  if (hasSmartphone && !hasMobile) {
+    add(
+      "MOBILE",
+      "Ha uno smartphone ma non risulta una linea mobile attiva: opportunità molto forte.",
+      "Alta",
+    );
+  }
+
+  if (hasAccessori && !hasSmartphone) {
+    add(
+      "SMARTPHONE",
+      "Ha accessori ma non risulta uno smartphone attivo: possibile vendita device.",
+      "Media",
+    );
+  }
+
+  if (activeSet.size === 0) {
+    add("MOBILE", "Cliente senza servizi attivi registrati: proposta base ad alta priorità.", "Alta");
+    add("FISSO", "Cliente senza servizi attivi registrati: proposta casa/fibra da testare.", "Alta");
+    add("ENERGIA", "Cliente senza servizi attivi registrati: proposta energia da valutare.", "Media");
+  }
+
+  for (const service of FALLBACK_ORDER) {
+    add(service, "Servizio non attivo: proposta commerciale disponibile.", "Bassa");
+  }
+
+  return recommendations.sort((a, b) => {
+    const priorityDiff = PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority];
+    if (priorityDiff !== 0) return priorityDiff;
+
+    return FALLBACK_ORDER.indexOf(a.service) - FALLBACK_ORDER.indexOf(b.service);
+  });
+}
+
 export default function ClienteOpportunityPanel({
   clienteId,
   clienteNome,
@@ -45,8 +184,10 @@ export default function ClienteOpportunityPanel({
     message: "",
   });
 
-  const activeSet = useMemo(() => new Set<ServiceFamily>(activeServices), [activeServices]);
-  const proponibili = SERVICE_COLUMNS.filter((service) => !activeSet.has(service));
+  const recommendations = useMemo(
+    () => buildOpportunityRecommendations(activeServices),
+    [activeServices],
+  );
 
   const canAttemptSend = selectedServices.length > 0;
   const canReallySend = canAttemptSend && telegramActive && marketingConsented && !isSending;
@@ -121,8 +262,7 @@ export default function ClienteOpportunityPanel({
         <div className="mb-4">
           <h2 className="text-xl font-black text-slate-950">Servizi da proporre</h2>
           <p className="mt-1 text-sm text-slate-600">
-            Seleziona i servizi non ancora attivi e poi conferma l’invio del messaggio
-            al cliente.
+            I suggerimenti sono ordinati per priorità commerciale in base ai servizi già attivi.
           </p>
         </div>
 
@@ -147,18 +287,18 @@ export default function ClienteOpportunityPanel({
           </div>
         </div>
 
-        {proponibili.length === 0 ? (
+        {recommendations.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
             Questo cliente ha già tutti i servizi presenti nella matrice.
           </div>
         ) : (
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            {proponibili.map((service) => {
-              const isSelected = selectedServices.includes(service);
+            {recommendations.map((item) => {
+              const isSelected = selectedServices.includes(item.service);
 
               return (
                 <label
-                  key={service}
+                  key={item.service}
                   className={[
                     "flex cursor-pointer items-start gap-3 rounded-2xl border p-4 transition",
                     isSelected
@@ -169,14 +309,29 @@ export default function ClienteOpportunityPanel({
                   <input
                     type="checkbox"
                     checked={isSelected}
-                    onChange={() => toggleService(service)}
+                    onChange={() => toggleService(item.service)}
                     className="mt-1 h-4 w-4 rounded border-slate-300 text-orange-500 focus:ring-orange-500"
                   />
 
                   <div className="min-w-0">
-                    <div className="font-semibold text-slate-950">{service}</div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="font-semibold text-slate-950">{item.service}</div>
+                      <span
+                        className={[
+                          "inline-flex rounded-full border px-2.5 py-0.5 text-[11px] font-semibold",
+                          item.priority === "Alta"
+                            ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                            : item.priority === "Media"
+                              ? "border-amber-200 bg-amber-50 text-amber-700"
+                              : "border-slate-200 bg-slate-50 text-slate-600",
+                        ].join(" ")}
+                      >
+                        Priorità {item.priority}
+                      </span>
+                    </div>
+
                     <div className="mt-1 text-sm text-slate-600">
-                      Servizio non attivo, proponibile al cliente.
+                      {item.reason}
                     </div>
                   </div>
                 </label>
