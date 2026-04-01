@@ -45,7 +45,7 @@ const STORE_CONTACTS: Record<
 > = {
   1: {
     label: "PHONESIA Floridia",
-    whatsappBase: "https://wa.me/393349474319",
+    whatsappBase: "https://wa.me/393917000017",
     mapsUrl:
       "https://www.google.com/maps/search/?api=1&query=Corso+Vittorio+Emanuele+735+Floridia",
   },
@@ -69,7 +69,7 @@ const STORE_CONTACTS: Record<
   },
   5: {
     label: "PHONESIA Floridia",
-    whatsappBase: "https://wa.me/393349474319",
+    whatsappBase: "https://wa.me/393473214561",
     mapsUrl:
       "https://www.google.com/maps/search/?api=1&query=Corso+Vittorio+Emanuele+735+Floridia",
   },
