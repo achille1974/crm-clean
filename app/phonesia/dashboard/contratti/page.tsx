@@ -108,13 +108,22 @@ export default async function DashboardContrattiPage({ searchParams }: Props) {
               </div>
 
               <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                Record visibili: {contrattiRecenti.length}
+                Mostrati a schermo: <strong className="text-slate-950">{contrattiRecenti.length}</strong>
+                {" · "}
+                Totale filtrati: <strong className="text-slate-950">{kpis.contrattiTotali}</strong>
               </div>
             </div>
           </div>
         </section>
 
-        <Filters negozi={negozioOptions} filters={filters} />
+        <Filters
+          negozi={negozioOptions}
+          filters={filters}
+          resetHref="/phonesia/dashboard/contratti"
+          exportAction="/api/phonesia/contratti/export"
+          exportLabel="Esporta contratti filtrati"
+          helperText="L’export scarica tutti i contratti che corrispondono ai filtri inseriti, anche se a schermo ne vedi solo 50."
+        />
 
         <section className="grid grid-cols-2 gap-4 xl:grid-cols-4">
           <div className="rounded-3xl border border-slate-200 bg-white px-4 py-4 shadow-sm">

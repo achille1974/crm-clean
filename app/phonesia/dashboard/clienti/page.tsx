@@ -346,79 +346,113 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
           </form>
         </section>
 
-        <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-          <div className="overflow-x-auto">
-            <table className="min-w-[1500px] w-full text-sm">
-              <thead className="bg-slate-50 text-slate-600">
-                <tr className="border-b border-slate-200">
-                  <th className="px-4 py-3 text-left font-semibold">Nome</th>
-                  <th className="px-4 py-3 text-left font-semibold">Cognome</th>
-                  <th className="px-4 py-3 text-left font-semibold">Operatore</th>
-                  <th className="px-4 py-3 text-left font-semibold">Codice fiscale</th>
-                  {SERVICE_COLUMNS.map((service) => (
-                    <th key={service} className="px-3 py-3 text-center font-semibold">
-                      {service}
-                    </th>
-                  ))}
-                  <th className="px-4 py-3 text-left font-semibold">Opportunità</th>
-                </tr>
-              </thead>
+        <form
+          action="/phonesia/dashboard/opportunita/invio"
+          method="get"
+          className="space-y-4"
+        >
+          <section className="rounded-3xl border border-slate-200 bg-white px-5 py-5 shadow-sm md:px-6">
+            <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+              <div>
+                <h2 className="text-xl font-black text-slate-950">Selezione clienti</h2>
+                <p className="mt-1 text-sm text-slate-600">
+                  Seleziona uno o più clienti e poi apri la pagina di composizione opportunità.
+                </p>
+              </div>
 
-              <tbody>
-                {rows.length === 0 ? (
-                  <tr>
-                    <td
-                      colSpan={5 + SERVICE_COLUMNS.length}
-                      className="px-4 py-10 text-center text-sm text-slate-500"
-                    >
-                      Nessun cliente trovato con i filtri selezionati.
-                    </td>
+              <button
+                type="submit"
+                className="inline-flex h-[50px] items-center justify-center rounded-2xl bg-orange-500 px-5 text-sm font-semibold text-white transition hover:bg-orange-600"
+              >
+                Crea invio opportunità
+              </button>
+            </div>
+          </section>
+
+          <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+            <div className="overflow-x-auto">
+              <table className="min-w-[1580px] w-full text-sm">
+                <thead className="bg-slate-50 text-slate-600">
+                  <tr className="border-b border-slate-200">
+                    <th className="px-4 py-3 text-left font-semibold">Seleziona</th>
+                    <th className="px-4 py-3 text-left font-semibold">Nome</th>
+                    <th className="px-4 py-3 text-left font-semibold">Cognome</th>
+                    <th className="px-4 py-3 text-left font-semibold">Operatore</th>
+                    <th className="px-4 py-3 text-left font-semibold">Codice fiscale</th>
+                    {SERVICE_COLUMNS.map((service) => (
+                      <th key={service} className="px-3 py-3 text-center font-semibold">
+                        {service}
+                      </th>
+                    ))}
+                    <th className="px-4 py-3 text-left font-semibold">Opportunità</th>
                   </tr>
-                ) : (
-                  rows.map((row) => (
-                    <tr
-                      key={row.cliente.id}
-                      className="border-b border-slate-100 align-top transition hover:bg-slate-50/70"
-                    >
-                      <td className="px-4 py-4 font-semibold text-slate-950">
-                        {row.cliente.nome || "—"}
-                      </td>
+                </thead>
 
-                      <td className="px-4 py-4 font-semibold text-slate-950">
-                        {row.cliente.cognome || "—"}
-                      </td>
-
-                      <td className="px-4 py-4">
-                        <span className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700">
-                          {row.operatore}
-                        </span>
-                      </td>
-
-                      <td className="px-4 py-4 font-mono text-xs text-slate-700">
-                        {row.cliente.codice_fiscale || "—"}
-                      </td>
-
-                      {SERVICE_COLUMNS.map((service) => (
-                        <td key={service} className="px-3 py-4 text-center">
-                          <CellFlag active={row.activeFamilies.has(service)} />
-                        </td>
-                      ))}
-
-                      <td className="px-4 py-4">
-                        <Link
-                          href={`/phonesia/dashboard/clienti/${row.cliente.id}`}
-                          className="inline-flex rounded-2xl border border-orange-200 bg-orange-50 px-4 py-2 text-sm font-semibold text-orange-700 transition hover:border-orange-300 hover:bg-orange-100"
-                        >
-                          Opportunità
-                        </Link>
+                <tbody>
+                  {rows.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={6 + SERVICE_COLUMNS.length}
+                        className="px-4 py-10 text-center text-sm text-slate-500"
+                      >
+                        Nessun cliente trovato con i filtri selezionati.
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </section>
+                  ) : (
+                    rows.map((row) => (
+                      <tr
+                        key={row.cliente.id}
+                        className="border-b border-slate-100 align-top transition hover:bg-slate-50/70"
+                      >
+                        <td className="px-4 py-4">
+                          <input
+                            type="checkbox"
+                            name="clienti"
+                            value={row.cliente.id}
+                            className="h-4 w-4 rounded border-slate-300 text-orange-500 focus:ring-orange-500"
+                          />
+                        </td>
+
+                        <td className="px-4 py-4 font-semibold text-slate-950">
+                          {row.cliente.nome || "—"}
+                        </td>
+
+                        <td className="px-4 py-4 font-semibold text-slate-950">
+                          {row.cliente.cognome || "—"}
+                        </td>
+
+                        <td className="px-4 py-4">
+                          <span className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700">
+                            {row.operatore}
+                          </span>
+                        </td>
+
+                        <td className="px-4 py-4 font-mono text-xs text-slate-700">
+                          {row.cliente.codice_fiscale || "—"}
+                        </td>
+
+                        {SERVICE_COLUMNS.map((service) => (
+                          <td key={service} className="px-3 py-4 text-center">
+                            <CellFlag active={row.activeFamilies.has(service)} />
+                          </td>
+                        ))}
+
+                        <td className="px-4 py-4">
+                          <Link
+                            href={`/phonesia/dashboard/clienti/${row.cliente.id}`}
+                            className="inline-flex rounded-2xl border border-orange-200 bg-orange-50 px-4 py-2 text-sm font-semibold text-orange-700 transition hover:border-orange-300 hover:bg-orange-100"
+                          >
+                            Opportunità
+                          </Link>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </form>
       </div>
     </main>
   );
