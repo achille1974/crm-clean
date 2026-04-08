@@ -28,6 +28,7 @@ export type DashboardKpis = {
   leadTotali: number;
   contrattiTotali: number;
   contrattiCollegatiQr: number;
+  clientiConConsensoMarketing: number;
   conversionePct: number;
   contrattiTelefonia: number;
   contrattiEnergia: number;
@@ -215,11 +216,31 @@ export async function getDashboardKpis(filters?: DashboardFilters): Promise<Dash
 
   const { data: linkedLeadsRows } = await linkedLeadsQuery;
 
-  const leadConvertitiIds = new Set<number>(
-    (linkedLeadsRows ?? [])
-      .map((row: any) => Number(row.cliente_id))
-      .filter((id: number) => !Number.isNaN(id)),
-  );
+  const linkedClienteIds = [
+    ...new Set(
+      (linkedLeadsRows ?? [])
+        .map((row: any) => Number(row.cliente_id))
+        .filter((id: number) => !Number.isNaN(id)),
+    ),
+  ];
+
+  let clientiConConsensoMarketing = 0;
+
+  if (linkedClienteIds.length > 0) {
+    const { data: marketingRows } = await supabase
+      .from("phonesia_consensi")
+      .select("cliente_id")
+      .eq("tipo_evento", "marketing_accepted")
+      .in("cliente_id", linkedClienteIds);
+
+    clientiConConsensoMarketing = new Set<number>(
+      (marketingRows ?? [])
+        .map((row: any) => Number(row.cliente_id))
+        .filter((id: number) => !Number.isNaN(id)),
+    ).size;
+  }
+
+  const leadConvertitiIds = new Set<number>(linkedClienteIds);
 
   const leadTotali = leadCountRes.count ?? 0;
   const contrattiTotali = contractCountRes.count ?? 0;
@@ -232,6 +253,7 @@ export async function getDashboardKpis(filters?: DashboardFilters): Promise<Dash
     leadTotali,
     contrattiTotali,
     contrattiCollegatiQr,
+    clientiConConsensoMarketing,
     conversionePct: leadTotali ? round2((leadConvertiti / leadTotali) * 100) : 0,
     contrattiTelefonia,
     contrattiEnergia,

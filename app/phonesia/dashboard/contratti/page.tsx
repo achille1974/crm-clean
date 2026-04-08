@@ -123,8 +123,10 @@ export default async function DashboardContrattiPage({ searchParams }: Props) {
           </div>
 
           <div className="rounded-3xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
-            <div className="text-sm text-slate-500">Collegati QR</div>
-            <div className="mt-2 text-3xl font-black text-slate-950">{kpis.contrattiCollegatiQr}</div>
+            <div className="text-sm text-slate-500">Clienti con consenso marketing</div>
+            <div className="mt-2 text-3xl font-black text-slate-950">
+              {kpis.clientiConConsensoMarketing}
+            </div>
           </div>
 
           <div className="rounded-3xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
