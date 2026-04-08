@@ -1,5 +1,6 @@
 "use client";
 
+import { createClient } from "@supabase/supabase-js";
 import { useMemo, useState, type ReactNode } from "react";
 
 const SERVICE_COLUMNS = [
@@ -43,6 +44,20 @@ type SendResponse =
       blockedCount: number;
       errorCount: number;
       results: SendResultRow[];
+    }
+  | {
+      ok: false;
+      error: string;
+      detail?: string;
+    };
+
+type UploadUrlResponse =
+  | {
+      ok: true;
+      bucket: string;
+      path: string;
+      token: string;
+      publicUrl: string;
     }
   | {
       ok: false;
@@ -124,11 +139,74 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
     !isSending &&
     (messageMode === "standard" || customMessage.trim().length > 0);
 
+  async function uploadAttachmentToStorage(file: File) {
+    const uploadUrlResponse = await fetch("/api/phonesia/media", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        fileName: file.name,
+        contentType: file.type || "application/octet-stream",
+      }),
+    });
+
+    const uploadUrlData = (await uploadUrlResponse.json()) as UploadUrlResponse;
+
+    if (!uploadUrlResponse.ok || !uploadUrlData.ok) {
+      throw new Error(
+        uploadUrlData.ok
+          ? "Impossibile preparare l’upload della locandina."
+          : uploadUrlData.detail || uploadUrlData.error || "Upload URL non disponibile.",
+      );
+    }
+
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+    if (!supabaseUrl || !supabaseAnonKey) {
+      throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY");
+    }
+
+    const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
+    });
+
+    const { error: uploadError } = await supabase.storage
+      .from(uploadUrlData.bucket)
+      .uploadToSignedUrl(uploadUrlData.path, uploadUrlData.token, file);
+
+    if (uploadError) {
+      throw new Error(`Upload locandina fallito: ${uploadError.message}`);
+    }
+
+    return {
+      publicUrl: uploadUrlData.publicUrl,
+      fileName: file.name,
+      mimeType: file.type || "application/octet-stream",
+    };
+  }
+
   async function handleSendBatch() {
     setIsSending(true);
     setSendResponse(null);
 
     try {
+      let attachment:
+        | {
+            publicUrl: string;
+            fileName: string;
+            mimeType: string;
+          }
+        | null = null;
+
+      if (selectedFile) {
+        attachment = await uploadAttachmentToStorage(selectedFile);
+      }
+
       const formData = new FormData();
 
       for (const recipient of recipients) {
@@ -143,8 +221,10 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
         formData.append("customMessage", customMessage.trim());
       }
 
-      if (selectedFile) {
-        formData.append("locandina", selectedFile);
+      if (attachment) {
+        formData.append("attachmentPublicUrl", attachment.publicUrl);
+        formData.append("attachmentFileName", attachment.fileName);
+        formData.append("attachmentMimeType", attachment.mimeType);
       }
 
       const response = await fetch("/api/phonesia/opportunita/send-batch", {
@@ -330,7 +410,7 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
               />
 
               <p className="mt-2 text-sm text-slate-500">
-                Formati consigliati: immagine o PDF.
+                La locandina viene caricata direttamente su Storage e poi inviata ai clienti selezionati.
               </p>
 
               {selectedFile ? (

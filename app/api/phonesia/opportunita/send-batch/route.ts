@@ -192,11 +192,10 @@ async function sendTelegramMessage(params: {
   }
 }
 
-async function sendTelegramMedia(params: {
+async function sendTelegramMediaByUrl(params: {
   chatId: string;
-  fileName: string;
+  publicUrl: string;
   mimeType: string;
-  bytes: Uint8Array;
 }) {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
 
@@ -208,19 +207,15 @@ async function sendTelegramMedia(params: {
   const endpoint = isImage ? "sendPhoto" : "sendDocument";
   const fieldName = isImage ? "photo" : "document";
 
-  const formData = new FormData();
-  formData.append("chat_id", params.chatId);
-
-  const safeBytes = new Uint8Array(params.bytes);
-  const blob = new Blob([safeBytes], {
-    type: params.mimeType || "application/octet-stream",
-  });
-
-  formData.append(fieldName, blob, params.fileName);
-
   const response = await fetch(`https://api.telegram.org/bot${botToken}/${endpoint}`, {
     method: "POST",
-    body: formData,
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      chat_id: params.chatId,
+      [fieldName]: params.publicUrl,
+    }),
     cache: "no-store",
   });
 
@@ -239,7 +234,8 @@ async function logOpportunitySend(
     batchId: string;
     messageMode: "standard" | "custom";
     standardService: ServiceFamily | null;
-    fileName: string | null;
+    attachmentPublicUrl: string | null;
+    attachmentFileName: string | null;
   },
 ) {
   try {
@@ -257,7 +253,8 @@ async function logOpportunitySend(
         negozio_contatto: params.negozioContatto,
         message_mode: params.messageMode,
         standard_service: params.standardService,
-        file_name: params.fileName,
+        attachment_public_url: params.attachmentPublicUrl,
+        attachment_file_name: params.attachmentFileName,
       },
     });
   } catch (error) {
@@ -289,7 +286,9 @@ export async function POST(request: NextRequest) {
       : null;
 
     const customMessage = normalizeText(String(formData.get("customMessage") ?? ""));
-    const locandina = formData.get("locandina");
+    const attachmentPublicUrl = normalizeText(String(formData.get("attachmentPublicUrl") ?? ""));
+    const attachmentFileName = normalizeText(String(formData.get("attachmentFileName") ?? ""));
+    const attachmentMimeType = normalizeText(String(formData.get("attachmentMimeType") ?? ""));
 
     if (clienteIds.length === 0) {
       return NextResponse.json(
@@ -312,15 +311,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const hasFile = locandina instanceof File && locandina.size > 0;
-    const fileBytes = hasFile ? new Uint8Array(await locandina.arrayBuffer()) : null;
-    const fileName = hasFile ? locandina.name : null;
-    const mimeType =
-      hasFile && locandina.type
-        ? locandina.type
-        : hasFile
-          ? "application/octet-stream"
-          : null;
+    const hasAttachment = Boolean(attachmentPublicUrl && attachmentMimeType);
 
     const supabase = getSupabaseAdmin();
     const batchId = crypto.randomUUID();
@@ -447,12 +438,11 @@ export async function POST(request: NextRequest) {
             : "opportunità ricevuta";
         const whatsappUrl = buildWhatsappUrl(contactStore.whatsappBase, contextLabel);
 
-        if (hasFile && fileBytes && fileName && mimeType) {
-          await sendTelegramMedia({
+        if (hasAttachment) {
+          await sendTelegramMediaByUrl({
             chatId: cliente.telegram_chat_id,
-            fileName,
-            mimeType,
-            bytes: fileBytes,
+            publicUrl: attachmentPublicUrl,
+            mimeType: attachmentMimeType,
           });
         }
 
@@ -470,14 +460,15 @@ export async function POST(request: NextRequest) {
           batchId,
           messageMode,
           standardService,
-          fileName,
+          attachmentPublicUrl: hasAttachment ? attachmentPublicUrl : null,
+          attachmentFileName: hasAttachment ? attachmentFileName || null : null,
         });
 
         results.push({
           clienteId: cliente.id,
           nome: nomeCompleto,
           status: "sent",
-          reason: hasFile
+          reason: hasAttachment
             ? "Messaggio e locandina inviati correttamente."
             : "Messaggio inviato correttamente.",
         });
