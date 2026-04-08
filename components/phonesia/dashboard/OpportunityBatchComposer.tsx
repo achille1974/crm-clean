@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 
 const SERVICE_COLUMNS = [
   "MOBILE",
@@ -27,6 +27,28 @@ type Recipient = {
 type Props = {
   recipients: Recipient[];
 };
+
+type SendResultRow = {
+  clienteId: number;
+  nome: string;
+  status: "sent" | "blocked" | "error" | "not_found";
+  reason: string;
+};
+
+type SendResponse =
+  | {
+      ok: true;
+      batchId: string;
+      sentCount: number;
+      blockedCount: number;
+      errorCount: number;
+      results: SendResultRow[];
+    }
+  | {
+      ok: false;
+      error: string;
+      detail?: string;
+    };
 
 function serviceLabel(service: ServiceFamily): string {
   switch (service) {
@@ -71,7 +93,9 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
   const [messageMode, setMessageMode] = useState<"standard" | "custom">("standard");
   const [standardService, setStandardService] = useState<ServiceFamily>("SMARTPHONE");
   const [customMessage, setCustomMessage] = useState("");
-  const [selectedFileName, setSelectedFileName] = useState("");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isSending, setIsSending] = useState(false);
+  const [sendResponse, setSendResponse] = useState<SendResponse | null>(null);
 
   const eligibleRecipients = useMemo(
     () =>
@@ -94,13 +118,75 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
       ? buildStandardText(standardService)
       : customMessage.trim() || "Nessun messaggio personalizzato inserito.";
 
+  const canSend =
+    recipients.length > 0 &&
+    eligibleRecipients.length > 0 &&
+    !isSending &&
+    (messageMode === "standard" || customMessage.trim().length > 0);
+
+  async function handleSendBatch() {
+    setIsSending(true);
+    setSendResponse(null);
+
+    try {
+      const formData = new FormData();
+
+      for (const recipient of recipients) {
+        formData.append("clienti", String(recipient.id));
+      }
+
+      formData.append("messageMode", messageMode);
+
+      if (messageMode === "standard") {
+        formData.append("standardService", standardService);
+      } else {
+        formData.append("customMessage", customMessage.trim());
+      }
+
+      if (selectedFile) {
+        formData.append("locandina", selectedFile);
+      }
+
+      const response = await fetch("/api/phonesia/opportunita/send-batch", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = (await response.json()) as SendResponse;
+
+      if (!response.ok || !data.ok) {
+        setSendResponse(
+          data.ok
+            ? data
+            : {
+                ok: false,
+                error: data.error || "Invio batch non riuscito.",
+                detail: data.detail,
+              },
+        );
+        setIsSending(false);
+        return;
+      }
+
+      setSendResponse(data);
+    } catch (error) {
+      setSendResponse({
+        ok: false,
+        error: "Errore imprevisto durante l’invio batch.",
+        detail: error instanceof Error ? error.message : "Unknown error",
+      });
+    } finally {
+      setIsSending(false);
+    }
+  }
+
   return (
     <div className="space-y-5">
       <section className="rounded-3xl border border-slate-200 bg-white px-5 py-5 shadow-sm md:px-6">
         <div className="mb-4">
           <h2 className="text-xl font-black text-slate-950">Destinatari selezionati</h2>
           <p className="mt-1 text-sm text-slate-600">
-            In questo step prepariamo la composizione del messaggio. L’invio multiplo reale verrà collegato nel passo successivo.
+            Invia l’opportunità solo ai clienti idonei: consenso marketing attivo e Telegram attivo.
           </p>
         </div>
 
@@ -153,7 +239,7 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
         <div className="mb-4">
           <h2 className="text-xl font-black text-slate-950">Composizione opportunità</h2>
           <p className="mt-1 text-sm text-slate-600">
-            Scegli se usare il messaggio standard o scriverne uno personalizzato. La locandina è opzionale.
+            Puoi inviare solo il messaggio, oppure messaggio + locandina caricata dal computer.
           </p>
         </div>
 
@@ -239,19 +325,17 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
               <input
                 type="file"
                 accept="image/*,.pdf"
-                onChange={(event) =>
-                  setSelectedFileName(event.target.files?.[0]?.name ?? "")
-                }
+                onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
                 className="block w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900"
               />
 
               <p className="mt-2 text-sm text-slate-500">
-                Puoi caricare una locandina dal computer. Nel prossimo step la colleghiamo all’invio reale su Telegram.
+                Formati consigliati: immagine o PDF.
               </p>
 
-              {selectedFileName ? (
+              {selectedFile ? (
                 <div className="mt-3 inline-flex rounded-full border border-orange-200 bg-white px-3 py-1 text-xs font-semibold text-orange-700">
-                  File selezionato: {selectedFileName}
+                  File selezionato: {selectedFile.name}
                 </div>
               ) : null}
             </section>
@@ -267,25 +351,89 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
             </section>
 
             <section className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
-              <div className="text-sm font-semibold text-slate-900">Stato step</div>
+              <div className="text-sm font-semibold text-slate-900">Invio</div>
 
-              <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-800">
-                In questo step prepariamo selezione destinatari, composizione messaggio e upload locandina. Nel prossimo step colleghiamo l’invio multiplo reale con allegato.
+              <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-700">
+                Verranno inviati:
+                <ul className="mt-2 space-y-1.5">
+                  <li>• messaggio standard o personalizzato</li>
+                  <li>• locandina allegata, se caricata</li>
+                  <li>• pulsanti Contattaci / Vieni in negozio nel messaggio</li>
+                </ul>
               </div>
 
-              <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+              <div className="mt-4 flex flex-col gap-3">
                 <button
                   type="button"
-                  disabled
-                  className="inline-flex items-center justify-center rounded-2xl bg-orange-300 px-5 py-3 text-sm font-semibold text-white"
+                  disabled={!canSend}
+                  onClick={handleSendBatch}
+                  className={[
+                    "inline-flex items-center justify-center rounded-2xl px-5 py-3 text-sm font-semibold text-white transition",
+                    canSend
+                      ? "bg-orange-500 hover:bg-orange-600"
+                      : "cursor-not-allowed bg-orange-300",
+                  ].join(" ")}
                 >
-                  Invio multiplo: prossimo step
+                  {isSending ? "Invio in corso..." : "Invia opportunità ai clienti selezionati"}
                 </button>
+
+                <p className="text-xs text-slate-500">
+                  I clienti senza consenso marketing o senza Telegram attivo verranno saltati automaticamente.
+                </p>
               </div>
             </section>
           </div>
         </div>
       </section>
+
+      {sendResponse ? (
+        <section className="rounded-3xl border border-slate-200 bg-white px-5 py-5 shadow-sm md:px-6">
+          {sendResponse.ok ? (
+            <>
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-800">
+                Invio completato. Batch ID: <strong>{sendResponse.batchId}</strong>
+              </div>
+
+              <div className="mt-4 grid gap-4 md:grid-cols-3">
+                <StatCard label="Inviati" value={String(sendResponse.sentCount)} />
+                <StatCard label="Bloccati" value={String(sendResponse.blockedCount)} />
+                <StatCard label="Errori" value={String(sendResponse.errorCount)} />
+              </div>
+
+              <div className="mt-5 overflow-hidden rounded-3xl border border-slate-200">
+                <div className="overflow-x-auto">
+                  <table className="min-w-[800px] w-full text-sm">
+                    <thead className="bg-slate-50 text-slate-600">
+                      <tr className="border-b border-slate-200">
+                        <th className="px-4 py-3 text-left font-semibold">Cliente</th>
+                        <th className="px-4 py-3 text-left font-semibold">Esito</th>
+                        <th className="px-4 py-3 text-left font-semibold">Dettaglio</th>
+                      </tr>
+                    </thead>
+
+                    <tbody>
+                      {sendResponse.results.map((row) => (
+                        <tr key={`${row.clienteId}-${row.status}`} className="border-b border-slate-100">
+                          <td className="px-4 py-4 font-semibold text-slate-950">{row.nome}</td>
+                          <td className="px-4 py-4">
+                            <StatusPill status={row.status} />
+                          </td>
+                          <td className="px-4 py-4 text-slate-700">{row.reason}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-4 text-sm text-rose-800">
+              <strong>{sendResponse.error}</strong>
+              {sendResponse.detail ? <div className="mt-1">{sendResponse.detail}</div> : null}
+            </div>
+          )}
+        </section>
+      ) : null}
     </div>
   );
 }
@@ -304,7 +452,7 @@ function Badge({
   children,
 }: {
   ok: boolean;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
     <span
@@ -316,6 +464,34 @@ function Badge({
       ].join(" ")}
     >
       {children}
+    </span>
+  );
+}
+
+function StatusPill({
+  status,
+}: {
+  status: "sent" | "blocked" | "error" | "not_found";
+}) {
+  const label =
+    status === "sent"
+      ? "Inviato"
+      : status === "blocked"
+        ? "Bloccato"
+        : status === "not_found"
+          ? "Non trovato"
+          : "Errore";
+
+  const className =
+    status === "sent"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+      : status === "blocked"
+        ? "border-amber-200 bg-amber-50 text-amber-700"
+        : "border-rose-200 bg-rose-50 text-rose-700";
+
+  return (
+    <span className={["inline-flex rounded-full border px-3 py-1 text-xs font-semibold", className].join(" ")}>
+      {label}
     </span>
   );
 }
