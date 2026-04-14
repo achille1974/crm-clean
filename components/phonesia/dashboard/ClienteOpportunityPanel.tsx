@@ -15,6 +15,19 @@ const SERVICE_COLUMNS = [
 
 type ServiceFamily = (typeof SERVICE_COLUMNS)[number];
 
+type SentOpportunity = {
+  id: number;
+  opportunityCode: string;
+  opportunityLabel: string;
+  sendMode: string;
+  batchId: string;
+  message: string;
+  attachmentPublicUrl: string;
+  attachmentFileName: string;
+  negozioContatto: string;
+  sentAt: string;
+};
+
 type Props = {
   clienteId: number;
   clienteNome: string;
@@ -22,6 +35,7 @@ type Props = {
   telegramActive: boolean;
   marketingConsented: boolean;
   contactStoreLabel: string;
+  sentOpportunities: SentOpportunity[];
 };
 
 type SendState =
@@ -51,6 +65,49 @@ const FALLBACK_ORDER: ServiceFamily[] = [
   "SICUREZZA",
   "FOTOVOLTAICO",
 ];
+
+function normalizeText(value?: string | null): string {
+  return String(value ?? "").trim();
+}
+
+function normalizeServiceCode(value?: string | null): ServiceFamily | null {
+  const normalized = normalizeText(value).toUpperCase();
+  return SERVICE_COLUMNS.includes(normalized as ServiceFamily)
+    ? (normalized as ServiceFamily)
+    : null;
+}
+
+function formatDateTime(value?: string | null): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+
+  return new Intl.DateTimeFormat("it-IT", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function mergeSentOpportunities(
+  current: SentOpportunity[],
+  incoming: SentOpportunity[],
+): SentOpportunity[] {
+  const map = new Map<string, SentOpportunity>();
+
+  for (const item of [...current, ...incoming]) {
+    const key = String(item.id);
+    map.set(key, item);
+  }
+
+  return [...map.values()].sort((a, b) => {
+    const aTime = new Date(a.sentAt).getTime();
+    const bTime = new Date(b.sentAt).getTime();
+    return bTime - aTime;
+  });
+}
 
 function buildOpportunityRecommendations(
   activeServices: ServiceFamily[],
@@ -175,24 +232,61 @@ export default function ClienteOpportunityPanel({
   telegramActive,
   marketingConsented,
   contactStoreLabel,
+  sentOpportunities,
 }: Props) {
   const [selectedServices, setSelectedServices] = useState<ServiceFamily[]>([]);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [customMessage, setCustomMessage] = useState("");
+  const [attachmentUrl, setAttachmentUrl] = useState("");
+  const [attachmentFileName, setAttachmentFileName] = useState("");
   const [sendState, setSendState] = useState<SendState>({
     type: "idle",
     message: "",
   });
+  const [history, setHistory] = useState<SentOpportunity[]>(
+    [...sentOpportunities].sort((a, b) => {
+      const aTime = new Date(a.sentAt).getTime();
+      const bTime = new Date(b.sentAt).getTime();
+      return bTime - aTime;
+    }),
+  );
 
   const recommendations = useMemo(
     () => buildOpportunityRecommendations(activeServices),
     [activeServices],
   );
 
+  const latestSentByService = useMemo(() => {
+    const map = new Map<ServiceFamily, SentOpportunity>();
+
+    for (const item of history) {
+      const service = normalizeServiceCode(item.opportunityCode);
+      if (!service) continue;
+      if (!map.has(service)) {
+        map.set(service, item);
+      }
+    }
+
+    return map;
+  }, [history]);
+
+  const sentServicesCount = latestSentByService.size;
+  const lastSent = history[0] ?? null;
+
+  const trimmedMessage = customMessage.trim();
+  const trimmedAttachmentUrl = attachmentUrl.trim();
+  const trimmedAttachmentFileName = attachmentFileName.trim();
+
+  const hasCustomContent =
+    trimmedMessage.length > 0 || trimmedAttachmentUrl.length > 0 || trimmedAttachmentFileName.length > 0;
+
   const canAttemptSend = selectedServices.length > 0;
   const canReallySend = canAttemptSend && telegramActive && marketingConsented && !isSending;
 
   function toggleService(service: ServiceFamily) {
+    if (latestSentByService.has(service)) return;
+
     setSendState({ type: "idle", message: "" });
 
     setSelectedServices((prev) =>
@@ -215,6 +309,10 @@ export default function ClienteOpportunityPanel({
         body: JSON.stringify({
           clienteId,
           services: selectedServices,
+          sendMode: hasCustomContent ? "custom" : "standard",
+          customMessage: trimmedMessage || undefined,
+          attachmentPublicUrl: trimmedAttachmentUrl || undefined,
+          attachmentFileName: trimmedAttachmentFileName || undefined,
         }),
       });
 
@@ -223,6 +321,7 @@ export default function ClienteOpportunityPanel({
         message?: string;
         error?: string;
         detail?: string;
+        sentOpportunities?: SentOpportunity[];
       };
 
       if (!response.ok || !data.ok) {
@@ -237,11 +336,22 @@ export default function ClienteOpportunityPanel({
         return;
       }
 
+      const newSentOpportunities: SentOpportunity[] = Array.isArray(data.sentOpportunities)
+        ? data.sentOpportunities
+        : [];
+
+      if (newSentOpportunities.length > 0) {
+        setHistory((prev) => mergeSentOpportunities(prev, newSentOpportunities));
+      }
+
       setSendState({
         type: "success",
         message: data.message || "Messaggio inviato correttamente.",
       });
       setSelectedServices([]);
+      setCustomMessage("");
+      setAttachmentUrl("");
+      setAttachmentFileName("");
       setConfirmOpen(false);
     } catch (error) {
       setSendState({
@@ -287,6 +397,22 @@ export default function ClienteOpportunityPanel({
           </div>
         </div>
 
+        <div className="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <SummaryCard label="Opportunità inviate" value={String(sentServicesCount)} />
+          <SummaryCard
+            label="Ultimo invio"
+            value={lastSent ? formatDateTime(lastSent.sentAt) : "—"}
+          />
+          <SummaryCard
+            label="Ultima opportunità"
+            value={lastSent ? (lastSent.opportunityLabel || lastSent.opportunityCode || "—") : "—"}
+          />
+          <SummaryCard
+            label="Ultimo negozio usato"
+            value={lastSent?.negozioContatto || "—"}
+          />
+        </div>
+
         {recommendations.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
             Questo cliente ha già tutti i servizi presenti nella matrice.
@@ -295,27 +421,32 @@ export default function ClienteOpportunityPanel({
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             {recommendations.map((item) => {
               const isSelected = selectedServices.includes(item.service);
+              const alreadySent = latestSentByService.get(item.service) ?? null;
 
               return (
                 <label
                   key={item.service}
                   className={[
-                    "flex cursor-pointer items-start gap-3 rounded-2xl border p-4 transition",
-                    isSelected
-                      ? "border-orange-300 bg-orange-50"
-                      : "border-slate-200 bg-white hover:border-orange-200 hover:bg-orange-50/40",
+                    "flex items-start gap-3 rounded-2xl border p-4 transition",
+                    alreadySent
+                      ? "cursor-not-allowed border-emerald-200 bg-emerald-50/60"
+                      : isSelected
+                        ? "cursor-pointer border-orange-300 bg-orange-50"
+                        : "cursor-pointer border-slate-200 bg-white hover:border-orange-200 hover:bg-orange-50/40",
                   ].join(" ")}
                 >
                   <input
                     type="checkbox"
                     checked={isSelected}
+                    disabled={Boolean(alreadySent)}
                     onChange={() => toggleService(item.service)}
-                    className="mt-1 h-4 w-4 rounded border-slate-300 text-orange-500 focus:ring-orange-500"
+                    className="mt-1 h-4 w-4 rounded border-slate-300 text-orange-500 focus:ring-orange-500 disabled:cursor-not-allowed disabled:opacity-60"
                   />
 
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <div className="font-semibold text-slate-950">{item.service}</div>
+
                       <span
                         className={[
                           "inline-flex rounded-full border px-2.5 py-0.5 text-[11px] font-semibold",
@@ -328,11 +459,23 @@ export default function ClienteOpportunityPanel({
                       >
                         Priorità {item.priority}
                       </span>
+
+                      {alreadySent && (
+                        <span className="inline-flex rounded-full border border-sky-200 bg-sky-50 px-2.5 py-0.5 text-[11px] font-semibold text-sky-700">
+                          Inviata
+                        </span>
+                      )}
                     </div>
 
                     <div className="mt-1 text-sm text-slate-600">
                       {item.reason}
                     </div>
+
+                    {alreadySent && (
+                      <div className="mt-2 text-xs font-medium text-sky-700">
+                        Già inviata il {formatDateTime(alreadySent.sentAt)}
+                      </div>
+                    )}
                   </div>
                 </label>
               );
@@ -358,6 +501,52 @@ export default function ClienteOpportunityPanel({
             ) : (
               <span className="text-xs text-slate-500">Nessun servizio selezionato.</span>
             )}
+          </div>
+
+          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
+              <div className="text-sm font-semibold text-slate-900">
+                Messaggio personalizzato
+              </div>
+              <p className="mt-1 text-xs text-slate-500">
+                Lascia vuoto per usare il messaggio standard automatico.
+              </p>
+
+              <textarea
+                value={customMessage}
+                onChange={(event) => setCustomMessage(event.target.value)}
+                rows={6}
+                placeholder="Scrivi qui un messaggio personalizzato per il cliente..."
+                className="mt-3 w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-orange-500"
+              />
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
+              <div className="text-sm font-semibold text-slate-900">
+                Allegato facoltativo
+              </div>
+              <p className="mt-1 text-xs text-slate-500">
+                Inserisci il link pubblico della locandina o allegato e, se vuoi, il nome file da mostrare.
+              </p>
+
+              <div className="mt-3 space-y-3">
+                <input
+                  type="text"
+                  value={attachmentUrl}
+                  onChange={(event) => setAttachmentUrl(event.target.value)}
+                  placeholder="https://..."
+                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-orange-500"
+                />
+
+                <input
+                  type="text"
+                  value={attachmentFileName}
+                  onChange={(event) => setAttachmentFileName(event.target.value)}
+                  placeholder="Nome allegato (es. locandina-energia-aprile.pdf)"
+                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-orange-500"
+                />
+              </div>
+            </div>
           </div>
 
           {sendState.type !== "idle" && (
@@ -389,16 +578,83 @@ export default function ClienteOpportunityPanel({
             </button>
 
             <p className="mt-2 text-xs text-slate-500">
-              Il messaggio verrà inviato solo se il cliente ha consenso marketing e
-              Telegram attivo.
+              Il messaggio verrà inviato solo se il cliente ha consenso marketing e Telegram attivo.
             </p>
           </div>
+        </div>
+
+        <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-sm font-semibold text-slate-900">
+                Storico opportunità inviate
+              </div>
+              <div className="mt-1 text-xs text-slate-500">
+                Così eviti di proporre di nuovo la stessa opportunità allo stesso cliente.
+              </div>
+            </div>
+          </div>
+
+          {history.length === 0 ? (
+            <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-6 text-sm text-slate-500">
+              Nessuna opportunità inviata a questo cliente.
+            </div>
+          ) : (
+            <div className="mt-4 space-y-3">
+              {history.map((item) => {
+                const serviceCode = normalizeServiceCode(item.opportunityCode);
+
+                return (
+                  <div
+                    key={item.id}
+                    className="rounded-2xl border border-slate-200 bg-white px-4 py-4"
+                  >
+                    <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="font-semibold text-slate-950">
+                            {item.opportunityLabel || item.opportunityCode || "Opportunità"}
+                          </div>
+
+                          {serviceCode && (
+                            <span className="inline-flex rounded-full border border-sky-200 bg-sky-50 px-2.5 py-0.5 text-[11px] font-semibold text-sky-700">
+                              {serviceCode}
+                            </span>
+                          )}
+
+                          <span className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-[11px] font-semibold text-slate-600">
+                            {item.sendMode || "standard"}
+                          </span>
+                        </div>
+
+                        <div className="mt-2 text-sm text-slate-600">
+                          Inviata il <strong className="text-slate-900">{formatDateTime(item.sentAt)}</strong>
+                          {item.negozioContatto ? (
+                            <>
+                              {" "}• negozio messaggio{" "}
+                              <strong className="text-slate-900">{item.negozioContatto}</strong>
+                            </>
+                          ) : null}
+                        </div>
+
+                        {item.attachmentFileName && (
+                          <div className="mt-1 text-xs text-slate-500">
+                            Allegato: {item.attachmentFileName}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </section>
 
       {confirmOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4">
-          <div className="w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_20px_80px_rgba(15,23,42,0.25)]">
+          <div className="w-full max-w-2xl rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_20px_80px_rgba(15,23,42,0.25)]">
             <div className="mb-2 inline-flex rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-orange-700">
               Conferma invio
             </div>
@@ -442,6 +698,25 @@ export default function ClienteOpportunityPanel({
                   <strong className="text-slate-950">{contactStoreLabel}</strong>
                 </li>
               </ul>
+
+              {trimmedMessage ? (
+                <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                  <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Messaggio personalizzato
+                  </div>
+                  <div className="whitespace-pre-wrap text-sm text-slate-700">{trimmedMessage}</div>
+                </div>
+              ) : null}
+
+              {trimmedAttachmentUrl || trimmedAttachmentFileName ? (
+                <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+                  <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Allegato
+                  </div>
+                  <div>URL: {trimmedAttachmentUrl || "—"}</div>
+                  <div>Nome file: {trimmedAttachmentFileName || "—"}</div>
+                </div>
+              ) : null}
             </div>
 
             <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
@@ -498,6 +773,21 @@ function StatusCard({
       >
         {ok ? okText : koText}
       </div>
+    </div>
+  );
+}
+
+function SummaryCard({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+      <div className="text-sm text-slate-500">{label}</div>
+      <div className="mt-2 text-base font-bold text-slate-950">{value}</div>
     </div>
   );
 }

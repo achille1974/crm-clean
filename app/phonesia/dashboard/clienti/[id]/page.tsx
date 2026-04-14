@@ -174,17 +174,27 @@ function resolveOperatore(servizi: ServizioRow[], contratti: ContrattoRow[]): st
   return winner?.[0] ?? "—";
 }
 
-function CellFlag({ active }: { active: boolean }) {
+function CellFlag({ active, alreadySent }: { active: boolean; alreadySent?: boolean }) {
   return (
-    <div
-      className={[
-        "mx-auto flex h-9 w-9 items-center justify-center rounded-full border text-sm font-bold",
-        active
-          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-          : "border-slate-200 bg-slate-50 text-slate-300",
-      ].join(" ")}
-    >
-      {active ? "✓" : "—"}
+    <div className="flex flex-col items-center gap-1">
+      <div
+        className={[
+          "mx-auto flex h-9 w-9 items-center justify-center rounded-full border text-sm font-bold",
+          active
+            ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+            : "border-slate-200 bg-slate-50 text-slate-300",
+        ].join(" ")}
+      >
+        {active ? "✓" : "—"}
+      </div>
+
+      {alreadySent ? (
+        <span className="rounded-full border border-orange-200 bg-orange-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-orange-700">
+          Inviata
+        </span>
+      ) : (
+        <span className="h-[18px]" />
+      )}
     </div>
   );
 }
@@ -317,6 +327,12 @@ export default async function DashboardClienteOpportunitaPage({
     if (family) activeFamilies.add(family);
   }
 
+  const sentOpportunityCodes = new Set<string>(
+    opportunitaInviate
+      .map((row) => normalizeText(row.opportunityCode).toUpperCase())
+      .filter(Boolean),
+  );
+
   const operatore = resolveOperatore(servizi, contratti);
   const ultimaStipula =
     contratti.find((row) => normalizeText(row.data_stipula))?.data_stipula ??
@@ -432,7 +448,10 @@ export default async function DashboardClienteOpportunitaPage({
                     key={service}
                     className="border-b border-slate-100 px-3 py-4 text-center"
                   >
-                    <CellFlag active={activeFamilies.has(service)} />
+                    <CellFlag
+                      active={activeFamilies.has(service)}
+                      alreadySent={sentOpportunityCodes.has(service)}
+                    />
                   </div>
                 ))}
               </div>
