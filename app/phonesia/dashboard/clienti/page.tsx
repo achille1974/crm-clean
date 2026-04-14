@@ -370,7 +370,7 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
           </section>
 
           <section className="rounded-3xl border border-slate-200 bg-white shadow-sm">
-            <div className="overflow-x-auto rounded-3xl">
+            <div className="max-h-[70vh] overflow-auto rounded-3xl">
               <table className="min-w-[1580px] w-full text-sm">
                 <thead className="text-slate-600">
                   <tr className="border-b border-slate-200">
