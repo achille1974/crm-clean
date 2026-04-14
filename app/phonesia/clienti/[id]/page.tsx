@@ -426,33 +426,32 @@ export default async function DashboardClienteOpportunitaPage({
           </div>
 
           <div className="overflow-x-auto">
-            <table className="min-w-[900px] w-full text-sm">
-              <thead className="text-slate-600">
-                <tr className="border-b border-slate-200">
-                  {SERVICE_COLUMNS.map((service) => (
-                    <th
-                      key={service}
-                      className="sticky top-0 z-20 border-b border-slate-200 bg-slate-50 px-3 py-3 text-center font-semibold shadow-[0_1px_0_0_rgb(226_232_240)]"
-                    >
-                      {service}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
+            <div className="min-w-[900px]">
+              <div className="sticky top-0 z-20 grid grid-cols-8 border-b border-slate-200 bg-slate-50 text-slate-600 shadow-[0_1px_0_0_rgb(226_232_240)]">
+                {SERVICE_COLUMNS.map((service) => (
+                  <div
+                    key={service}
+                    className="px-3 py-3 text-center text-sm font-semibold"
+                  >
+                    {service}
+                  </div>
+                ))}
+              </div>
 
-              <tbody>
-                <tr>
-                  {SERVICE_COLUMNS.map((service) => (
-                    <td key={service} className="px-3 py-4 text-center">
-                      <CellFlag
-                        active={activeFamilies.has(service)}
-                        alreadySent={sentOpportunityCodes.has(service)}
-                      />
-                    </td>
-                  ))}
-                </tr>
-              </tbody>
-            </table>
+              <div className="grid grid-cols-8">
+                {SERVICE_COLUMNS.map((service) => (
+                  <div
+                    key={service}
+                    className="border-b border-slate-100 px-3 py-4 text-center"
+                  >
+                    <CellFlag
+                      active={activeFamilies.has(service)}
+                      alreadySent={sentOpportunityCodes.has(service)}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </section>
 
