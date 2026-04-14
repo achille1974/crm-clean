@@ -372,19 +372,34 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
           <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
             <div className="overflow-x-auto">
               <table className="min-w-[1580px] w-full text-sm">
-                <thead className="bg-slate-50 text-slate-600">
+                <thead className="text-slate-600">
                   <tr className="border-b border-slate-200">
-                    <th className="px-4 py-3 text-left font-semibold">Seleziona</th>
-                    <th className="px-4 py-3 text-left font-semibold">Nome</th>
-                    <th className="px-4 py-3 text-left font-semibold">Cognome</th>
-                    <th className="px-4 py-3 text-left font-semibold">Operatore</th>
-                    <th className="px-4 py-3 text-left font-semibold">Codice fiscale</th>
+                    <th className="sticky top-0 z-20 bg-slate-50 px-4 py-3 text-left font-semibold shadow-[0_1px_0_0_rgb(226_232_240)]">
+                      Seleziona
+                    </th>
+                    <th className="sticky top-0 z-20 bg-slate-50 px-4 py-3 text-left font-semibold shadow-[0_1px_0_0_rgb(226_232_240)]">
+                      Nome
+                    </th>
+                    <th className="sticky top-0 z-20 bg-slate-50 px-4 py-3 text-left font-semibold shadow-[0_1px_0_0_rgb(226_232_240)]">
+                      Cognome
+                    </th>
+                    <th className="sticky top-0 z-20 bg-slate-50 px-4 py-3 text-left font-semibold shadow-[0_1px_0_0_rgb(226_232_240)]">
+                      Operatore
+                    </th>
+                    <th className="sticky top-0 z-20 bg-slate-50 px-4 py-3 text-left font-semibold shadow-[0_1px_0_0_rgb(226_232_240)]">
+                      Codice fiscale
+                    </th>
                     {SERVICE_COLUMNS.map((service) => (
-                      <th key={service} className="px-3 py-3 text-center font-semibold">
+                      <th
+                        key={service}
+                        className="sticky top-0 z-20 bg-slate-50 px-3 py-3 text-center font-semibold shadow-[0_1px_0_0_rgb(226_232_240)]"
+                      >
                         {service}
                       </th>
                     ))}
-                    <th className="px-4 py-3 text-left font-semibold">Opportunità</th>
+                    <th className="sticky top-0 z-20 bg-slate-50 px-4 py-3 text-left font-semibold shadow-[0_1px_0_0_rgb(226_232_240)]">
+                      Opportunità
+                    </th>
                   </tr>
                 </thead>
 
