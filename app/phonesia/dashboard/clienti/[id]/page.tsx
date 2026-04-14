@@ -50,6 +50,32 @@ type ContrattoRow = {
   created_at: string | null;
 };
 
+type OpportunitaInviataRow = {
+  id: number;
+  opportunita_code: string | null;
+  opportunita_label: string | null;
+  send_mode: string | null;
+  batch_id: string | null;
+  messaggio: string | null;
+  attachment_public_url: string | null;
+  attachment_file_name: string | null;
+  negozio_contatto: string | null;
+  inviato_at: string | null;
+};
+
+type SentOpportunityView = {
+  id: number;
+  opportunityCode: string;
+  opportunityLabel: string;
+  sendMode: string;
+  batchId: string;
+  message: string;
+  attachmentPublicUrl: string;
+  attachmentFileName: string;
+  negozioContatto: string;
+  sentAt: string;
+};
+
 const NEGOZI: Record<number, string> = {
   1: "Floridia",
   2: "Augusta",
@@ -118,6 +144,20 @@ function formatDate(value?: string | null): string {
   }).format(date);
 }
 
+function formatDateTime(value?: string | null): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+
+  return new Intl.DateTimeFormat("it-IT", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
 function resolveOperatore(servizi: ServizioRow[], contratti: ContrattoRow[]): string {
   const contrattoConOperatore = contratti.find((row) => normalizeText(row.operatore));
   if (contrattoConOperatore?.operatore) return contrattoConOperatore.operatore;
@@ -153,6 +193,16 @@ function formatDistinctStoreLabels(values: Array<number | null | undefined>): st
   const unique = [...new Set(values.filter((value): value is number => Boolean(value)))];
   if (unique.length === 0) return "Non assegnato";
   return unique.map((value) => negozioLabel(value)).join(", ");
+}
+
+function buildDistinctOpportunityBadges(rows: SentOpportunityView[]): string[] {
+  const labels = rows.map((row) => {
+    const label = normalizeText(row.opportunityLabel);
+    const code = normalizeText(row.opportunityCode).toUpperCase();
+    return label || code;
+  });
+
+  return [...new Set(labels.filter(Boolean))];
 }
 
 function InfoCard({
@@ -193,6 +243,7 @@ export default async function DashboardClienteOpportunitaPage({
     { data: serviziData, error: serviziError },
     { data: contrattiData, error: contrattiError },
     { data: marketingConsentData, error: marketingConsentError },
+    { data: opportunitaData, error: opportunitaError },
   ] = await Promise.all([
     supabase
       .from("phonesia_clienti")
@@ -221,6 +272,13 @@ export default async function DashboardClienteOpportunitaPage({
       .eq("tipo_evento", "marketing_accepted")
       .limit(1)
       .maybeSingle(),
+    supabase
+      .from("phonesia_opportunita_inviate")
+      .select(
+        "id, opportunita_code, opportunita_label, send_mode, batch_id, messaggio, attachment_public_url, attachment_file_name, negozio_contatto, inviato_at",
+      )
+      .eq("cliente_id", clienteId)
+      .order("inviato_at", { ascending: false }),
   ]);
 
   if (clienteError) throw new Error(`Errore lettura cliente: ${clienteError.message}`);
@@ -228,6 +286,9 @@ export default async function DashboardClienteOpportunitaPage({
   if (contrattiError) throw new Error(`Errore lettura contratti cliente: ${contrattiError.message}`);
   if (marketingConsentError) {
     throw new Error(`Errore lettura consenso marketing: ${marketingConsentError.message}`);
+  }
+  if (opportunitaError) {
+    throw new Error(`Errore lettura opportunità inviate: ${opportunitaError.message}`);
   }
 
   const cliente = clienteData as ClienteRow | null;
@@ -237,6 +298,18 @@ export default async function DashboardClienteOpportunitaPage({
     isServizioAttivo(row.service_status),
   );
   const contratti = (contrattiData ?? []) as ContrattoRow[];
+  const opportunitaInviate: SentOpportunityView[] = ((opportunitaData ?? []) as OpportunitaInviataRow[]).map((row) => ({
+    id: row.id,
+    opportunityCode: normalizeText(row.opportunita_code),
+    opportunityLabel: normalizeText(row.opportunita_label),
+    sendMode: normalizeText(row.send_mode),
+    batchId: normalizeText(row.batch_id),
+    message: normalizeText(row.messaggio),
+    attachmentPublicUrl: normalizeText(row.attachment_public_url),
+    attachmentFileName: normalizeText(row.attachment_file_name),
+    negozioContatto: normalizeText(row.negozio_contatto),
+    sentAt: normalizeText(row.inviato_at),
+  }));
 
   const activeFamilies = new Set<ServiceFamily>();
   for (const servizio of servizi) {
@@ -258,6 +331,13 @@ export default async function DashboardClienteOpportunitaPage({
     1;
   const contactStoreLabel = negozioLabel(contactStoreId);
   const marketingConsented = Boolean(marketingConsentData);
+
+  const ultimoInvio = opportunitaInviate[0]?.sentAt ?? null;
+  const ultimaOpportunita =
+    opportunitaInviate[0]?.opportunityLabel ||
+    opportunitaInviate[0]?.opportunityCode ||
+    "—";
+  const distinctOpportunityBadges = buildDistinctOpportunityBadges(opportunitaInviate);
 
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-6 md:px-8">
@@ -290,6 +370,19 @@ export default async function DashboardClienteOpportunitaPage({
                 Operatore principale: <strong className="text-slate-950">{operatore}</strong>
               </div>
             </div>
+
+            {distinctOpportunityBadges.length > 0 ? (
+              <div className="flex flex-wrap gap-2">
+                {distinctOpportunityBadges.map((label) => (
+                  <span
+                    key={label}
+                    className="rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-xs font-semibold text-orange-700"
+                  >
+                    Già inviata: {label}
+                  </span>
+                ))}
+              </div>
+            ) : null}
           </div>
         </section>
 
@@ -307,6 +400,9 @@ export default async function DashboardClienteOpportunitaPage({
           />
           <InfoCard label="Ultima stipula" value={formatDate(ultimaStipula)} />
           <InfoCard label="Contratti collegati" value={String(contratti.length)} />
+          <InfoCard label="Opportunità inviate" value={String(opportunitaInviate.length)} />
+          <InfoCard label="Ultimo invio" value={formatDateTime(ultimoInvio)} />
+          <InfoCard label="Ultima opportunità" value={ultimaOpportunita} />
         </section>
 
         <section className="rounded-3xl border border-slate-200 bg-white px-5 py-5 shadow-sm md:px-6">
@@ -318,27 +414,29 @@ export default async function DashboardClienteOpportunitaPage({
           </div>
 
           <div className="overflow-x-auto">
-            <table className="min-w-[900px] w-full text-sm">
-              <thead className="bg-slate-50 text-slate-600">
-                <tr className="border-b border-slate-200">
-                  {SERVICE_COLUMNS.map((service) => (
-                    <th key={service} className="px-3 py-3 text-center font-semibold">
-                      {service}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
+            <div className="min-w-[900px]">
+              <div className="sticky top-0 z-20 grid grid-cols-8 border-b border-slate-200 bg-slate-50 text-slate-600 shadow-[0_1px_0_0_rgb(226_232_240)]">
+                {SERVICE_COLUMNS.map((service) => (
+                  <div
+                    key={service}
+                    className="px-3 py-3 text-center text-sm font-semibold"
+                  >
+                    {service}
+                  </div>
+                ))}
+              </div>
 
-              <tbody>
-                <tr>
-                  {SERVICE_COLUMNS.map((service) => (
-                    <td key={service} className="px-3 py-4 text-center">
-                      <CellFlag active={activeFamilies.has(service)} />
-                    </td>
-                  ))}
-                </tr>
-              </tbody>
-            </table>
+              <div className="grid grid-cols-8">
+                {SERVICE_COLUMNS.map((service) => (
+                  <div
+                    key={service}
+                    className="border-b border-slate-100 px-3 py-4 text-center"
+                  >
+                    <CellFlag active={activeFamilies.has(service)} />
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </section>
 
@@ -349,6 +447,7 @@ export default async function DashboardClienteOpportunitaPage({
           telegramActive={cliente.telegram_active === true}
           marketingConsented={marketingConsented}
           contactStoreLabel={contactStoreLabel}
+          sentOpportunities={opportunitaInviate}
         />
       </div>
     </main>
