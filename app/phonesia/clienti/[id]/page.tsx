@@ -2,8 +2,6 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 
-import ClienteOpportunityPanel from "@/components/phonesia/dashboard/ClienteOpportunityPanel";
-
 export const dynamic = "force-dynamic";
 
 const SERVICE_COLUMNS = [
@@ -18,7 +16,6 @@ const SERVICE_COLUMNS = [
 ] as const;
 
 type ServiceFamily = (typeof SERVICE_COLUMNS)[number];
-
 type ParamsInput = Promise<{ id: string }> | { id: string };
 
 type ClienteRow = {
@@ -48,6 +45,21 @@ type ContrattoRow = {
   negozio_id: number | null;
   data_stipula: string | null;
   created_at: string | null;
+};
+
+type OpportunitaInviataRow = {
+  id: number;
+  cliente_id: number | null;
+  opportunita_code: string | null;
+  opportunita_label: string | null;
+  send_mode: string | null;
+  batch_id: string | null;
+  messaggio: string | null;
+  attachment_public_url: string | null;
+  attachment_file_name: string | null;
+  negozio_contatto: string | null;
+  inviato_at: string | null;
+  metadata: Record<string, unknown> | null;
 };
 
 const NEGOZI: Record<number, string> = {
@@ -122,6 +134,20 @@ function formatDate(value?: string | null): string {
   }).format(date);
 }
 
+function formatDateTime(value?: string | null): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+
+  return new Intl.DateTimeFormat("it-IT", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
 function resolveOperatore(servizi: ServizioRow[], contratti: ContrattoRow[]): string {
   const contrattoConOperatore = contratti.find((row) => normalizeText(row.operatore));
   if (contrattoConOperatore?.operatore) {
@@ -143,25 +169,84 @@ function resolveOperatore(servizi: ServizioRow[], contratti: ContrattoRow[]): st
   return winner?.[0] ?? "—";
 }
 
-function CellFlag({ active }: { active: boolean }) {
-  return (
-    <div
-      className={[
-        "mx-auto flex h-9 w-9 items-center justify-center rounded-full border text-sm font-bold",
-        active
-          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-          : "border-slate-200 bg-slate-50 text-slate-300",
-      ].join(" ")}
-    >
-      {active ? "✓" : "—"}
-    </div>
-  );
-}
-
 function formatDistinctStoreLabels(values: Array<number | null | undefined>): string {
   const unique = [...new Set(values.filter((value): value is number => Boolean(value)))];
   if (unique.length === 0) return "Non assegnato";
   return unique.map((value) => negozioLabel(value)).join(", ");
+}
+
+function formatSendMode(value?: string | null): string {
+  const normalized = normalizeText(value).toLowerCase();
+
+  if (normalized === "standard") return "Standard";
+  if (normalized === "custom") return "Personalizzato";
+
+  return normalized ? normalized : "—";
+}
+
+function buildDistinctOpportunityBadges(rows: OpportunitaInviataRow[]): string[] {
+  const labels = rows.map((row) => {
+    const label = normalizeText(row.opportunita_label);
+    const code = normalizeText(row.opportunita_code).toUpperCase();
+    return label || code;
+  });
+
+  return [...new Set(labels.filter(Boolean))];
+}
+
+function CellFlag({
+  active,
+  alreadySent,
+}: {
+  active: boolean;
+  alreadySent?: boolean;
+}) {
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <div
+        className={[
+          "mx-auto flex h-9 w-9 items-center justify-center rounded-full border text-sm font-bold",
+          active
+            ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+            : "border-slate-200 bg-slate-50 text-slate-300",
+        ].join(" ")}
+      >
+        {active ? "✓" : "—"}
+      </div>
+
+      {alreadySent ? (
+        <span className="rounded-full border border-orange-200 bg-orange-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-orange-700">
+          Inviata
+        </span>
+      ) : (
+        <span className="h-[18px]" />
+      )}
+    </div>
+  );
+}
+
+function InfoCard({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
+  return (
+    <div className="rounded-3xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
+      <div className="text-sm text-slate-500">{label}</div>
+      <div
+        className={[
+          "mt-2 text-base font-bold text-slate-950",
+          mono ? "font-mono text-sm" : "",
+        ].join(" ")}
+      >
+        {value}
+      </div>
+    </div>
+  );
 }
 
 export default async function DashboardClienteOpportunitaPage({
@@ -178,29 +263,40 @@ export default async function DashboardClienteOpportunitaPage({
 
   const supabase = getSupabaseAdmin();
 
-  const [{ data: clienteData, error: clienteError }, { data: serviziData, error: serviziError }, { data: contrattiData, error: contrattiError }] =
-    await Promise.all([
-      supabase
-        .from("phonesia_clienti")
-        .select(
-          "id, nome, cognome, telefono, email, codice_fiscale, negozio_id, telegram_active, created_at",
-        )
-        .eq("id", clienteId)
-        .limit(1)
-        .maybeSingle(),
-      supabase
-        .from("phonesia_servizi_cliente")
-        .select(
-          "cliente_id, service_family, service_code, provider_cluster, brand_raw, service_status",
-        )
-        .eq("cliente_id", clienteId),
-      supabase
-        .from("phonesia_contratti")
-        .select("cliente_id, operatore, negozio_id, data_stipula, created_at")
-        .eq("cliente_id", clienteId)
-        .order("data_stipula", { ascending: false })
-        .order("created_at", { ascending: false }),
-    ]);
+  const [
+    { data: clienteData, error: clienteError },
+    { data: serviziData, error: serviziError },
+    { data: contrattiData, error: contrattiError },
+    { data: opportunitaData, error: opportunitaError },
+  ] = await Promise.all([
+    supabase
+      .from("phonesia_clienti")
+      .select(
+        "id, nome, cognome, telefono, email, codice_fiscale, negozio_id, telegram_active, created_at",
+      )
+      .eq("id", clienteId)
+      .limit(1)
+      .maybeSingle(),
+    supabase
+      .from("phonesia_servizi_cliente")
+      .select(
+        "cliente_id, service_family, service_code, provider_cluster, brand_raw, service_status",
+      )
+      .eq("cliente_id", clienteId),
+    supabase
+      .from("phonesia_contratti")
+      .select("cliente_id, operatore, negozio_id, data_stipula, created_at")
+      .eq("cliente_id", clienteId)
+      .order("data_stipula", { ascending: false })
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("phonesia_opportunita_inviate")
+      .select(
+        "id, cliente_id, opportunita_code, opportunita_label, send_mode, batch_id, messaggio, attachment_public_url, attachment_file_name, negozio_contatto, inviato_at, metadata",
+      )
+      .eq("cliente_id", clienteId)
+      .order("inviato_at", { ascending: false }),
+  ]);
 
   if (clienteError) {
     throw new Error(`Errore lettura cliente: ${clienteError.message}`);
@@ -214,6 +310,10 @@ export default async function DashboardClienteOpportunitaPage({
     throw new Error(`Errore lettura contratti cliente: ${contrattiError.message}`);
   }
 
+  if (opportunitaError) {
+    throw new Error(`Errore lettura opportunità inviate: ${opportunitaError.message}`);
+  }
+
   const cliente = clienteData as ClienteRow | null;
 
   if (!cliente) {
@@ -224,6 +324,7 @@ export default async function DashboardClienteOpportunitaPage({
     isServizioAttivo(row.service_status),
   );
   const contratti = (contrattiData ?? []) as ContrattoRow[];
+  const opportunitaInviate = (opportunitaData ?? []) as OpportunitaInviataRow[];
 
   const activeFamilies = new Set<ServiceFamily>();
 
@@ -234,12 +335,20 @@ export default async function DashboardClienteOpportunitaPage({
     }
   }
 
+  const sentOpportunityCodes = new Set<string>(
+    opportunitaInviate
+      .map((row) => normalizeText(row.opportunita_code).toUpperCase())
+      .filter(Boolean),
+  );
+
+  const distinctOpportunityBadges = buildDistinctOpportunityBadges(opportunitaInviate);
   const operatore = resolveOperatore(servizi, contratti);
   const ultimaStipula =
     contratti.find((row) => normalizeText(row.data_stipula))?.data_stipula ??
     contratti[0]?.created_at ??
     null;
 
+  const ultimoInvio = opportunitaInviate[0]?.inviato_at ?? null;
   const negozioQr = negozioLabel(cliente.negozio_id);
   const negozioContratto = formatDistinctStoreLabels(contratti.map((row) => row.negozio_id));
 
@@ -266,8 +375,8 @@ export default async function DashboardClienteOpportunitaPage({
                 </h1>
 
                 <p className="mt-2 max-w-3xl text-sm text-slate-600 md:text-base">
-                  Anagrafica completa, servizi attivi e servizi che puoi proporre
-                  commercialmente al cliente.
+                  Anagrafica completa, servizi attivi e storico delle opportunità già inviate,
+                  così eviti doppi invii allo stesso cliente.
                 </p>
               </div>
 
@@ -275,10 +384,23 @@ export default async function DashboardClienteOpportunitaPage({
                 Operatore principale: <strong className="text-slate-950">{operatore}</strong>
               </div>
             </div>
+
+            {distinctOpportunityBadges.length > 0 ? (
+              <div className="flex flex-wrap gap-2">
+                {distinctOpportunityBadges.map((label) => (
+                  <span
+                    key={label}
+                    className="rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-xs font-semibold text-orange-700"
+                  >
+                    Già inviata: {label}
+                  </span>
+                ))}
+              </div>
+            ) : null}
           </div>
         </section>
 
-        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           <InfoCard label="Telefono" value={cliente.telefono || "—"} />
           <InfoCard label="Email" value={cliente.email || "—"} />
           <InfoCard label="Codice fiscale" value={cliente.codice_fiscale || "—"} mono />
@@ -290,22 +412,28 @@ export default async function DashboardClienteOpportunitaPage({
           />
           <InfoCard label="Ultima stipula" value={formatDate(ultimaStipula)} />
           <InfoCard label="Contratti collegati" value={String(contratti.length)} />
+          <InfoCard label="Opportunità inviate" value={String(opportunitaInviate.length)} />
+          <InfoCard label="Ultimo invio" value={formatDateTime(ultimoInvio)} />
         </section>
 
         <section className="rounded-3xl border border-slate-200 bg-white px-5 py-5 shadow-sm md:px-6">
           <div className="mb-4">
             <h2 className="text-xl font-black text-slate-950">Servizi attivi</h2>
             <p className="mt-1 text-sm text-slate-600">
-              Questa griglia mostra i servizi già attivi per il cliente.
+              La griglia mostra i servizi già attivi. Sotto ogni colonna vedi anche se
+              l’opportunità è già stata inviata.
             </p>
           </div>
 
           <div className="overflow-x-auto">
             <table className="min-w-[900px] w-full text-sm">
-              <thead className="bg-slate-50 text-slate-600">
+              <thead className="text-slate-600">
                 <tr className="border-b border-slate-200">
                   {SERVICE_COLUMNS.map((service) => (
-                    <th key={service} className="px-3 py-3 text-center font-semibold">
+                    <th
+                      key={service}
+                      className="sticky top-0 z-20 border-b border-slate-200 bg-slate-50 px-3 py-3 text-center font-semibold shadow-[0_1px_0_0_rgb(226_232_240)]"
+                    >
                       {service}
                     </th>
                   ))}
@@ -316,7 +444,10 @@ export default async function DashboardClienteOpportunitaPage({
                 <tr>
                   {SERVICE_COLUMNS.map((service) => (
                     <td key={service} className="px-3 py-4 text-center">
-                      <CellFlag active={activeFamilies.has(service)} />
+                      <CellFlag
+                        active={activeFamilies.has(service)}
+                        alreadySent={sentOpportunityCodes.has(service)}
+                      />
                     </td>
                   ))}
                 </tr>
@@ -324,31 +455,87 @@ export default async function DashboardClienteOpportunitaPage({
             </table>
           </div>
         </section>
+
+        <section className="rounded-3xl border border-slate-200 bg-white px-5 py-5 shadow-sm md:px-6">
+          <div className="mb-4">
+            <h2 className="text-xl font-black text-slate-950">Storico opportunità inviate</h2>
+            <p className="mt-1 text-sm text-slate-600">
+              Qui vedi quale opportunità è stata inviata, quando, in che modalità e da quale
+              negozio è stato proposto il contatto.
+            </p>
+          </div>
+
+          {opportunitaInviate.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
+              Nessuna opportunità inviata a questo cliente.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {opportunitaInviate.map((item) => {
+                const codice = normalizeText(item.opportunita_code).toUpperCase() || "—";
+                const label = normalizeText(item.opportunita_label) || codice;
+                const sendMode = formatSendMode(item.send_mode);
+                const negozioContatto = normalizeText(item.negozio_contatto) || "—";
+                const attachmentName = normalizeText(item.attachment_file_name);
+                const batchId = normalizeText(item.batch_id);
+
+                return (
+                  <div
+                    key={item.id}
+                    className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4"
+                  >
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="space-y-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-orange-700">
+                            {label}
+                          </span>
+
+                          <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-700">
+                            {codice}
+                          </span>
+
+                          <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700">
+                            {sendMode}
+                          </span>
+                        </div>
+
+                        <div className="grid gap-2 text-sm text-slate-600 md:grid-cols-2 xl:grid-cols-4">
+                          <div>
+                            <span className="font-semibold text-slate-950">Inviata il:</span>{" "}
+                            {formatDateTime(item.inviato_at)}
+                          </div>
+                          <div>
+                            <span className="font-semibold text-slate-950">Negozio contatto:</span>{" "}
+                            {negozioContatto}
+                          </div>
+                          <div>
+                            <span className="font-semibold text-slate-950">Batch:</span>{" "}
+                            {batchId || "—"}
+                          </div>
+                          <div>
+                            <span className="font-semibold text-slate-950">Allegato:</span>{" "}
+                            {attachmentName || "—"}
+                          </div>
+                        </div>
+
+                        {item.messaggio ? (
+                          <div className="rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-700">
+                            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                              Messaggio inviato
+                            </div>
+                            <div className="whitespace-pre-wrap">{item.messaggio}</div>
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
       </div>
     </main>
-  );
-}
-
-function InfoCard({
-  label,
-  value,
-  mono = false,
-}: {
-  label: string;
-  value: string;
-  mono?: boolean;
-}) {
-  return (
-    <div className="rounded-3xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
-      <div className="text-sm text-slate-500">{label}</div>
-      <div
-        className={[
-          "mt-2 text-base font-bold text-slate-950",
-          mono ? "font-mono text-sm" : "",
-        ].join(" ")}
-      >
-        {value}
-      </div>
-    </div>
   );
 }
