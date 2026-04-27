@@ -15,6 +15,14 @@ const SERVICE_COLUMNS = [
   "FOTOVOLTAICO",
 ] as const;
 
+const GRAPH_API_VERSION = process.env.WHATSAPP_GRAPH_API_VERSION || "v23.0";
+const WHATSAPP_ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN;
+const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
+const WHATSAPP_TEMPLATE_OPPORTUNITA_NAME =
+  process.env.WHATSAPP_TEMPLATE_OPPORTUNITA_NAME || "phonesia_opportunita_marketing";
+const WHATSAPP_TEMPLATE_OPPORTUNITA_LANGUAGE =
+  process.env.WHATSAPP_TEMPLATE_OPPORTUNITA_LANGUAGE || "it";
+
 type ServiceFamily = (typeof SERVICE_COLUMNS)[number];
 
 type ClienteRow = {
@@ -25,8 +33,7 @@ type ClienteRow = {
   email: string | null;
   codice_fiscale: string | null;
   negozio_id: number | null;
-  telegram_active: boolean | null;
-  telegram_chat_id: string | null;
+  whatsapp_active: boolean | null;
 };
 
 type ContrattoRow = {
@@ -41,6 +48,28 @@ type SendResultRow = {
   nome: string;
   status: "sent" | "blocked" | "error" | "not_found";
   reason: string;
+};
+
+type MarketingRow = {
+  cliente_id: number | null;
+};
+
+type AlreadySentRow = {
+  cliente_id: number | null;
+  opportunita_code: string | null;
+};
+
+type OpportunityInsertRow = {
+  cliente_id: number;
+  opportunita_code: string;
+  opportunita_label: string;
+  send_mode: string;
+  batch_id: string | null;
+  messaggio: string | null;
+  attachment_public_url: string | null;
+  attachment_file_name: string | null;
+  negozio_contatto: string | null;
+  metadata: Record<string, unknown>;
 };
 
 const STORE_CONTACTS: Record<
@@ -126,103 +155,115 @@ function serviceLabel(service: ServiceFamily): string {
     case "FOTOVOLTAICO":
       return "fotovoltaico";
   }
-
-  return "servizio";
 }
 
-function buildStandardText(service: ServiceFamily): string {
-  if (service === "FISSO") {
-    return "Abbiamo un’offerta fibra esclusiva per te. Contattaci oppure vieni in negozio per scoprire tutti i dettagli.";
+function serviceHistoryLabel(service: ServiceFamily): string {
+  switch (service) {
+    case "FISSO":
+      return "Fibra";
+    case "MOBILE":
+      return "Mobile";
+    case "ENERGIA":
+      return "Energia";
+    case "TV":
+      return "TV";
+    case "SMARTPHONE":
+      return "Smartphone";
+    case "ACCESSORI":
+      return "Accessori";
+    case "SICUREZZA":
+      return "Sicurezza";
+    case "FOTOVOLTAICO":
+      return "Fotovoltaico";
   }
-
-  if (service === "MOBILE") {
-    return "Abbiamo un’offerta mobile dedicata per te. Contattaci oppure vieni in negozio per scoprire tutti i dettagli.";
-  }
-
-  if (service === "ENERGIA") {
-    return "Abbiamo un’offerta energia dedicata per te. Contattaci oppure vieni in negozio per scoprire tutti i dettagli.";
-  }
-
-  return `Abbiamo un’offerta esclusiva per te su ${serviceLabel(service)}. Contattaci oppure vieni in negozio per scoprire tutti i dettagli.`;
 }
 
-function buildWhatsappUrl(baseUrl: string, contextLabel: string) {
-  const text = encodeURIComponent(
-    `Ciao, vorrei informazioni sull'opportunità ricevuta su Telegram (${contextLabel}).`,
-  );
-  return `${baseUrl}?text=${text}`;
+function buildOfferText(service: ServiceFamily): string {
+  if (service === "FISSO") return "fibra";
+  if (service === "MOBILE") return "mobile";
+  if (service === "ENERGIA") return "energia";
+  return serviceLabel(service);
 }
 
-async function sendTelegramMessage(params: {
-  chatId: string;
-  text: string;
-  whatsappUrl: string;
-  mapsUrl: string;
+function buildWhatsappUrl(baseUrl: string) {
+  return baseUrl;
+}
+
+function buildPhoneCandidates(rawPhone: string) {
+  const cleaned = rawPhone.trim().replace(/[^\d+]/g, "");
+  const variants = new Set<string>();
+
+  if (!cleaned) return [];
+
+  variants.add(cleaned);
+
+  if (cleaned.startsWith("+")) {
+    variants.add(cleaned.slice(1));
+  } else {
+    variants.add(`+${cleaned}`);
+  }
+
+  return Array.from(variants);
+}
+
+function toMetaRecipient(rawPhone: string) {
+  const candidates = buildPhoneCandidates(rawPhone);
+  const numeric = candidates.find((value) => /^\d+$/.test(value.replace(/^\+/, "")));
+  return numeric ? numeric.replace(/^\+/, "") : null;
+}
+
+async function sendWhatsAppTemplate(params: {
+  to: string;
+  templateName: string;
+  languageCode: string;
+  bodyValues: string[];
 }) {
-  const botToken = process.env.TELEGRAM_BOT_TOKEN;
-
-  if (!botToken) {
-    throw new Error("Missing TELEGRAM_BOT_TOKEN");
+  if (!WHATSAPP_ACCESS_TOKEN) {
+    throw new Error("Missing WHATSAPP_ACCESS_TOKEN");
   }
 
-  const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      chat_id: params.chatId,
-      text: params.text,
-      disable_web_page_preview: true,
-      reply_markup: {
-        inline_keyboard: [
-          [
-            { text: "Contattaci", url: params.whatsappUrl },
-            { text: "Vieni in negozio", url: params.mapsUrl },
-          ],
-        ],
+  if (!WHATSAPP_PHONE_NUMBER_ID) {
+    throw new Error("Missing WHATSAPP_PHONE_NUMBER_ID");
+  }
+
+  const response = await fetch(
+    `https://graph.facebook.com/${GRAPH_API_VERSION}/${WHATSAPP_PHONE_NUMBER_ID}/messages`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}`,
+        "Content-Type": "application/json",
       },
-    }),
-    cache: "no-store",
-  });
-
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Telegram sendMessage failed: ${response.status} ${body}`);
-  }
-}
-
-async function sendTelegramMediaByUrl(params: {
-  chatId: string;
-  publicUrl: string;
-  mimeType: string;
-}) {
-  const botToken = process.env.TELEGRAM_BOT_TOKEN;
-
-  if (!botToken) {
-    throw new Error("Missing TELEGRAM_BOT_TOKEN");
-  }
-
-  const isImage = params.mimeType.startsWith("image/");
-  const endpoint = isImage ? "sendPhoto" : "sendDocument";
-  const fieldName = isImage ? "photo" : "document";
-
-  const response = await fetch(`https://api.telegram.org/bot${botToken}/${endpoint}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to: params.to,
+        type: "template",
+        template: {
+          name: params.templateName,
+          language: {
+            code: params.languageCode,
+          },
+          components: [
+            {
+              type: "body",
+              parameters: params.bodyValues.map((value) => ({
+                type: "text",
+                text: value,
+              })),
+            },
+          ],
+        },
+      }),
+      cache: "no-store",
     },
-    body: JSON.stringify({
-      chat_id: params.chatId,
-      [fieldName]: params.publicUrl,
-    }),
-    cache: "no-store",
-  });
+  );
 
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`Telegram ${endpoint} failed: ${response.status} ${body}`);
+    throw new Error(`Meta template send failed: ${response.status} ${body}`);
   }
+
+  return response.json();
 }
 
 async function logOpportunitySend(
@@ -241,7 +282,7 @@ async function logOpportunitySend(
   try {
     await supabase.from("phonesia_conversazioni").insert({
       cliente_id: params.clienteId,
-      canale: "telegram",
+      canale: "whatsapp",
       messaggio_utente: `[dashboard] invio opportunità batch (${params.messageMode})`,
       intent: "dashboard_opportunita_send_batch",
       tool_usato: "api_phonesia_opportunita_send_batch",
@@ -262,6 +303,57 @@ async function logOpportunitySend(
   }
 }
 
+async function saveOpportunitySentRow(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  params: {
+    clienteId: number;
+    batchId: string;
+    messageMode: "standard" | "custom";
+    standardService: ServiceFamily | null;
+    messageText: string;
+    attachmentPublicUrl: string | null;
+    attachmentFileName: string | null;
+    negozioContatto: string;
+    whatsappUrl: string;
+    mapsUrl: string;
+  },
+) {
+  const opportunityCode =
+    params.messageMode === "standard" && params.standardService
+      ? params.standardService
+      : `CUSTOM:${params.batchId}`;
+
+  const opportunityLabel =
+    params.messageMode === "standard" && params.standardService
+      ? serviceHistoryLabel(params.standardService)
+      : "Messaggio personalizzato";
+
+  const row: OpportunityInsertRow = {
+    cliente_id: params.clienteId,
+    opportunita_code: opportunityCode,
+    opportunita_label: opportunityLabel,
+    send_mode: params.messageMode,
+    batch_id: params.batchId,
+    messaggio: params.messageText,
+    attachment_public_url: params.attachmentPublicUrl,
+    attachment_file_name: params.attachmentFileName,
+    negozio_contatto: params.negozioContatto,
+    metadata: {
+      standard_service: params.standardService,
+      whatsapp_url: params.whatsappUrl,
+      maps_url: params.mapsUrl,
+    },
+  };
+
+  const { error } = await supabase.from("phonesia_opportunita_inviate").upsert(row, {
+    onConflict: "cliente_id,opportunita_code",
+  });
+
+  if (error) {
+    throw new Error(`Errore salvataggio opportunità inviata: ${error.message}`);
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
@@ -271,7 +363,7 @@ export async function POST(request: NextRequest) {
       ...new Set(
         rawClienteIds
           .map((value) => Number(String(value)))
-          .filter((value) => Number.isFinite(value)),
+          .filter((value): value is number => Number.isFinite(value)),
       ),
     ];
 
@@ -281,14 +373,13 @@ export async function POST(request: NextRequest) {
     const standardServiceRaw = normalizeText(
       String(formData.get("standardService") ?? ""),
     ).toUpperCase();
-    const standardService = isValidService(standardServiceRaw)
-      ? standardServiceRaw
-      : null;
+    const standardService = isValidService(standardServiceRaw) ? standardServiceRaw : null;
 
     const customMessage = normalizeText(String(formData.get("customMessage") ?? ""));
     const attachmentPublicUrl = normalizeText(String(formData.get("attachmentPublicUrl") ?? ""));
-    const attachmentFileName = normalizeText(String(formData.get("attachmentFileName") ?? ""));
+    normalizeText(String(formData.get("attachmentFileName") ?? ""));
     const attachmentMimeType = normalizeText(String(formData.get("attachmentMimeType") ?? ""));
+    const hasAttachment = Boolean(attachmentPublicUrl && attachmentMimeType);
 
     if (clienteIds.length === 0) {
       return NextResponse.json(
@@ -311,7 +402,29 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const hasAttachment = Boolean(attachmentPublicUrl && attachmentMimeType);
+    if (messageMode === "custom") {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "custom_batch_non_supportato",
+          message:
+            "L'invio batch personalizzato non è ancora supportato con Meta Cloud API senza template dedicato.",
+        },
+        { status: 409 },
+      );
+    }
+
+    if (hasAttachment) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "attachment_batch_non_supportato",
+          message:
+            "L'invio batch con allegati non è ancora supportato con il template WhatsApp attuale.",
+        },
+        { status: 409 },
+      );
+    }
 
     const supabase = getSupabaseAdmin();
     const batchId = crypto.randomUUID();
@@ -320,11 +433,12 @@ export async function POST(request: NextRequest) {
       { data: clientiData, error: clientiError },
       { data: marketingRows, error: marketingError },
       { data: contrattiData, error: contrattiError },
+      { data: alreadySentRows, error: alreadySentError },
     ] = await Promise.all([
       supabase
         .from("phonesia_clienti")
         .select(
-          "id, nome, cognome, telefono, email, codice_fiscale, negozio_id, telegram_active, telegram_chat_id",
+          "id, nome, cognome, telefono, email, codice_fiscale, negozio_id, whatsapp_active",
         )
         .in("id", clienteIds),
       supabase
@@ -338,6 +452,13 @@ export async function POST(request: NextRequest) {
         .in("cliente_id", clienteIds)
         .order("data_stipula", { ascending: false })
         .order("created_at", { ascending: false }),
+      standardService
+        ? supabase
+            .from("phonesia_opportunita_inviate")
+            .select("cliente_id, opportunita_code")
+            .eq("opportunita_code", standardService)
+            .in("cliente_id", clienteIds)
+        : Promise.resolve({ data: [], error: null } as { data: AlreadySentRow[]; error: null }),
     ]);
 
     if (clientiError) {
@@ -352,8 +473,14 @@ export async function POST(request: NextRequest) {
       throw new Error(`Errore lettura contratti: ${contrattiError.message}`);
     }
 
+    if (alreadySentError) {
+      throw new Error(`Errore lettura opportunità già inviate: ${alreadySentError.message}`);
+    }
+
     const clienti = (clientiData ?? []) as ClienteRow[];
     const contratti = (contrattiData ?? []) as ContrattoRow[];
+    const marketingData = (marketingRows ?? []) as MarketingRow[];
+    const alreadySentData = (alreadySentRows ?? []) as AlreadySentRow[];
 
     const clientiMap = new Map<number, ClienteRow>();
     for (const cliente of clienti) {
@@ -361,9 +488,9 @@ export async function POST(request: NextRequest) {
     }
 
     const marketingIds = new Set<number>(
-      (marketingRows ?? [])
-        .map((row: any) => Number(row.cliente_id))
-        .filter((value) => Number.isFinite(value)),
+      marketingData
+        .map((row) => Number(row.cliente_id))
+        .filter((value): value is number => Number.isFinite(value)),
     );
 
     const contrattiByCliente = new Map<number, ContrattoRow[]>();
@@ -374,6 +501,12 @@ export async function POST(request: NextRequest) {
       list.push(row);
       contrattiByCliente.set(key, list);
     }
+
+    const alreadySentIds = new Set<number>(
+      alreadySentData
+        .map((row) => Number(row.cliente_id))
+        .filter((value): value is number => Number.isFinite(value)),
+    );
 
     const results: SendResultRow[] = [];
 
@@ -403,12 +536,32 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      if (!cliente.telegram_active || !cliente.telegram_chat_id) {
+      if (!cliente.whatsapp_active) {
         results.push({
           clienteId: cliente.id,
           nome: nomeCompleto,
           status: "blocked",
-          reason: "Telegram non attivo.",
+          reason: "WhatsApp non attivo.",
+        });
+        continue;
+      }
+
+      if (!cliente.telefono) {
+        results.push({
+          clienteId: cliente.id,
+          nome: nomeCompleto,
+          status: "blocked",
+          reason: "Telefono mancante o non valido.",
+        });
+        continue;
+      }
+
+      if (standardService && alreadySentIds.has(cliente.id)) {
+        results.push({
+          clienteId: cliente.id,
+          nome: nomeCompleto,
+          status: "blocked",
+          reason: "Opportunità già inviata in precedenza.",
         });
         continue;
       }
@@ -421,34 +574,43 @@ export async function POST(request: NextRequest) {
         const contactStoreId = negozioContrattoId ?? cliente.negozio_id ?? 1;
         const contactStore = STORE_CONTACTS[contactStoreId] ?? STORE_CONTACTS[1];
 
-        const bodyText =
-          messageMode === "standard" && standardService
-            ? buildStandardText(standardService)
-            : customMessage;
+        const metaRecipient = toMetaRecipient(cliente.telefono);
 
-        const text = [
-          nomeCompleto ? `Ciao ${nomeCompleto},` : "Ciao,",
-          "",
-          bodyText,
-        ].join("\n");
-
-        const contextLabel =
-          messageMode === "standard" && standardService
-            ? serviceLabel(standardService)
-            : "opportunità ricevuta";
-        const whatsappUrl = buildWhatsappUrl(contactStore.whatsappBase, contextLabel);
-
-        if (hasAttachment) {
-          await sendTelegramMediaByUrl({
-            chatId: cliente.telegram_chat_id,
-            publicUrl: attachmentPublicUrl,
-            mimeType: attachmentMimeType,
+        if (!metaRecipient) {
+          results.push({
+            clienteId: cliente.id,
+            nome: nomeCompleto,
+            status: "blocked",
+            reason: "Numero non valido per WhatsApp.",
           });
+          continue;
         }
 
-        await sendTelegramMessage({
-          chatId: cliente.telegram_chat_id,
-          text,
+        const offerText = buildOfferText(standardService!);
+        const whatsappUrl = buildWhatsappUrl(contactStore.whatsappBase);
+
+        await sendWhatsAppTemplate({
+          to: metaRecipient,
+          templateName: WHATSAPP_TEMPLATE_OPPORTUNITA_NAME,
+          languageCode: WHATSAPP_TEMPLATE_OPPORTUNITA_LANGUAGE,
+          bodyValues: [nomeCompleto, offerText, whatsappUrl, contactStore.mapsUrl],
+        });
+
+        const text =
+          `Ciao ${nomeCompleto}, abbiamo un'offerta dedicata per te su ${offerText}.\n\n` +
+          `Contattaci qui: ${whatsappUrl}\n` +
+          `Oppure vieni in negozio: ${contactStore.mapsUrl}\n\n` +
+          "— PHONESIA";
+
+        await saveOpportunitySentRow(supabase, {
+          clienteId: cliente.id,
+          batchId,
+          messageMode,
+          standardService,
+          messageText: text,
+          attachmentPublicUrl: null,
+          attachmentFileName: null,
+          negozioContatto: contactStore.label,
           whatsappUrl,
           mapsUrl: contactStore.mapsUrl,
         });
@@ -460,17 +622,15 @@ export async function POST(request: NextRequest) {
           batchId,
           messageMode,
           standardService,
-          attachmentPublicUrl: hasAttachment ? attachmentPublicUrl : null,
-          attachmentFileName: hasAttachment ? attachmentFileName || null : null,
+          attachmentPublicUrl: null,
+          attachmentFileName: null,
         });
 
         results.push({
           clienteId: cliente.id,
           nome: nomeCompleto,
           status: "sent",
-          reason: hasAttachment
-            ? "Messaggio e locandina inviati correttamente."
-            : "Messaggio inviato correttamente.",
+          reason: "Messaggio inviato correttamente.",
         });
       } catch (error) {
         results.push({

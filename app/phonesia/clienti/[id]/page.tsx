@@ -26,7 +26,7 @@ type ClienteRow = {
   email: string | null;
   codice_fiscale: string | null;
   negozio_id: number | null;
-  telegram_active: boolean | null;
+  whatsapp_active: boolean | null;
   created_at: string | null;
 };
 
@@ -272,7 +272,7 @@ export default async function DashboardClienteOpportunitaPage({
     supabase
       .from("phonesia_clienti")
       .select(
-        "id, nome, cognome, telefono, email, codice_fiscale, negozio_id, telegram_active, created_at",
+        "id, nome, cognome, telefono, email, codice_fiscale, negozio_id, whatsapp_active, created_at",
       )
       .eq("id", clienteId)
       .limit(1)
@@ -407,8 +407,8 @@ export default async function DashboardClienteOpportunitaPage({
           <InfoCard label="Negozio QR" value={negozioQr} />
           <InfoCard label="Negozio contratto" value={negozioContratto} />
           <InfoCard
-            label="Telegram"
-            value={cliente.telegram_active ? "Attivo" : "Non attivo"}
+            label="WhatsApp"
+            value={cliente.whatsapp_active ? "Attivo" : "Non attivo"}
           />
           <InfoCard label="Ultima stipula" value={formatDate(ultimaStipula)} />
           <InfoCard label="Contratti collegati" value={String(contratti.length)} />

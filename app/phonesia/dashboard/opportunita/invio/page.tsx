@@ -21,7 +21,11 @@ type ClienteRow = {
   telefono: string | null;
   email: string | null;
   negozio_id: number | null;
-  telegram_active: boolean | null;
+  whatsapp_active: boolean | null;
+};
+
+type MarketingConsentRow = {
+  cliente_id: number | null;
 };
 
 const NEGOZI: Record<number, string> = {
@@ -51,11 +55,13 @@ function getSupabaseAdmin() {
 function parseClienteIds(value: string | string[] | undefined): number[] {
   const rawValues = Array.isArray(value) ? value : value ? [value] : [];
 
-  return [...new Set(
-    rawValues
-      .map((item) => Number(item))
-      .filter((item) => Number.isFinite(item)),
-  )];
+  return [
+    ...new Set(
+      rawValues
+        .map((item) => Number(item))
+        .filter((item): item is number => Number.isFinite(item)),
+    ),
+  ];
 }
 
 function negozioLabel(negozioId?: number | null): string {
@@ -108,7 +114,7 @@ export default async function DashboardOpportunitySendPage({ searchParams }: Pro
   ] = await Promise.all([
     supabase
       .from("phonesia_clienti")
-      .select("id, nome, cognome, telefono, email, negozio_id, telegram_active")
+      .select("id, nome, cognome, telefono, email, negozio_id, whatsapp_active")
       .in("id", clienteIds),
     supabase
       .from("phonesia_consensi")
@@ -129,9 +135,9 @@ export default async function DashboardOpportunitySendPage({ searchParams }: Pro
   if (clienti.length === 0) notFound();
 
   const marketingConsentedIds = new Set<number>(
-    (marketingConsentRows ?? [])
-      .map((row: any) => Number(row.cliente_id))
-      .filter((value) => Number.isFinite(value)),
+    ((marketingConsentRows ?? []) as MarketingConsentRow[])
+      .map((row) => Number(row.cliente_id))
+      .filter((value): value is number => Number.isFinite(value)),
   );
 
   const recipients = clienti
@@ -142,7 +148,7 @@ export default async function DashboardOpportunitySendPage({ searchParams }: Pro
         [cliente.nome, cliente.cognome].filter(Boolean).join(" ").trim() || `Cliente ${cliente.id}`,
       telefono: cliente.telefono || "",
       negozioLabel: negozioLabel(cliente.negozio_id),
-      telegramActive: cliente.telegram_active === true,
+      whatsappActive: cliente.whatsapp_active === true,
       marketingConsented: marketingConsentedIds.has(cliente.id),
     }));
 

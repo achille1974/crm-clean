@@ -18,6 +18,11 @@ const NEGOZI: Record<number, string> = {
   5: "Tabacchino Floridia",
 };
 
+function normalizeWhatsAppNumber(rawValue: string) {
+  const cleaned = rawValue.replace(/[^\d]/g, "");
+  return cleaned;
+}
+
 export default function QrForm({
   negozioId,
 }: {
@@ -86,7 +91,14 @@ export default function QrForm({
         return;
       }
 
-      clienteFinale = clienteEsistente;
+      clienteFinale = {
+        ...clienteEsistente,
+        nome: String(data.get("nome") || ""),
+        cognome: String(data.get("cognome") || ""),
+        email: String(data.get("email") || "") || null,
+        codice_fiscale: String(data.get("codice_fiscale") || ""),
+        negozio_id: negozioId,
+      };
     } else {
       const { data: nuovoCliente, error: insertError } = await supabase
         .from("phonesia_clienti")
@@ -138,23 +150,32 @@ export default function QrForm({
       });
     }
 
-    if (clienteFinale.telegram_active) {
+    if (clienteFinale.whatsapp_active) {
       setLoading(false);
       window.location.href = `/phonesia/welcome?id=${clienteFinale.id}`;
       return;
     }
 
-    const telegramBot = process.env.NEXT_PUBLIC_TELEGRAM_BOT;
+    const whatsappNumberRaw = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER;
 
-    if (!telegramBot) {
-      alert("Errore configurazione Telegram.");
+    if (!whatsappNumberRaw) {
+      alert("Errore configurazione WhatsApp.");
+      setLoading(false);
+      return;
+    }
+
+    const whatsappNumber = normalizeWhatsAppNumber(whatsappNumberRaw);
+
+    if (!whatsappNumber) {
+      alert("Numero WhatsApp non valido.");
       setLoading(false);
       return;
     }
 
     setLoading(false);
 
-    window.location.href = `https://t.me/${telegramBot}?start=${clienteFinale.id}`;
+    const waUrl = `https://wa.me/${whatsappNumber}?text=${encodeURIComponent("OK")}`;
+    window.location.href = waUrl;
   }
 
   return (
@@ -278,7 +299,7 @@ export default function QrForm({
                   </div>
 
                   <p className="text-center text-xs leading-relaxed text-slate-500">
-                    Dopo la registrazione verrai reindirizzato su Telegram per attivare
+                    Dopo la registrazione verrai reindirizzato su WhatsApp per attivare
                     il tuo contatto diretto con PHONESIA.
                   </p>
                 </form>

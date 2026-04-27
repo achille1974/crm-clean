@@ -1,6 +1,5 @@
 "use client";
 
-import { createClient } from "@supabase/supabase-js";
 import { useMemo, useState, type ReactNode } from "react";
 
 const SERVICE_COLUMNS = [
@@ -21,7 +20,7 @@ type Recipient = {
   nomeCompleto: string;
   telefono: string;
   negozioLabel: string;
-  telegramActive: boolean;
+  whatsappActive: boolean;
   marketingConsented: boolean;
 };
 
@@ -44,20 +43,6 @@ type SendResponse =
       blockedCount: number;
       errorCount: number;
       results: SendResultRow[];
-    }
-  | {
-      ok: false;
-      error: string;
-      detail?: string;
-    };
-
-type UploadUrlResponse =
-  | {
-      ok: true;
-      bucket: string;
-      path: string;
-      token: string;
-      publicUrl: string;
     }
   | {
       ok: false;
@@ -90,18 +75,18 @@ function serviceLabel(service: ServiceFamily): string {
 
 function buildStandardText(service: ServiceFamily) {
   if (service === "FISSO") {
-    return "Abbiamo un’offerta fibra esclusiva per te. Contattaci oppure vieni in negozio per scoprire tutti i dettagli.";
+    return "Ciao {{1}}, abbiamo un'offerta dedicata per te su fibra.\n\nContattaci qui: {{3}}\nOppure vieni in negozio: {{4}}\n\n— PHONESIA";
   }
 
   if (service === "MOBILE") {
-    return "Abbiamo un’offerta mobile dedicata per te. Contattaci oppure vieni in negozio per scoprire tutti i dettagli.";
+    return "Ciao {{1}}, abbiamo un'offerta dedicata per te su mobile.\n\nContattaci qui: {{3}}\nOppure vieni in negozio: {{4}}\n\n— PHONESIA";
   }
 
   if (service === "ENERGIA") {
-    return "Abbiamo un’offerta energia dedicata per te. Contattaci oppure vieni in negozio per scoprire tutti i dettagli.";
+    return "Ciao {{1}}, abbiamo un'offerta dedicata per te su energia.\n\nContattaci qui: {{3}}\nOppure vieni in negozio: {{4}}\n\n— PHONESIA";
   }
 
-  return `Abbiamo un’offerta esclusiva per te su ${serviceLabel(service)}. Contattaci oppure vieni in negozio per scoprire tutti i dettagli.`;
+  return `Ciao {{1}}, abbiamo un'offerta dedicata per te su ${serviceLabel(service)}.\n\nContattaci qui: {{3}}\nOppure vieni in negozio: {{4}}\n\n— PHONESIA`;
 }
 
 export default function OpportunityBatchComposer({ recipients }: Props) {
@@ -115,7 +100,7 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
   const eligibleRecipients = useMemo(
     () =>
       recipients.filter(
-        (recipient) => recipient.telegramActive && recipient.marketingConsented,
+        (recipient) => recipient.whatsappActive && recipient.marketingConsented,
       ),
     [recipients],
   );
@@ -123,7 +108,7 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
   const blockedRecipients = useMemo(
     () =>
       recipients.filter(
-        (recipient) => !recipient.telegramActive || !recipient.marketingConsented,
+        (recipient) => !recipient.whatsappActive || !recipient.marketingConsented,
       ),
     [recipients],
   );
@@ -137,76 +122,14 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
     recipients.length > 0 &&
     eligibleRecipients.length > 0 &&
     !isSending &&
-    (messageMode === "standard" || customMessage.trim().length > 0);
-
-  async function uploadAttachmentToStorage(file: File) {
-    const uploadUrlResponse = await fetch("/api/phonesia/media", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        fileName: file.name,
-        contentType: file.type || "application/octet-stream",
-      }),
-    });
-
-    const uploadUrlData = (await uploadUrlResponse.json()) as UploadUrlResponse;
-
-    if (!uploadUrlResponse.ok || !uploadUrlData.ok) {
-      throw new Error(
-        uploadUrlData.ok
-          ? "Impossibile preparare l’upload della locandina."
-          : uploadUrlData.detail || uploadUrlData.error || "Upload URL non disponibile.",
-      );
-    }
-
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-    if (!supabaseUrl || !supabaseAnonKey) {
-      throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY");
-    }
-
-    const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-      },
-    });
-
-    const { error: uploadError } = await supabase.storage
-      .from(uploadUrlData.bucket)
-      .uploadToSignedUrl(uploadUrlData.path, uploadUrlData.token, file);
-
-    if (uploadError) {
-      throw new Error(`Upload locandina fallito: ${uploadError.message}`);
-    }
-
-    return {
-      publicUrl: uploadUrlData.publicUrl,
-      fileName: file.name,
-      mimeType: file.type || "application/octet-stream",
-    };
-  }
+    messageMode === "standard" &&
+    !selectedFile;
 
   async function handleSendBatch() {
     setIsSending(true);
     setSendResponse(null);
 
     try {
-      let attachment:
-        | {
-            publicUrl: string;
-            fileName: string;
-            mimeType: string;
-          }
-        | null = null;
-
-      if (selectedFile) {
-        attachment = await uploadAttachmentToStorage(selectedFile);
-      }
-
       const formData = new FormData();
 
       for (const recipient of recipients) {
@@ -219,12 +142,6 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
         formData.append("standardService", standardService);
       } else {
         formData.append("customMessage", customMessage.trim());
-      }
-
-      if (attachment) {
-        formData.append("attachmentPublicUrl", attachment.publicUrl);
-        formData.append("attachmentFileName", attachment.fileName);
-        formData.append("attachmentMimeType", attachment.mimeType);
       }
 
       const response = await fetch("/api/phonesia/opportunita/send-batch", {
@@ -266,7 +183,7 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
         <div className="mb-4">
           <h2 className="text-xl font-black text-slate-950">Destinatari selezionati</h2>
           <p className="mt-1 text-sm text-slate-600">
-            Invia l’opportunità solo ai clienti idonei: consenso marketing attivo e Telegram attivo.
+            Invia l’opportunità solo ai clienti idonei: consenso marketing attivo e WhatsApp attivo.
           </p>
         </div>
 
@@ -284,7 +201,7 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
                   <th className="px-4 py-3 text-left font-semibold">Cliente</th>
                   <th className="px-4 py-3 text-left font-semibold">Telefono</th>
                   <th className="px-4 py-3 text-left font-semibold">Negozio</th>
-                  <th className="px-4 py-3 text-left font-semibold">Telegram</th>
+                  <th className="px-4 py-3 text-left font-semibold">WhatsApp</th>
                   <th className="px-4 py-3 text-left font-semibold">Marketing</th>
                 </tr>
               </thead>
@@ -298,8 +215,8 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
                     <td className="px-4 py-4 text-slate-700">{recipient.telefono || "—"}</td>
                     <td className="px-4 py-4 text-slate-700">{recipient.negozioLabel}</td>
                     <td className="px-4 py-4">
-                      <Badge ok={recipient.telegramActive}>
-                        {recipient.telegramActive ? "Attivo" : "Non attivo"}
+                      <Badge ok={recipient.whatsappActive}>
+                        {recipient.whatsappActive ? "Attivo" : "Non attivo"}
                       </Badge>
                     </td>
                     <td className="px-4 py-4">
@@ -319,7 +236,7 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
         <div className="mb-4">
           <h2 className="text-xl font-black text-slate-950">Composizione opportunità</h2>
           <p className="mt-1 text-sm text-slate-600">
-            Puoi inviare solo il messaggio, oppure messaggio + locandina caricata dal computer.
+            Con la configurazione attuale Meta puoi inviare in batch solo opportunità standard basate su template approvato.
           </p>
         </div>
 
@@ -340,12 +257,12 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
                   <div>
                     <div className="font-semibold text-slate-950">Messaggio standard</div>
                     <div className="mt-1 text-sm text-slate-600">
-                      Usa il testo preconfigurato in base al tipo di opportunità.
+                      Usa il template approvato Meta in base al tipo di opportunità.
                     </div>
                   </div>
                 </label>
 
-                <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 opacity-60">
                   <input
                     type="radio"
                     name="messageMode"
@@ -356,7 +273,7 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
                   <div>
                     <div className="font-semibold text-slate-950">Messaggio personalizzato</div>
                     <div className="mt-1 text-sm text-slate-600">
-                      Scrivi manualmente il testo da inviare ai clienti selezionati.
+                      Temporaneamente non disponibile in batch con Meta Cloud API senza template dedicato.
                     </div>
                   </div>
                 </label>
@@ -382,17 +299,21 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
                 </select>
               </section>
             ) : (
-              <section className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                <label className="mb-2 block text-sm font-semibold text-slate-900">
-                  Messaggio personalizzato
-                </label>
+              <section className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4">
+                <div className="text-sm font-semibold text-amber-900">
+                  Messaggio personalizzato non disponibile
+                </div>
+                <p className="mt-2 text-sm text-amber-800">
+                  Per usare messaggi personalizzati in batch serve un template Meta dedicato.
+                </p>
 
                 <textarea
                   value={customMessage}
                   onChange={(event) => setCustomMessage(event.target.value)}
                   rows={7}
-                  placeholder="Scrivi qui il messaggio da inviare ai clienti selezionati..."
-                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-orange-500"
+                  placeholder="Non disponibile con il template attuale"
+                  disabled
+                  className="mt-3 w-full rounded-2xl border border-amber-200 bg-white px-4 py-3 text-sm text-slate-500 outline-none"
                 />
               </section>
             )}
@@ -410,12 +331,12 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
               />
 
               <p className="mt-2 text-sm text-slate-500">
-                La locandina viene caricata direttamente su Storage e poi inviata ai clienti selezionati.
+                Con il template attuale l’invio batch con allegati non è ancora supportato.
               </p>
 
               {selectedFile ? (
-                <div className="mt-3 inline-flex rounded-full border border-orange-200 bg-white px-3 py-1 text-xs font-semibold text-orange-700">
-                  File selezionato: {selectedFile.name}
+                <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
+                  File selezionato: {selectedFile.name}. Rimuovilo per poter inviare il batch.
                 </div>
               ) : null}
             </section>
@@ -423,22 +344,26 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
 
           <div className="space-y-5">
             <section className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
-              <div className="text-sm font-semibold text-slate-900">Anteprima messaggio</div>
+              <div className="text-sm font-semibold text-slate-900">Anteprima template</div>
 
               <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
                 {previewText}
               </div>
+
+              <p className="mt-3 text-xs text-slate-500">
+                Nell’invio reale il template userà i valori dinamici del cliente e del negozio.
+              </p>
             </section>
 
             <section className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
               <div className="text-sm font-semibold text-slate-900">Invio</div>
 
               <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-700">
-                Verranno inviati:
+                Verrà inviato:
                 <ul className="mt-2 space-y-1.5">
-                  <li>• messaggio standard o personalizzato</li>
-                  <li>• locandina allegata, se caricata</li>
-                  <li>• pulsanti Contattaci / Vieni in negozio nel messaggio</li>
+                  <li>• template marketing Meta approvato</li>
+                  <li>• link contatto del negozio</li>
+                  <li>• link Google Maps del negozio</li>
                 </ul>
               </div>
 
@@ -458,7 +383,7 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
                 </button>
 
                 <p className="text-xs text-slate-500">
-                  I clienti senza consenso marketing o senza Telegram attivo verranno saltati automaticamente.
+                  I clienti senza consenso marketing o senza WhatsApp attivo verranno saltati automaticamente.
                 </p>
               </div>
             </section>

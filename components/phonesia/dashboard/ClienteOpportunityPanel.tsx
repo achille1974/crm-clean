@@ -32,7 +32,7 @@ type Props = {
   clienteId: number;
   clienteNome: string;
   activeServices: ServiceFamily[];
-  telegramActive: boolean;
+  whatsappActive: boolean;
   marketingConsented: boolean;
   contactStoreLabel: string;
   sentOpportunities: SentOpportunity[];
@@ -47,6 +47,14 @@ type OpportunityRecommendation = {
   service: ServiceFamily;
   reason: string;
   priority: "Alta" | "Media" | "Bassa";
+};
+
+type SendApiResponse = {
+  ok: boolean;
+  message?: string;
+  error?: string;
+  detail?: string;
+  sentOpportunities?: SentOpportunity[];
 };
 
 const PRIORITY_ORDER: Record<OpportunityRecommendation["priority"], number> = {
@@ -229,7 +237,7 @@ export default function ClienteOpportunityPanel({
   clienteId,
   clienteNome,
   activeServices,
-  telegramActive,
+  whatsappActive,
   marketingConsented,
   contactStoreLabel,
   sentOpportunities,
@@ -237,9 +245,6 @@ export default function ClienteOpportunityPanel({
   const [selectedServices, setSelectedServices] = useState<ServiceFamily[]>([]);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [isSending, setIsSending] = useState(false);
-  const [customMessage, setCustomMessage] = useState("");
-  const [attachmentUrl, setAttachmentUrl] = useState("");
-  const [attachmentFileName, setAttachmentFileName] = useState("");
   const [sendState, setSendState] = useState<SendState>({
     type: "idle",
     message: "",
@@ -274,15 +279,8 @@ export default function ClienteOpportunityPanel({
   const sentServicesCount = latestSentByService.size;
   const lastSent = history[0] ?? null;
 
-  const trimmedMessage = customMessage.trim();
-  const trimmedAttachmentUrl = attachmentUrl.trim();
-  const trimmedAttachmentFileName = attachmentFileName.trim();
-
-  const hasCustomContent =
-    trimmedMessage.length > 0 || trimmedAttachmentUrl.length > 0 || trimmedAttachmentFileName.length > 0;
-
   const canAttemptSend = selectedServices.length > 0;
-  const canReallySend = canAttemptSend && telegramActive && marketingConsented && !isSending;
+  const canReallySend = canAttemptSend && whatsappActive && marketingConsented && !isSending;
 
   function toggleService(service: ServiceFamily) {
     if (latestSentByService.has(service)) return;
@@ -309,20 +307,10 @@ export default function ClienteOpportunityPanel({
         body: JSON.stringify({
           clienteId,
           services: selectedServices,
-          sendMode: hasCustomContent ? "custom" : "standard",
-          customMessage: trimmedMessage || undefined,
-          attachmentPublicUrl: trimmedAttachmentUrl || undefined,
-          attachmentFileName: trimmedAttachmentFileName || undefined,
         }),
       });
 
-      const data = (await response.json()) as {
-        ok: boolean;
-        message?: string;
-        error?: string;
-        detail?: string;
-        sentOpportunities?: SentOpportunity[];
-      };
+      const data = (await response.json()) as SendApiResponse;
 
       if (!response.ok || !data.ok) {
         setSendState({
@@ -330,7 +318,7 @@ export default function ClienteOpportunityPanel({
           message:
             data.message ||
             data.detail ||
-            "Invio non riuscito. Controlla consenso marketing e Telegram attivo.",
+            "Invio non riuscito. Controlla consenso marketing e WhatsApp attivo.",
         });
         setIsSending(false);
         return;
@@ -349,9 +337,6 @@ export default function ClienteOpportunityPanel({
         message: data.message || "Messaggio inviato correttamente.",
       });
       setSelectedServices([]);
-      setCustomMessage("");
-      setAttachmentUrl("");
-      setAttachmentFileName("");
       setConfirmOpen(false);
     } catch (error) {
       setSendState({
@@ -384,8 +369,8 @@ export default function ClienteOpportunityPanel({
             koText="Non autorizzato"
           />
           <StatusCard
-            label="Telegram cliente"
-            ok={telegramActive}
+            label="WhatsApp cliente"
+            ok={whatsappActive}
             okText="Attivo"
             koText="Non attivo"
           />
@@ -503,52 +488,6 @@ export default function ClienteOpportunityPanel({
             )}
           </div>
 
-          <div className="mt-4 grid gap-4 lg:grid-cols-2">
-            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
-              <div className="text-sm font-semibold text-slate-900">
-                Messaggio personalizzato
-              </div>
-              <p className="mt-1 text-xs text-slate-500">
-                Lascia vuoto per usare il messaggio standard automatico.
-              </p>
-
-              <textarea
-                value={customMessage}
-                onChange={(event) => setCustomMessage(event.target.value)}
-                rows={6}
-                placeholder="Scrivi qui un messaggio personalizzato per il cliente..."
-                className="mt-3 w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-orange-500"
-              />
-            </div>
-
-            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
-              <div className="text-sm font-semibold text-slate-900">
-                Allegato facoltativo
-              </div>
-              <p className="mt-1 text-xs text-slate-500">
-                Inserisci il link pubblico della locandina o allegato e, se vuoi, il nome file da mostrare.
-              </p>
-
-              <div className="mt-3 space-y-3">
-                <input
-                  type="text"
-                  value={attachmentUrl}
-                  onChange={(event) => setAttachmentUrl(event.target.value)}
-                  placeholder="https://..."
-                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-orange-500"
-                />
-
-                <input
-                  type="text"
-                  value={attachmentFileName}
-                  onChange={(event) => setAttachmentFileName(event.target.value)}
-                  placeholder="Nome allegato (es. locandina-energia-aprile.pdf)"
-                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-orange-500"
-                />
-              </div>
-            </div>
-          </div>
-
           {sendState.type !== "idle" && (
             <div
               className={[
@@ -578,7 +517,7 @@ export default function ClienteOpportunityPanel({
             </button>
 
             <p className="mt-2 text-xs text-slate-500">
-              Il messaggio verrà inviato solo se il cliente ha consenso marketing e Telegram attivo.
+              Il messaggio verrà inviato solo se il cliente ha consenso marketing e WhatsApp attivo.
             </p>
           </div>
         </div>
@@ -688,9 +627,9 @@ export default function ClienteOpportunityPanel({
                   </strong>
                 </li>
                 <li>
-                  • Telegram attivo:{" "}
-                  <strong className={telegramActive ? "text-emerald-700" : "text-rose-700"}>
-                    {telegramActive ? "ok" : "non attivo"}
+                  • WhatsApp attivo:{" "}
+                  <strong className={whatsappActive ? "text-emerald-700" : "text-rose-700"}>
+                    {whatsappActive ? "ok" : "non attivo"}
                   </strong>
                 </li>
                 <li>
@@ -699,24 +638,14 @@ export default function ClienteOpportunityPanel({
                 </li>
               </ul>
 
-              {trimmedMessage ? (
-                <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                  <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Messaggio personalizzato
-                  </div>
-                  <div className="whitespace-pre-wrap text-sm text-slate-700">{trimmedMessage}</div>
+              <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Nota invio
                 </div>
-              ) : null}
-
-              {trimmedAttachmentUrl || trimmedAttachmentFileName ? (
-                <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
-                  <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Allegato
-                  </div>
-                  <div>URL: {trimmedAttachmentUrl || "—"}</div>
-                  <div>Nome file: {trimmedAttachmentFileName || "—"}</div>
+                <div className="text-sm text-slate-700">
+                  Verrà usato il template marketing approvato di WhatsApp con i dati dinamici del cliente e del negozio.
                 </div>
-              ) : null}
+              </div>
             </div>
 
             <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">

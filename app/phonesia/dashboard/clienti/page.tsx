@@ -32,7 +32,7 @@ type ClienteRow = {
   email: string | null;
   codice_fiscale: string | null;
   negozio_id: number | null;
-  telegram_active: boolean | null;
+  whatsapp_active: boolean | null;
   created_at: string | null;
 };
 
@@ -173,7 +173,7 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
   const { data: clientiData, error: clientiError } = await supabase
     .from("phonesia_clienti")
     .select(
-      "id, nome, cognome, telefono, email, codice_fiscale, negozio_id, telegram_active, created_at",
+      "id, nome, cognome, telefono, email, codice_fiscale, negozio_id, whatsapp_active, created_at",
     )
     .order("created_at", { ascending: false })
     .limit(500);

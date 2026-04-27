@@ -419,6 +419,7 @@ export async function getContrattiRecenti(filters?: DashboardFilters): Promise<C
     .select(
       "id, created_at, data_stipula, nome, cognome, operatore, categoria, tipo_contratto, numero_contratto, telefono, email, negozio_id, origine_cliente",
     )
+    .order("data_stipula", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false })
     .limit(50);
 
