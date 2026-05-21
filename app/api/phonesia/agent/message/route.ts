@@ -345,8 +345,8 @@ function buildSafeCommercialReply(
       reply: [
         `Ciao ${firstName} 😊`,
         "mi dispiace per il problema.",
-        "Per aiutarti bene è meglio partire dall’assistenza, senza proporti offerte in questo momento.",
-        `Ti consiglio di passare dal punto vendita ${storeLabel}, oppure scrivimi qualche dettaglio in più sul problema così possiamo indirizzarti meglio.`,
+        "Partiamo prima dal problema, così capiamo se dipende dalla SIM, dalla linea o dal telefono.",
+        `Ti consiglio di passare dal punto vendita ${storeLabel}, oppure scrivimi qualche dettaglio in più così possiamo indirizzarti meglio.`,
       ].join("\n"),
     };
   }
