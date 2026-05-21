@@ -18,11 +18,6 @@ const NEGOZI: Record<number, string> = {
   5: "Tabacchino Floridia",
 };
 
-function normalizeWhatsAppNumber(rawValue: string) {
-  const cleaned = rawValue.replace(/[^\d]/g, "");
-  return cleaned;
-}
-
 export default function QrForm({
   negozioId,
 }: {
@@ -33,6 +28,27 @@ export default function QrForm({
   const [loading, setLoading] = useState(false);
   const [privacyAccepted, setPrivacyAccepted] = useState(false);
   const [marketingAccepted, setMarketingAccepted] = useState(false);
+
+  async function sendWelcome(clienteId: number | string) {
+    const response = await fetch("/api/phonesia/whatsapp/send-welcome", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        cliente_id: clienteId,
+      }),
+    });
+
+    const result = await response.json().catch(() => null);
+
+    if (!response.ok || result?.ok === false) {
+      console.error("Errore invio welcome WhatsApp:", result);
+      throw new Error(result?.detail || result?.error || "Errore invio welcome WhatsApp");
+    }
+
+    return result;
+  }
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -57,6 +73,10 @@ export default function QrForm({
 
     const telefonoFormatted = `+39${telefonoRaw}`;
 
+    const codiceFiscale = String(data.get("codice_fiscale") || "")
+      .trim()
+      .toUpperCase();
+
     const { data: clienteEsistente, error: searchError } = await supabase
       .from("phonesia_clienti")
       .select("*")
@@ -79,7 +99,7 @@ export default function QrForm({
           nome: data.get("nome"),
           cognome: data.get("cognome"),
           email: data.get("email") || null,
-          codice_fiscale: data.get("codice_fiscale"),
+          codice_fiscale: codiceFiscale,
           negozio_id: negozioId,
         })
         .eq("id", clienteEsistente.id);
@@ -93,10 +113,7 @@ export default function QrForm({
 
       clienteFinale = {
         ...clienteEsistente,
-        nome: String(data.get("nome") || ""),
-        cognome: String(data.get("cognome") || ""),
-        email: String(data.get("email") || "") || null,
-        codice_fiscale: String(data.get("codice_fiscale") || ""),
+        codice_fiscale: codiceFiscale,
         negozio_id: negozioId,
       };
     } else {
@@ -107,7 +124,7 @@ export default function QrForm({
           cognome: data.get("cognome"),
           telefono: telefonoFormatted,
           email: data.get("email") || null,
-          codice_fiscale: data.get("codice_fiscale"),
+          codice_fiscale: codiceFiscale,
           qr_id: "phonesia_qr",
           negozio_id: negozioId,
         })
@@ -150,32 +167,17 @@ export default function QrForm({
       });
     }
 
-    if (clienteFinale.whatsapp_active) {
+    try {
+      await sendWelcome(clienteFinale.id);
       setLoading(false);
       window.location.href = `/phonesia/welcome?id=${clienteFinale.id}`;
-      return;
-    }
-
-    const whatsappNumberRaw = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER;
-
-    if (!whatsappNumberRaw) {
-      alert("Errore configurazione WhatsApp.");
+    } catch (error) {
+      console.error(error);
+      alert(
+        "Registrazione completata, ma non siamo riusciti a inviare il messaggio WhatsApp automatico.",
+      );
       setLoading(false);
-      return;
     }
-
-    const whatsappNumber = normalizeWhatsAppNumber(whatsappNumberRaw);
-
-    if (!whatsappNumber) {
-      alert("Numero WhatsApp non valido.");
-      setLoading(false);
-      return;
-    }
-
-    setLoading(false);
-
-    const waUrl = `https://wa.me/${whatsappNumber}?text=${encodeURIComponent("OK")}`;
-    window.location.href = waUrl;
   }
 
   return (
@@ -208,73 +210,33 @@ export default function QrForm({
 
                 <p className="mx-auto max-w-2xl text-base leading-relaxed text-slate-700 md:text-lg">
                   Registrati per restare in contatto con il tuo punto vendita{" "}
-                  <strong>PHONESIA {nomeNegozio.toUpperCase()}</strong>, ricevere
-                  assistenza diretta e, se lo vorrai, accedere anche a offerte
-                  personalizzate e comunicazioni utili sui servizi più adatti a te.
+                  <strong>PHONESIA {nomeNegozio.toUpperCase()}</strong>
                 </p>
               </div>
 
               <div className="mx-auto mt-10 max-w-3xl rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-8">
-                <div className="mb-6">
-                  <div className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
-                    Punto vendita
-                  </div>
-                  <h2 className="mt-2 text-2xl font-black tracking-tight text-slate-950 md:text-3xl">
-                    PHONESIA {nomeNegozio.toUpperCase()}
-                  </h2>
-                  <p className="mt-2 text-sm text-slate-600 md:text-base">
-                    Inserisci i tuoi dati per completare la registrazione.
-                  </p>
-                </div>
-
                 <form onSubmit={handleSubmit} className="space-y-5">
-                  <InputField
-                    label="Nome"
-                    name="nome"
-                    placeholder="Inserisci il tuo nome"
-                    required
-                  />
-
-                  <InputField
-                    label="Cognome"
-                    name="cognome"
-                    placeholder="Inserisci il tuo cognome"
-                    required
-                  />
-
-                  <InputField
-                    label="Codice Fiscale"
-                    name="codice_fiscale"
-                    placeholder="Inserisci il tuo codice fiscale"
-                    required
-                  />
+                  <InputField label="Nome" name="nome" required />
+                  <InputField label="Cognome" name="cognome" required />
+                  <InputField label="Codice Fiscale" name="codice_fiscale" uppercase required />
 
                   <div>
                     <label className="mb-2 block text-sm font-medium text-slate-600">
                       Numero di telefono
                     </label>
 
-                    <div className="flex overflow-hidden rounded-2xl border border-slate-300 bg-white focus-within:border-orange-500">
-                      <span className="inline-flex items-center border-r border-slate-200 bg-slate-50 px-4 text-sm font-semibold text-slate-700">
-                        +39
-                      </span>
-
+                    <div className="flex overflow-hidden rounded-2xl border border-slate-300 bg-white">
+                      <span className="px-4 py-3 bg-slate-50 border-r">+39</span>
                       <input
                         name="telefono"
                         type="tel"
-                        placeholder="3331234567"
-                        pattern="[0-9]{9,10}"
                         required
-                        className="w-full px-4 py-3 text-sm text-slate-900 outline-none"
+                        className="w-full px-4 py-3 outline-none"
                       />
                     </div>
                   </div>
 
-                  <InputField
-                    label="Email"
-                    name="email"
-                    placeholder="Email (facoltativa)"
-                  />
+                  <InputField label="Email" name="email" />
 
                   <QrConsensi
                     privacyAccepted={privacyAccepted}
@@ -283,25 +245,13 @@ export default function QrForm({
                     onMarketingChange={setMarketingAccepted}
                   />
 
-                  <div className="pt-2">
-                    <button
-                      type="submit"
-                      disabled={loading || !privacyAccepted}
-                      className={[
-                        "inline-flex w-full items-center justify-center rounded-2xl px-5 py-3.5 text-sm font-semibold text-white transition",
-                        loading || !privacyAccepted
-                          ? "cursor-not-allowed bg-orange-300"
-                          : "bg-orange-500 hover:bg-orange-600",
-                      ].join(" ")}
-                    >
-                      {loading ? "Registrazione in corso..." : "Completa registrazione"}
-                    </button>
-                  </div>
-
-                  <p className="text-center text-xs leading-relaxed text-slate-500">
-                    Dopo la registrazione verrai reindirizzato su WhatsApp per attivare
-                    il tuo contatto diretto con PHONESIA.
-                  </p>
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="w-full bg-orange-500 text-white py-3 rounded-xl"
+                  >
+                    {loading ? "..." : "Completa registrazione"}
+                  </button>
                 </form>
               </div>
             </div>
@@ -315,25 +265,26 @@ export default function QrForm({
 function InputField({
   label,
   name,
-  placeholder,
   required = false,
+  uppercase = false,
 }: {
   label: string;
   name: string;
-  placeholder: string;
   required?: boolean;
+  uppercase?: boolean;
 }) {
   return (
     <div>
-      <label className="mb-2 block text-sm font-medium text-slate-600">
-        {label}
-      </label>
-
+      <label className="block mb-2 text-sm">{label}</label>
       <input
         name={name}
-        placeholder={placeholder}
         required={required}
-        className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-orange-500"
+        onInput={(e) => {
+          if (uppercase) {
+            e.currentTarget.value = e.currentTarget.value.toUpperCase();
+          }
+        }}
+        className="w-full px-4 py-3 border rounded-xl"
       />
     </div>
   );

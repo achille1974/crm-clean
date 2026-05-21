@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { createClient } from "@supabase/supabase-js";
 
 const SERVICE_COLUMNS = [
   "MOBILE",
@@ -58,23 +57,6 @@ type SendApiResponse = {
   sentOpportunities?: SentOpportunity[];
 };
 
-type MediaUploadResponse = {
-  ok: boolean;
-  bucket?: string;
-  path?: string;
-  token?: string;
-  signedUrl?: string;
-  publicUrl?: string;
-  error?: string;
-  detail?: string;
-};
-
-type UploadedAttachment = {
-  publicUrl: string;
-  fileName: string;
-  mimeType: string;
-};
-
 const PRIORITY_ORDER: Record<OpportunityRecommendation["priority"], number> = {
   Alta: 0,
   Media: 1,
@@ -91,8 +73,6 @@ const FALLBACK_ORDER: ServiceFamily[] = [
   "SICUREZZA",
   "FOTOVOLTAICO",
 ];
-
-const MAX_ATTACHMENT_SIZE_BYTES = 5 * 1024 * 1024;
 
 function normalizeText(value?: string | null): string {
   return String(value ?? "").trim();
@@ -119,20 +99,6 @@ function formatDateTime(value?: string | null): string {
   }).format(date);
 }
 
-function formatFileSize(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return "—";
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function isAllowedImageFile(file: File): boolean {
-  if (file.type && file.type.startsWith("image/")) {
-    return true;
-  }
-
-  return /\.(jpg|jpeg|png|webp)$/i.test(file.name);
-}
-
 function mergeSentOpportunities(
   current: SentOpportunity[],
   incoming: SentOpportunity[],
@@ -149,165 +115,6 @@ function mergeSentOpportunities(
     const bTime = new Date(b.sentAt).getTime();
     return bTime - aTime;
   });
-}
-
-function getSupabaseBrowserClient() {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-  if (!supabaseUrl || !supabaseAnonKey) {
-    return null;
-  }
-
-  return createClient(supabaseUrl, supabaseAnonKey, {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-    },
-  });
-}
-
-async function uploadFileWithSignedUrl(
-  media: MediaUploadResponse,
-  file: File,
-): Promise<void> {
-  if (media.signedUrl) {
-    const signedResponse = await fetch(media.signedUrl, {
-      method: "PUT",
-      headers: {
-        "Content-Type": file.type || "application/octet-stream",
-      },
-      body: file,
-    });
-
-    if (signedResponse.ok) {
-      return;
-    }
-
-    const signedPostResponse = await fetch(media.signedUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": file.type || "application/octet-stream",
-      },
-      body: file,
-    });
-
-    if (signedPostResponse.ok) {
-      return;
-    }
-
-    const errorText = await signedPostResponse.text().catch(() => "");
-    throw new Error(
-      `Upload locandina non riuscito: ${signedPostResponse.status} ${errorText}`,
-    );
-  }
-
-  if (!media.bucket || !media.path || !media.token) {
-    throw new Error("Dati upload locandina incompleti.");
-  }
-
-  const supabase = getSupabaseBrowserClient();
-
-  if (supabase) {
-    const { error } = await supabase.storage
-      .from(media.bucket)
-      .uploadToSignedUrl(media.path, media.token, file);
-
-    if (!error) {
-      return;
-    }
-
-    throw new Error(`Upload locandina non riuscito: ${error.message}`);
-  }
-
-  if (!media.publicUrl) {
-    throw new Error("Configurazione upload locandina incompleta.");
-  }
-
-  const publicUrl = new URL(media.publicUrl);
-  const encodedPath = media.path
-    .split("/")
-    .map((segment) => encodeURIComponent(segment))
-    .join("/");
-
-  const uploadUrl =
-    `${publicUrl.origin}/storage/v1/object/upload/sign/` +
-    `${encodeURIComponent(media.bucket)}/${encodedPath}` +
-    `?token=${encodeURIComponent(media.token)}`;
-
-  const uploadResponse = await fetch(uploadUrl, {
-    method: "PUT",
-    headers: {
-      "Content-Type": file.type || "application/octet-stream",
-    },
-    body: file,
-  });
-
-  if (uploadResponse.ok) {
-    return;
-  }
-
-  const uploadPostResponse = await fetch(uploadUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": file.type || "application/octet-stream",
-    },
-    body: file,
-  });
-
-  if (uploadPostResponse.ok) {
-    return;
-  }
-
-  const errorText = await uploadPostResponse.text().catch(() => "");
-  throw new Error(
-    `Upload locandina non riuscito: ${uploadPostResponse.status} ${errorText}`,
-  );
-}
-
-async function uploadOpportunityAttachment(file: File): Promise<UploadedAttachment> {
-  if (!isAllowedImageFile(file)) {
-    throw new Error("La locandina deve essere un’immagine JPG, PNG o WEBP.");
-  }
-
-  if (file.size > MAX_ATTACHMENT_SIZE_BYTES) {
-    throw new Error("La locandina non può superare 5 MB.");
-  }
-
-  const mediaResponse = await fetch("/api/phonesia/media", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      fileName: file.name,
-      contentType: file.type || "image/jpeg",
-    }),
-  });
-
-  const media = (await mediaResponse.json().catch(() => null)) as
-    | MediaUploadResponse
-    | null;
-
-  if (!mediaResponse.ok || !media?.ok) {
-    throw new Error(
-      media?.detail ||
-        media?.error ||
-        "Impossibile preparare il caricamento della locandina.",
-    );
-  }
-
-  if (!media.publicUrl) {
-    throw new Error("URL pubblico locandina mancante.");
-  }
-
-  await uploadFileWithSignedUrl(media, file);
-
-  return {
-    publicUrl: media.publicUrl,
-    fileName: file.name,
-    mimeType: file.type || "image/jpeg",
-  };
 }
 
 function buildOpportunityRecommendations(
@@ -442,8 +249,6 @@ export default function ClienteOpportunityPanel({
     type: "idle",
     message: "",
   });
-  const [attachmentFile, setAttachmentFile] = useState<File | null>(null);
-  const [attachmentInputKey, setAttachmentInputKey] = useState(0);
   const [history, setHistory] = useState<SentOpportunity[]>(
     [...sentOpportunities].sort((a, b) => {
       const aTime = new Date(a.sentAt).getTime();
@@ -489,53 +294,11 @@ export default function ClienteOpportunityPanel({
     );
   }
 
-  function clearAttachment() {
-    setAttachmentFile(null);
-    setAttachmentInputKey((value) => value + 1);
-  }
-
-  function handleAttachmentChange(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0] ?? null;
-
-    setSendState({ type: "idle", message: "" });
-
-    if (!file) {
-      setAttachmentFile(null);
-      return;
-    }
-
-    if (!isAllowedImageFile(file)) {
-      setAttachmentFile(null);
-      setAttachmentInputKey((value) => value + 1);
-      setSendState({
-        type: "error",
-        message: "La locandina deve essere un’immagine JPG, PNG o WEBP.",
-      });
-      return;
-    }
-
-    if (file.size > MAX_ATTACHMENT_SIZE_BYTES) {
-      setAttachmentFile(null);
-      setAttachmentInputKey((value) => value + 1);
-      setSendState({
-        type: "error",
-        message: "La locandina non può superare 5 MB.",
-      });
-      return;
-    }
-
-    setAttachmentFile(file);
-  }
-
   async function handleConfirmSend() {
     setIsSending(true);
     setSendState({ type: "idle", message: "" });
 
     try {
-      const uploadedAttachment = attachmentFile
-        ? await uploadOpportunityAttachment(attachmentFile)
-        : null;
-
       const response = await fetch("/api/phonesia/opportunita/send", {
         method: "POST",
         headers: {
@@ -544,9 +307,6 @@ export default function ClienteOpportunityPanel({
         body: JSON.stringify({
           clienteId,
           services: selectedServices,
-          attachmentPublicUrl: uploadedAttachment?.publicUrl ?? null,
-          attachmentFileName: uploadedAttachment?.fileName ?? null,
-          attachmentMimeType: uploadedAttachment?.mimeType ?? null,
         }),
       });
 
@@ -560,6 +320,7 @@ export default function ClienteOpportunityPanel({
             data.detail ||
             "Invio non riuscito. Controlla consenso marketing e WhatsApp attivo.",
         });
+        setIsSending(false);
         return;
       }
 
@@ -576,7 +337,6 @@ export default function ClienteOpportunityPanel({
         message: data.message || "Messaggio inviato correttamente.",
       });
       setSelectedServices([]);
-      clearAttachment();
       setConfirmOpen(false);
     } catch (error) {
       setSendState({
@@ -728,46 +488,6 @@ export default function ClienteOpportunityPanel({
             )}
           </div>
 
-          <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-4">
-            <div className="text-sm font-semibold text-slate-900">
-              Locandina da allegare
-            </div>
-
-            <p className="mt-1 text-xs leading-relaxed text-slate-500">
-              Opzionale. Se carichi una locandina, verrà usato il template WhatsApp con immagine.
-              Formati consigliati: JPG, PNG o WEBP. Dimensione massima: 5 MB.
-            </p>
-
-            <input
-              key={attachmentInputKey}
-              type="file"
-              accept="image/png,image/jpeg,image/webp,image/*"
-              onChange={handleAttachmentChange}
-              disabled={isSending}
-              className="mt-3 block w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 file:mr-4 file:rounded-xl file:border-0 file:bg-orange-50 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-orange-700 hover:file:bg-orange-100 disabled:cursor-not-allowed disabled:opacity-60"
-            />
-
-            {attachmentFile && (
-              <div className="mt-3 flex flex-col gap-3 rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-900 md:flex-row md:items-center md:justify-between">
-                <div>
-                  <div className="font-semibold">{attachmentFile.name}</div>
-                  <div className="mt-0.5 text-xs text-orange-800">
-                    {attachmentFile.type || "immagine"} • {formatFileSize(attachmentFile.size)}
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={clearAttachment}
-                  disabled={isSending}
-                  className="inline-flex items-center justify-center rounded-xl border border-orange-200 bg-white px-3 py-2 text-xs font-semibold text-orange-700 transition hover:bg-orange-100 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  Rimuovi locandina
-                </button>
-              </div>
-            )}
-          </div>
-
           {sendState.type !== "idle" && (
             <div
               className={[
@@ -857,18 +577,8 @@ export default function ClienteOpportunityPanel({
                         </div>
 
                         {item.attachmentFileName && (
-                          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                            <span>Allegato: {item.attachmentFileName}</span>
-                            {item.attachmentPublicUrl ? (
-                              <a
-                                href={item.attachmentPublicUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="font-semibold text-orange-700 underline-offset-2 hover:underline"
-                              >
-                                Apri locandina
-                              </a>
-                            ) : null}
+                          <div className="mt-1 text-xs text-slate-500">
+                            Allegato: {item.attachmentFileName}
                           </div>
                         )}
                       </div>
@@ -926,12 +636,6 @@ export default function ClienteOpportunityPanel({
                   • Negozio usato nel messaggio:{" "}
                   <strong className="text-slate-950">{contactStoreLabel}</strong>
                 </li>
-                <li>
-                  • Locandina:{" "}
-                  <strong className={attachmentFile ? "text-emerald-700" : "text-slate-700"}>
-                    {attachmentFile ? attachmentFile.name : "nessuna"}
-                  </strong>
-                </li>
               </ul>
 
               <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-3">
@@ -939,9 +643,7 @@ export default function ClienteOpportunityPanel({
                   Nota invio
                 </div>
                 <div className="text-sm text-slate-700">
-                  {attachmentFile
-                    ? "Verrà caricato il file e poi inviato il template WhatsApp con locandina."
-                    : "Verrà usato il template marketing approvato di WhatsApp con i dati dinamici del cliente e del negozio."}
+                  Verrà usato il template marketing approvato di WhatsApp con i dati dinamici del cliente e del negozio.
                 </div>
               </div>
             </div>
@@ -950,8 +652,7 @@ export default function ClienteOpportunityPanel({
               <button
                 type="button"
                 onClick={() => setConfirmOpen(false)}
-                disabled={isSending}
-                className="inline-flex items-center justify-center rounded-2xl border border-slate-300 px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex items-center justify-center rounded-2xl border border-slate-300 px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
               >
                 Annulla
               </button>
@@ -967,11 +668,7 @@ export default function ClienteOpportunityPanel({
                     : "cursor-not-allowed bg-orange-300",
                 ].join(" ")}
               >
-                {isSending
-                  ? attachmentFile
-                    ? "Caricamento e invio..."
-                    : "Invio in corso..."
-                  : "Conferma e invia"}
+                {isSending ? "Invio in corso..." : "Conferma e invia"}
               </button>
             </div>
           </div>
@@ -1023,4 +720,3 @@ function SummaryCard({
     </div>
   );
 }
-

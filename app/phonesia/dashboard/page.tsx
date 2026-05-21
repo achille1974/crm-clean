@@ -11,6 +11,13 @@ const CARDS = [
       "Vista compatta con matrice servizi e accesso rapido alla scheda opportunità del cliente.",
   },
   {
+    href: "/phonesia/dashboard/feedback",
+    badge: "Soddisfazione",
+    title: "Feedback clienti",
+    description:
+      "Controlla voti medi per negozio, ultimi feedback ricevuti e clienti insoddisfatti da ricontattare.",
+  },
+  {
     href: "/phonesia/dashboard/contratti",
     badge: "Archivio",
     title: "Contratti",
@@ -48,7 +55,8 @@ export default function PhonesiaDashboardPage() {
 
           <p className="mt-3 max-w-3xl text-sm leading-relaxed text-slate-600 md:text-base">
             Hub principale del CRM. Entra nella sezione clienti per lavorare su
-            servizi attivi, opportunità commerciali e prossime azioni dell’agent.
+            servizi attivi, opportunità commerciali, feedback e prossime azioni
+            dell’agent.
           </p>
         </section>
 

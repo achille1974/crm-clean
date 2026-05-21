@@ -1,24 +1,84 @@
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
-import { supabase } from "@/lib/supabaseClient";
+import { createClient } from "@supabase/supabase-js";
 
 const GRAPH_API_VERSION = process.env.WHATSAPP_GRAPH_API_VERSION || "v23.0";
 const WHATSAPP_ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN;
 const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
-const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || "https://crm-clean.vercel.app";
 
-async function sendWhatsAppText(params: {
+const WHATSAPP_WELCOME_TEMPLATE_NAME =
+  process.env.WHATSAPP_WELCOME_TEMPLATE_NAME || "phonesia_benvenuto_feedback_v1";
+
+const WHATSAPP_WELCOME_TEMPLATE_LANGUAGE =
+  process.env.WHATSAPP_WELCOME_TEMPLATE_LANGUAGE || "it";
+
+const WELCOME_HEADER_IMAGE_URL =
+  "https://crm-clean.vercel.app/phonesia/welcome-header.jpg";
+
+const STORE_CONTACTS: Record<number, { label: string; mapsUrl: string }> = {
+  1: {
+    label: "PHONESIA Floridia",
+    mapsUrl:
+      "https://www.google.com/maps/search/?api=1&query=Corso+Vittorio+Emanuele+735+Floridia",
+  },
+  2: {
+    label: "PHONESIA Augusta",
+    mapsUrl:
+      "https://www.google.com/maps/search/?api=1&query=Viale+Italia+195+Augusta",
+  },
+  3: {
+    label: "PHONESIA Siracusa",
+    mapsUrl:
+      "https://www.google.com/maps/search/?api=1&query=Corso+Gelone+41+Siracusa",
+  },
+  4: {
+    label: "PHONESIA Avola",
+    mapsUrl:
+      "https://www.google.com/maps/search/?api=1&query=Corso+Vittorio+Emanuele+281+Avola",
+  },
+  5: {
+    label: "PHONESIA Floridia",
+    mapsUrl:
+      "https://www.google.com/maps/search/?api=1&query=Corso+Vittorio+Emanuele+735+Floridia",
+  },
+};
+
+type ClienteRow = {
+  id: number;
+  telefono: string | null;
+  negozio_id: number | null;
+  whatsapp_active: boolean | null;
+  whatsapp_activated_at: string | null;
+  welcome_sent_at: string | null;
+};
+
+function getSupabaseAdmin() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
+    }
+  );
+}
+
+function toMetaRecipient(rawPhone: string) {
+  const cleaned = rawPhone.trim().replace(/[^\d+]/g, "");
+  const numeric = cleaned.startsWith("+") ? cleaned.slice(1) : cleaned;
+  return /^\d+$/.test(numeric) ? numeric : null;
+}
+
+async function sendTemplate(params: {
   to: string;
-  body: string;
+  mapsUrl: string;
+  clienteId: number;
 }) {
-  if (!WHATSAPP_ACCESS_TOKEN) {
-    throw new Error("Missing WHATSAPP_ACCESS_TOKEN");
-  }
-
-  if (!WHATSAPP_PHONE_NUMBER_ID) {
-    throw new Error("Missing WHATSAPP_PHONE_NUMBER_ID");
-  }
+  const feedbackUrl = `https://crm-clean.vercel.app/phonesia/feedback?cliente_id=${params.clienteId}`;
 
   const response = await fetch(
     `https://graph.facebook.com/${GRAPH_API_VERSION}/${WHATSAPP_PHONE_NUMBER_ID}/messages`,
@@ -31,116 +91,99 @@ async function sendWhatsAppText(params: {
       body: JSON.stringify({
         messaging_product: "whatsapp",
         to: params.to,
-        type: "text",
-        text: {
-          body: params.body,
+        type: "template",
+        template: {
+          name: WHATSAPP_WELCOME_TEMPLATE_NAME,
+          language: {
+            code: WHATSAPP_WELCOME_TEMPLATE_LANGUAGE,
+          },
+          components: [
+            {
+              type: "header",
+              parameters: [
+                {
+                  type: "image",
+                  image: {
+                    link: WELCOME_HEADER_IMAGE_URL,
+                  },
+                },
+              ],
+            },
+            {
+              type: "button",
+              sub_type: "url",
+              index: "0",
+              parameters: [
+                {
+                  type: "text",
+                  text: params.mapsUrl,
+                },
+              ],
+            },
+            {
+              type: "button",
+              sub_type: "url",
+              index: "1",
+              parameters: [
+                {
+                  type: "text",
+                  text: String(params.clienteId),
+                },
+              ],
+            },
+          ],
         },
       }),
-    },
+    }
   );
 
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Meta send message failed: ${response.status} ${errorText}`);
+    const error = await response.text();
+    throw new Error(error);
   }
-
-  return response.json();
-}
-
-function buildWelcomeMessage(clienteId: number | string) {
-  return (
-    "Benvenuto in Phonesia!\n\n" +
-    "Il tuo canale WhatsApp è attivo.\n\n" +
-    "Ecco il nostro contatto ufficiale e il tuo biglietto digitale:\n" +
-    `${BASE_URL}/phonesia/biglietto/${clienteId}\n\n` +
-    "Salva questo numero per ricevere assistenza e aggiornamenti dedicati.\n\n" +
-    "— Team Phonesia"
-  );
-}
-
-function buildPhoneCandidates(rawPhone: string) {
-  const cleaned = rawPhone.trim().replace(/[^\d+]/g, "");
-  const variants = new Set<string>();
-
-  if (!cleaned) return [];
-
-  variants.add(cleaned);
-
-  if (cleaned.startsWith("+")) {
-    variants.add(cleaned.slice(1));
-  } else {
-    variants.add(`+${cleaned}`);
-  }
-
-  return Array.from(variants);
 }
 
 export async function POST(req: Request) {
   try {
     const { cliente_id } = await req.json();
 
-    if (!cliente_id) {
-      return NextResponse.json({ error: "cliente_id required" }, { status: 400 });
-    }
+    const supabase = getSupabaseAdmin();
 
-    const { data: cliente, error: clienteError } = await supabase
+    const { data: cliente } = await supabase
       .from("phonesia_clienti")
-      .select("id, telefono, whatsapp_active, welcome_sent_at")
+      .select("*")
       .eq("id", cliente_id)
-      .maybeSingle();
+      .single();
 
-    if (clienteError) {
-      console.error("Errore recupero cliente:", clienteError);
-      return NextResponse.json({ error: "database error" }, { status: 500 });
-    }
-
-    if (!cliente) {
-      return NextResponse.json({ error: "cliente not found" }, { status: 404 });
-    }
-
-    if (!cliente.telefono) {
-      return NextResponse.json({ error: "cliente telefono mancante" }, { status: 400 });
+    if (!cliente || !cliente.telefono) {
+      return NextResponse.json({ error: "cliente non valido" }, { status: 400 });
     }
 
     if (cliente.welcome_sent_at) {
-      return NextResponse.json({ message: "welcome already sent" });
+      return NextResponse.json({ ok: true });
     }
 
-    const phoneCandidates = buildPhoneCandidates(cliente.telefono);
-    const whatsappTo = phoneCandidates.find((value) => /^\d+$/.test(value.replace(/^\+/, "")));
+    const to = toMetaRecipient(cliente.telefono);
 
-    if (!whatsappTo) {
-      return NextResponse.json({ error: "telefono cliente non valido" }, { status: 400 });
-    }
+    const store = STORE_CONTACTS[cliente.negozio_id || 1];
 
-    await sendWhatsAppText({
-      to: whatsappTo.replace(/^\+/, ""),
-      body: buildWelcomeMessage(cliente.id),
+    await sendTemplate({
+      to: to!,
+      mapsUrl: store.mapsUrl,
+      clienteId: cliente.id,
     });
 
-    const now = new Date().toISOString();
-
-    const { error: updateError } = await supabase
+    await supabase
       .from("phonesia_clienti")
       .update({
-        whatsapp_active: cliente.whatsapp_active === true ? true : true,
-        whatsapp_activated_at: cliente.whatsapp_active ? undefined : now,
-        welcome_sent_at: now,
-        welcome_status: "sent",
+        whatsapp_active: true,
+        welcome_sent_at: new Date().toISOString(),
       })
       .eq("id", cliente.id);
 
-    if (updateError) {
-      console.error("Errore update cliente dopo welcome:", updateError);
-      return NextResponse.json(
-        { error: "welcome sent but update failed" },
-        { status: 500 },
-      );
-    }
-
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error("Send welcome Meta error:", error);
+    return NextResponse.json({ ok: true });
+  } catch (e) {
+    console.error("ERROR SEND WELCOME:", e);
     return NextResponse.json({ error: "internal error" }, { status: 500 });
   }
 }
