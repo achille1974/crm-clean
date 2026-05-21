@@ -320,7 +320,7 @@ function buildSafeCommercialReply(
     return {
       handoffRichiesto: true,
       reply: [
-        "Ciao 💙",
+        "Ciao 😊",
         "posso aiutarti, ma non riesco ancora a collegare questo numero a una scheda cliente PHONESIA.",
         "Scrivimi nome e cognome oppure passa in negozio: così possiamo verificare meglio la tua richiesta.",
       ].join("\n"),
@@ -331,7 +331,7 @@ function buildSafeCommercialReply(
     return {
       handoffRichiesto: true,
       reply: [
-        `Ciao ${firstName} 💙`,
+        `Ciao ${firstName} 😊`,
         "grazie per averci scritto.",
         "Vedo che c’è già una richiesta di attenzione/ricontatto collegata alla tua scheda, quindi preferisco non proporti offerte adesso.",
         `Avviso il punto vendita ${storeLabel} così potete gestire prima la tua esigenza nel modo corretto.`,
@@ -343,7 +343,7 @@ function buildSafeCommercialReply(
     return {
       handoffRichiesto: true,
       reply: [
-        `Ciao ${firstName} 💙`,
+        `Ciao ${firstName} 😊`,
         "mi dispiace per il problema.",
         "Per aiutarti bene è meglio partire dall’assistenza, senza proporti offerte in questo momento.",
         `Ti consiglio di passare dal punto vendita ${storeLabel}, oppure scrivimi qualche dettaglio in più sul problema così possiamo indirizzarti meglio.`,
@@ -355,7 +355,7 @@ function buildSafeCommercialReply(
     return {
       handoffRichiesto: true,
       reply: [
-        `Ciao ${firstName} 💙`,
+        `Ciao ${firstName} 😊`,
         `va bene, preparo una richiesta di ricontatto per il punto vendita ${storeLabel}.`,
         "Ti ricontatteranno appena possibile per capire meglio la tua esigenza.",
       ].join("\n"),
@@ -370,7 +370,7 @@ function buildSafeCommercialReply(
     return {
       handoffRichiesto: true,
       reply: [
-        `Ciao ${firstName} 💙`,
+        `Ciao ${firstName} 😊`,
         "sì, possiamo valutare alcune soluzioni smartphone interessanti.",
         operatorLine,
         `Sei seguito dal punto vendita ${storeLabel}: ti consiglio di passare in negozio così controlliamo insieme la tua tariffa attuale e vediamo se è possibile abbinare uno smartphone a una soluzione più conveniente.`,
@@ -383,7 +383,7 @@ function buildSafeCommercialReply(
     return {
       handoffRichiesto: true,
       reply: [
-        `Ciao ${firstName} 💙`,
+        `Ciao ${firstName} 😊`,
         "sì, possiamo verificare le soluzioni fibra disponibili.",
         `Per darti una risposta corretta serve controllare copertura e indirizzo: ti consiglio di passare dal punto vendita ${storeLabel}.`,
         "Se hai già una linea casa, porta anche una vecchia bolletta o i dati dell’attuale operatore.",
@@ -396,7 +396,7 @@ function buildSafeCommercialReply(
     return {
       handoffRichiesto: true,
       reply: [
-        `Ciao ${firstName} 💙`,
+        `Ciao ${firstName} 😊`,
         "possiamo fare una valutazione sulla tua bolletta luce/gas.",
         "Per non darti informazioni imprecise, è meglio controllare i dati reali della fornitura.",
         `Passa dal punto vendita ${storeLabel} portando una bolletta recente: verifichiamo insieme se c’è una soluzione più conveniente.`,
@@ -414,7 +414,7 @@ function buildSafeCommercialReply(
     return {
       handoffRichiesto: true,
       reply: [
-        `Ciao ${firstName} 💙`,
+        `Ciao ${firstName} 😊`,
         "possiamo sicuramente fare una verifica sulle offerte disponibili.",
         serviceLine,
         "Per evitare di indicarti promozioni non adatte, ti consiglio di fare un controllo con il negozio.",
@@ -427,7 +427,7 @@ function buildSafeCommercialReply(
     return {
       handoffRichiesto: false,
       reply: [
-        `Ciao ${firstName} 💙`,
+        `Ciao ${firstName} 😊`,
         "sono l’assistente PHONESIA.",
         "Dimmi pure se ti serve assistenza, vuoi verificare un’offerta o desideri essere ricontattato dal negozio.",
       ].join("\n"),
@@ -437,7 +437,7 @@ function buildSafeCommercialReply(
   return {
     handoffRichiesto: true,
     reply: [
-      `Ciao ${firstName} 💙`,
+      `Ciao ${firstName} 😊`,
       "ho ricevuto il tuo messaggio.",
       "Per aiutarti bene preferisco far verificare la richiesta dal negozio, così evitiamo informazioni imprecise.",
       `Il tuo riferimento è ${storeLabel}. Vuoi che ti faccia ricontattare?`,
@@ -511,12 +511,12 @@ async function findContratti(
   const collected: ContrattoRow[] = [];
   const seen = new Set<string>();
 
-  const pushRows = (rows: any[] | null) => {
+  const pushRows = (rows: ContrattoRow[] | null) => {
     (rows ?? []).forEach((row) => {
       const id = String(row.id);
       if (!seen.has(id)) {
         seen.add(id);
-        collected.push(row as ContrattoRow);
+        collected.push(row);
       }
     });
   };
@@ -728,17 +728,28 @@ function buildAgentPrompt(
   };
 
   return [
-    "Sei l'assistente CRM operativo di PHONESIA.",
-    "Rispondi al cliente su WhatsApp.",
+    "Sei l'assistente CRM operativo di PHONESIA e rispondi a clienti reali su WhatsApp.",
+    "Obiettivo: dare una risposta utile, naturale e commerciale, senza inventare dati.",
     "Regole obbligatorie:",
     "- usa solo i dati CRM forniti;",
-    "- non inventare prezzi, offerte, disponibilità smartphone o promozioni;",
-    "- se il cliente chiede assistenza, dai priorità all'assistenza e non fare promo;",
+    "- non inventare prezzi, offerte, disponibilità smartphone, promozioni o condizioni commerciali;",
+    "- non dire frasi fredde come: non possiamo fornire informazioni, non sono in grado, non ho accesso, non posso aiutarti;",
+    "- se mancano dati certi, trasforma il limite in una proposta utile: possiamo verificarlo in negozio, possiamo controllare la tua tariffa, posso avvisare il punto vendita;",
+    "- se il cliente chiede smartphone, proponi verifica tariffa/operatore e passaggio o ricontatto dal negozio;",
+    "- se il cliente chiede energia, chiedi o suggerisci bolletta recente e verifica in negozio;",
+    "- se il cliente chiede fibra/internet casa, suggerisci controllo copertura e indirizzo;",
+    "- se il cliente chiede assistenza, dai priorità al supporto e non proporre offerte;",
     "- se il cliente è insoddisfatto o ha feedback basso, fai recupero cliente e non fare promo;",
-    "- se il cliente chiede offerte, usa formule prudenti: possiamo valutare, verifichiamo, passa in negozio, ti facciamo ricontattare;",
-    "- il consenso marketing serve per campagne outbound, ma se il cliente scrive inbound puoi rispondere alla sua richiesta;",
-    "- risposta breve, gentile, commerciale ma prudente;",
-    "- italiano naturale.",
+    "- il consenso marketing serve per campagne outbound; se il cliente scrive inbound puoi rispondere alla sua richiesta;",
+    "- tono: gentile, concreto, rassicurante, da consulente PHONESIA;",
+    "- massimo 4 righe brevi;",
+    "- puoi usare 😊, non usare cuori.",
+    "",
+    "Formato risposta:",
+    "1) saluta il cliente per nome se disponibile;",
+    "2) rispondi alla richiesta;",
+    "3) spiega cosa serve verificare;",
+    "4) proponi passaggio in negozio o ricontatto.",
     "",
     `Messaggio cliente: ${message}`,
     "",
@@ -747,7 +758,11 @@ function buildAgentPrompt(
 }
 
 function isSafeAiReply(reply: string): boolean {
-  const text = reply.toLowerCase();
+  const text = reply.toLowerCase().trim();
+
+  if (text.length < 20 || text.length > 900) {
+    return false;
+  }
 
   const riskyPatterns = [
     /€\s?\d+/i,
@@ -757,6 +772,18 @@ function isSafeAiReply(reply: string): boolean {
     /sicuro al 100/i,
     /gratis/i,
     /iphone\s?\d+\s?a/i,
+    /non possiamo fornire informazioni/i,
+    /non posso fornire informazioni/i,
+    /non sono in grado/i,
+    /non ho accesso/i,
+    /non posso aiutarti/i,
+    /mi dispiace,? ma non/i,
+    /come modello linguistico/i,
+    /intelligenza artificiale/i,
+    /consulta il sito/i,
+    /visita il sito/i,
+    /contatta il servizio clienti/i,
+    /💙/i,
   ];
 
   return !riskyPatterns.some((pattern) => pattern.test(text));
