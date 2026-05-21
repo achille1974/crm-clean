@@ -58,6 +58,14 @@ type ConversationRow = {
   metadata: Record<string, unknown> | null;
 };
 
+type RecentHandoffRow = {
+  id: number | string;
+  created_at: string | null;
+  intent: string | null;
+  messaggio_utente: string | null;
+  metadata: Record<string, unknown> | null;
+};
+
 type MetaWebhookText = {
   body?: string;
 };
@@ -104,7 +112,8 @@ type HandoffStatus =
   | "not_required"
   | "sent_template"
   | "failed_template"
-  | "skipped_no_customer";
+  | "skipped_no_customer"
+  | "skipped_duplicate";
 
 const STORE_CONTACTS: Record<
   number,
@@ -644,6 +653,42 @@ async function updateLatestConversationHandoff(
   }
 }
 
+async function hasRecentStoreHandoff(params: {
+  supabase: ReturnType<typeof getSupabaseAdmin>;
+  clienteId: number;
+  intent: string | null | undefined;
+  minutes: number;
+}): Promise<boolean> {
+  if (!params.intent) return false;
+
+  const cutoff = new Date(Date.now() - params.minutes * 60 * 1000).toISOString();
+
+  const { data, error } = await params.supabase
+    .from("phonesia_conversazioni")
+    .select("id, created_at, intent, messaggio_utente, metadata")
+    .eq("cliente_id", params.clienteId)
+    .eq("canale", "whatsapp")
+    .eq("handoff_richiesto", true)
+    .eq("intent", params.intent)
+    .gte("created_at", cutoff)
+    .order("created_at", { ascending: false })
+    .limit(10);
+
+  if (error) {
+    throw error;
+  }
+
+  const rows = (data ?? []) as RecentHandoffRow[];
+
+  return rows.some((row) => {
+    const metadata = row.metadata ?? {};
+    const handoffStatus =
+      typeof metadata.handoff_status === "string" ? metadata.handoff_status : null;
+
+    return handoffStatus === "sent_template";
+  });
+}
+
 async function notifyStoreIfNeeded(params: {
   supabase: ReturnType<typeof getSupabaseAdmin>;
   cliente: ClienteRow | null;
@@ -697,6 +742,28 @@ async function notifyStoreIfNeeded(params: {
       handoffStorePhone: store.phone,
       handoffTemplate: WHATSAPP_STORE_HANDOFF_TEMPLATE_NAME,
       handoffError: "Numero negozio non valido.",
+    });
+    return;
+  }
+
+  const hasDuplicateHandoff = await hasRecentStoreHandoff({
+    supabase: params.supabase,
+    clienteId,
+    intent: agentResponse.intent,
+    minutes: 15,
+  });
+
+  if (hasDuplicateHandoff) {
+    await updateLatestConversationHandoff(params.supabase, {
+      clienteId,
+      customerMessage: params.bodyOriginal,
+      handoffRequired: true,
+      handoffStatus: "skipped_duplicate",
+      handoffStoreLabel: store.label,
+      handoffStorePhone: storePhone,
+      handoffTemplate: WHATSAPP_STORE_HANDOFF_TEMPLATE_NAME,
+      handoffError:
+        "Notifica negozio non inviata: richiesta simile già notificata negli ultimi 15 minuti.",
     });
     return;
   }
