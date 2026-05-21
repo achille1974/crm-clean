@@ -94,6 +94,29 @@ type AgentContext = {
   marketingConsent: boolean;
 };
 
+type OperationalStatus = "informativo" | "da_gestire";
+type OperationalPriority = "normale" | "alta";
+
+type OperationalAction =
+  | "nessuna_azione"
+  | "verificare_offerta_smartphone"
+  | "verificare_offerta_energia_con_bolletta"
+  | "verificare_copertura_fibra"
+  | "gestire_assistenza_cliente"
+  | "richiamare_cliente"
+  | "verificare_offerta_adatta"
+  | "verificare_richiesta_cliente";
+
+type AgentOperationalMetadata = {
+  cliente_riconosciuto: boolean;
+  negozio_id: number | null;
+  negozio_label: string | null;
+  motivo_handoff: Intent | null;
+  azione_richiesta: OperationalAction;
+  priorita: OperationalPriority;
+  stato_operativo: OperationalStatus;
+};
+
 const NEGOZI: Record<
   number,
   {
@@ -793,6 +816,61 @@ function isSafeAiReply(reply: string): boolean {
   return !riskyPatterns.some((pattern) => pattern.test(text));
 }
 
+function getOperationalAction(
+  intent: Intent,
+  handoffRichiesto: boolean,
+): OperationalAction {
+  if (!handoffRichiesto && intent === "saluto") {
+    return "nessuna_azione";
+  }
+
+  if (intent === "smartphone") return "verificare_offerta_smartphone";
+  if (intent === "energia") return "verificare_offerta_energia_con_bolletta";
+  if (intent === "fibra") return "verificare_copertura_fibra";
+  if (intent === "assistenza") return "gestire_assistenza_cliente";
+  if (intent === "ricontatto") return "richiamare_cliente";
+  if (intent === "offerte_generiche") return "verificare_offerta_adatta";
+
+  return handoffRichiesto ? "verificare_richiesta_cliente" : "nessuna_azione";
+}
+
+function getOperationalPriority(
+  intent: Intent,
+  context: AgentContext,
+  handoffRichiesto: boolean,
+): OperationalPriority {
+  if (!handoffRichiesto) return "normale";
+
+  if (hasNegativeFeedback(context) || wantsCallback(context)) {
+    return "alta";
+  }
+
+  if (intent === "assistenza" || intent === "ricontatto") {
+    return "alta";
+  }
+
+  return "normale";
+}
+
+function buildOperationalMetadata(
+  intent: Intent,
+  context: AgentContext,
+  handoffRichiesto: boolean,
+): AgentOperationalMetadata {
+  const negozioId =
+    context.cliente?.negozio_id ?? context.contratti[0]?.negozio_id ?? null;
+
+  return {
+    cliente_riconosciuto: Boolean(context.cliente),
+    negozio_id: negozioId,
+    negozio_label: negozioId ? getStoreLabel(negozioId) : null,
+    motivo_handoff: handoffRichiesto ? intent : null,
+    azione_richiesta: getOperationalAction(intent, handoffRichiesto),
+    priorita: getOperationalPriority(intent, context, handoffRichiesto),
+    stato_operativo: handoffRichiesto ? "da_gestire" : "informativo",
+  };
+}
+
 async function logAgentConversation(
   supabase: ReturnType<typeof getSupabaseAdmin>,
   params: {
@@ -805,6 +883,7 @@ async function logAgentConversation(
     telefono?: string | null;
     marketingConsent: boolean;
     source: string;
+    operationalMetadata: AgentOperationalMetadata;
   },
 ) {
   if (!params.clienteId) return;
@@ -825,6 +904,7 @@ async function logAgentConversation(
         telefono: params.telefono,
         marketing_consent: params.marketingConsent,
         source: params.source,
+        agent_operational: params.operationalMetadata,
       },
     });
   } catch (error) {
@@ -911,6 +991,12 @@ export async function POST(request: NextRequest) {
       console.error("phonesia agent local fallback:", agentError);
     }
 
+    const operationalMetadata = buildOperationalMetadata(
+      intent,
+      context,
+      deterministic.handoffRichiesto,
+    );
+
     await logAgentConversation(supabase, {
       clienteId: cliente?.id ?? null,
       message,
@@ -921,6 +1007,7 @@ export async function POST(request: NextRequest) {
       telefono,
       marketingConsent,
       source: "api_agent_message",
+      operationalMetadata,
     });
 
     return NextResponse.json({
