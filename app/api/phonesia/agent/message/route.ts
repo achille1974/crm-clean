@@ -268,7 +268,11 @@ function detectIntent(message: string): Intent {
     return "assistenza";
   }
 
-  if (/richiam|ricontatt|parlare con qualcuno|operatore|persona/i.test(text)) {
+  if (
+    /richiam|ricontatt|mi potete chiamare|mi potete contattare|potete chiamarmi|potete contattarmi|vorrei essere chiamato|vorrei essere contattato|chiamarmi|contattarmi|parlare con qualcuno|operatore|persona/i.test(
+      text,
+    )
+  ) {
     return "ricontatto";
   }
 
