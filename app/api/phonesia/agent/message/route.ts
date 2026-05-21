@@ -364,8 +364,8 @@ function buildSafeCommercialReply(
 
   if (intent === "smartphone") {
     const operatorLine = latestOperator
-      ? `Nel CRM risulta come ultimo operatore/brand collegato: ${latestOperator}.`
-      : "Nel CRM non ho un operatore aggiornato certo da comunicarti.";
+      ? `Dalla tua scheda risulta un riferimento ${latestOperator}: possiamo partire da quello per valutare la soluzione migliore.`
+      : "Per proporti qualcosa di adatto dobbiamo prima controllare la tua tariffa e l’operatore attuale.";
 
     return {
       handoffRichiesto: true,
