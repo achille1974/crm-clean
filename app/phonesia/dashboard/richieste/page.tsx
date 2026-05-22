@@ -320,11 +320,7 @@ function isRequestItem(value: RequestItem | null): value is RequestItem {
 }
 
 function buildRequestGroupKey(row: RequestItem): string {
-  return [
-    row.cliente_id,
-    row.intent,
-    row.operational.azione_richiesta,
-  ].join(":");
+  return String(row.cliente_id);
 }
 
 function getLatestOperationalRequests(rows: RequestItem[]): RequestItem[] {
@@ -668,7 +664,7 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
             <p className="mt-2 max-w-4xl text-sm leading-relaxed text-slate-600">
               {vista === "storico"
                 ? "Stai vedendo lo storico completo delle conversazioni operative, inclusi duplicati tecnici e richieste ripetute."
-                : "Vista pulita: mostra solo l’ultima richiesta aperta per cliente e tipo richiesta, nascondendo duplicati tecnici."}
+                : "Vista pulita: mostra solo l’ultima richiesta utile per ogni cliente, nascondendo duplicati tecnici e richieste ripetute."}
               {vista !== "storico" && richiesteNascosteVistaPulita > 0
                 ? ` Elementi nascosti nella vista pulita: ${richiesteNascosteVistaPulita}.`
                 : ""}
