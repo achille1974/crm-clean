@@ -3,39 +3,12 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-type StatusOption = {
-  value: string;
-  label: string;
-  className: string;
-};
-
-const STATUS_OPTIONS: StatusOption[] = [
-  {
-    value: "da_gestire",
-    label: "Da gestire",
-    className: "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100",
-  },
-  {
-    value: "in_lavorazione",
-    label: "In lavorazione",
-    className: "border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100",
-  },
-  {
-    value: "ricontattato",
-    label: "Ricontattato",
-    className:
-      "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100",
-  },
-  {
-    value: "chiusa",
-    label: "Chiusa",
-    className: "border-slate-300 bg-slate-100 text-slate-700 hover:bg-slate-200",
-  },
-  {
-    value: "non_interessato",
-    label: "Non interessato",
-    className: "border-red-200 bg-red-50 text-red-700 hover:bg-red-100",
-  },
+const STATUS_OPTIONS = [
+  { value: "da_gestire", label: "Da gestire" },
+  { value: "in_lavorazione", label: "In lavorazione" },
+  { value: "ricontattato", label: "Ricontattato" },
+  { value: "chiusa", label: "Chiusa" },
+  { value: "non_interessato", label: "Non interessato" },
 ];
 
 export default function RichiestaStatusActions({
@@ -46,15 +19,19 @@ export default function RichiestaStatusActions({
   currentStatus: string;
 }) {
   const router = useRouter();
-  const [loadingStatus, setLoadingStatus] = useState<string | null>(null);
+  const [status, setStatus] = useState(currentStatus);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function updateStatus(nextStatus: string) {
-    if (nextStatus === currentStatus || loadingStatus) return;
+    if (nextStatus === currentStatus || loading) {
+      setStatus(currentStatus);
+      return;
+    }
 
     try {
       setError(null);
-      setLoadingStatus(nextStatus);
+      setLoading(true);
 
       const response = await fetch(`/api/phonesia/richieste/${richiestaId}/stato`, {
         method: "PATCH",
@@ -81,45 +58,48 @@ export default function RichiestaStatusActions({
       router.refresh();
     } catch (updateError) {
       console.error("Errore cambio stato richiesta:", updateError);
+      setStatus(currentStatus);
       setError(
         updateError instanceof Error
           ? updateError.message
           : "Errore aggiornamento stato",
       );
     } finally {
-      setLoadingStatus(null);
+      setLoading(false);
     }
   }
 
   return (
-    <div className="mt-3 space-y-2">
-      <div className="flex flex-wrap gap-2">
-        {STATUS_OPTIONS.map((option) => {
-          const active = option.value === currentStatus;
-          const loading = loadingStatus === option.value;
+    <div className="mt-3 max-w-[190px] space-y-2">
+      <label className="block text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">
+        Cambia stato
+      </label>
 
-          return (
-            <button
-              key={option.value}
-              type="button"
-              disabled={active || Boolean(loadingStatus)}
-              onClick={() => updateStatus(option.value)}
-              className={[
-                "rounded-full border px-3 py-1.5 text-[11px] font-black transition disabled:cursor-not-allowed disabled:opacity-60",
-                active
-                  ? "border-slate-300 bg-slate-950 text-white"
-                  : option.className,
-              ].join(" ")}
-              title={active ? "Stato attuale" : `Segna come ${option.label}`}
-            >
-              {loading ? "..." : option.label}
-            </button>
-          );
-        })}
-      </div>
+      <select
+        value={status}
+        disabled={loading}
+        onChange={(event) => {
+          const nextStatus = event.target.value;
+          setStatus(nextStatus);
+          updateStatus(nextStatus);
+        }}
+        className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 outline-none transition hover:border-orange-300 focus:border-orange-500 disabled:cursor-wait disabled:opacity-60"
+      >
+        {STATUS_OPTIONS.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+
+      {loading ? (
+        <div className="text-[11px] font-semibold text-slate-500">
+          Aggiornamento...
+        </div>
+      ) : null}
 
       {error ? (
-        <div className="rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
+        <div className="rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-semibold text-red-700">
           {error}
         </div>
       ) : null}
