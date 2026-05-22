@@ -44,6 +44,16 @@ type OperationalMetadata = {
   opportunity_score_reason: string[];
 };
 
+type ConversationMemory = {
+  is_follow_up: boolean;
+  previous_intent: string | null;
+  previous_message: string | null;
+  previous_conversation_id: number | string | null;
+  previous_created_at: string | null;
+  confidence: string | null;
+  reason: string | null;
+};
+
 type RequestItem = {
   id: number | string;
   created_at: string | null;
@@ -56,6 +66,7 @@ type RequestItem = {
   handoff_status: string;
   handoff_error: string | null;
   operational: OperationalMetadata;
+  conversation_memory: ConversationMemory | null;
 };
 
 const ACTION_LABELS: Record<string, string> = {
@@ -147,6 +158,37 @@ function readStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
 
   return value.filter((item): item is string => typeof item === "string");
+}
+
+function getConversationMemory(
+  metadata: Record<string, unknown> | null,
+): ConversationMemory | null {
+  if (!metadata) return null;
+
+  const raw = metadata.conversation_memory;
+
+  if (!isRecord(raw)) return null;
+
+  const isFollowUp = readBoolean(raw.is_follow_up);
+
+  if (!isFollowUp) return null;
+
+  const previousConversationId = raw.previous_conversation_id;
+  const safePreviousConversationId =
+    typeof previousConversationId === "number" ||
+    typeof previousConversationId === "string"
+      ? previousConversationId
+      : null;
+
+  return {
+    is_follow_up: true,
+    previous_intent: readNullableString(raw.previous_intent),
+    previous_message: readNullableString(raw.previous_message),
+    previous_conversation_id: safePreviousConversationId,
+    previous_created_at: readNullableString(raw.previous_created_at),
+    confidence: readNullableString(raw.confidence),
+    reason: readNullableString(raw.reason),
+  };
 }
 
 function getOperationalMetadata(
@@ -404,6 +446,7 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
       const metadata = row.metadata ?? {};
       const telefonoMetadata = readString(metadata.telefono);
       const handoffStatus = readString(metadata.handoff_status) || "non_aggiornato";
+      const conversationMemory = getConversationMemory(row.metadata);
 
       return {
         id: row.id,
@@ -417,6 +460,7 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
         handoff_status: handoffStatus,
         handoff_error: readNullableString(metadata.handoff_error),
         operational,
+        conversation_memory: conversationMemory,
       };
     })
     .filter(isRequestItem);
@@ -442,6 +486,8 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
       row.telefono,
       row.messaggio_utente,
       row.intent,
+      row.conversation_memory?.previous_intent,
+      row.conversation_memory?.previous_message,
       row.operational.negozio_label,
       row.operational.azione_richiesta,
     ]
@@ -784,7 +830,40 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
                       </td>
 
                       <td className="max-w-md px-5 py-4 text-slate-600">
-                        {truncateText(row.messaggio_utente, 180)}
+                        <div className="font-semibold text-slate-800">
+                          {truncateText(row.messaggio_utente, 180)}
+                        </div>
+
+                        {row.conversation_memory ? (
+                          <div className="mt-3 rounded-2xl border border-blue-200 bg-blue-50 px-3 py-3 text-xs leading-relaxed text-blue-800">
+                            <div className="font-black uppercase tracking-[0.14em] text-blue-700">
+                              Collegata a richiesta precedente
+                            </div>
+
+                            <div className="mt-2">
+                              <span className="font-black">Tipo:</span>{" "}
+                              {row.conversation_memory.previous_intent
+                                ? getIntentLabel(row.conversation_memory.previous_intent)
+                                : "—"}
+                            </div>
+
+                            {row.conversation_memory.previous_message ? (
+                              <div className="mt-1">
+                                <span className="font-black">Prima richiesta:</span>{" "}
+                                {truncateText(
+                                  row.conversation_memory.previous_message,
+                                  130,
+                                )}
+                              </div>
+                            ) : null}
+
+                            {row.conversation_memory.reason ? (
+                              <div className="mt-1 text-blue-700">
+                                {row.conversation_memory.reason}
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
                       </td>
 
                       <td className="px-5 py-4">
