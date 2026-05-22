@@ -319,10 +319,38 @@ function isRequestItem(value: RequestItem | null): value is RequestItem {
   return value !== null;
 }
 
+function buildRequestGroupKey(row: RequestItem): string {
+  return [
+    row.cliente_id,
+    row.intent,
+    row.operational.azione_richiesta,
+  ].join(":");
+}
+
+function getLatestOperationalRequests(rows: RequestItem[]): RequestItem[] {
+  const uniqueRows = new Map<string, RequestItem>();
+
+  for (const row of rows) {
+    if (row.handoff_status === "skipped_duplicate") {
+      continue;
+    }
+
+    const key = buildRequestGroupKey(row);
+
+    if (!uniqueRows.has(key)) {
+      uniqueRows.set(key, row);
+    }
+  }
+
+  return Array.from(uniqueRows.values());
+}
+
 export default async function PhonesiaRichiestePage({ searchParams }: Props) {
   const resolvedParams = searchParams ? await searchParams : {};
 
   const q = getSingleValue(resolvedParams.q);
+  const vistaParam = getSingleValue(resolvedParams.vista);
+  const vista = vistaParam === "storico" ? "storico" : "operative";
   const stato = getSingleValue(resolvedParams.stato) || "da_gestire";
   const priorita = getSingleValue(resolvedParams.priorita) || "tutte";
   const negozio = getSingleValue(resolvedParams.negozio) || "tutti";
@@ -398,8 +426,14 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
     .filter(isRequestItem);
 
   const query = normalizeSearch(q);
+  const richiestePulite = getLatestOperationalRequests(richieste);
+  const richiesteBase = vista === "storico" ? richieste : richiestePulite;
+  const richiesteNascosteVistaPulita = Math.max(
+    0,
+    richieste.length - richiestePulite.length,
+  );
 
-  const richiesteFiltrate = richieste.filter((row) => {
+  const richiesteFiltrate = richiesteBase.filter((row) => {
     const matchesStato =
       stato === "tutte" || row.operational.stato_operativo === stato;
     const matchesPriorita =
@@ -424,22 +458,22 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
     return matchesStato && matchesPriorita && matchesNegozio && matchesSearch;
   });
 
-  const daGestire = richieste.filter(
+  const daGestire = richiesteBase.filter(
     (row) => row.operational.stato_operativo === "da_gestire",
   ).length;
-  const altaPriorita = richieste.filter(
+  const altaPriorita = richiesteBase.filter(
     (row) => row.operational.priorita === "alta",
   ).length;
   const duplicatiBloccati = richieste.filter(
     (row) => row.handoff_status === "skipped_duplicate",
   ).length;
   const scoreMedio =
-    richieste.length > 0
+    richiesteBase.length > 0
       ? Math.round(
-          richieste.reduce(
+          richiesteBase.reduce(
             (sum, row) => sum + row.operational.opportunity_score,
             0,
-          ) / richieste.length,
+          ) / richiesteBase.length,
         )
       : 0;
 
@@ -495,8 +529,8 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
         <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           <StatCard
             label="Richieste operative"
-            value={richieste.length}
-            note="Totale lette dall’agent"
+            value={richiesteBase.length}
+            note={vista === "storico" ? "Storico completo" : "Vista pulita"}
           />
           <StatCard
             label="Da gestire"
@@ -523,13 +557,22 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
         </section>
 
         <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm md:p-6">
-          <form className="grid gap-3 md:grid-cols-[1.5fr_1fr_1fr_1fr_auto]">
+          <form className="grid gap-3 md:grid-cols-[1.5fr_1fr_1fr_1fr_1fr_auto]">
             <input
               name="q"
               defaultValue={q}
               placeholder="Cerca cliente, telefono, messaggio..."
               className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 outline-none transition focus:border-orange-500"
             />
+
+            <select
+              name="vista"
+              defaultValue={vista}
+              className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 outline-none transition focus:border-orange-500"
+            >
+              <option value="operative">Vista pulita</option>
+              <option value="storico">Storico completo</option>
+            </select>
 
             <select
               name="stato"
@@ -621,6 +664,15 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
             <h2 className="text-xl font-black tracking-tight text-slate-950">
               Richieste trovate: {richiesteFiltrate.length}
             </h2>
+
+            <p className="mt-2 max-w-4xl text-sm leading-relaxed text-slate-600">
+              {vista === "storico"
+                ? "Stai vedendo lo storico completo delle conversazioni operative, inclusi duplicati tecnici e richieste ripetute."
+                : "Vista pulita: mostra solo l’ultima richiesta aperta per cliente e tipo richiesta, nascondendo duplicati tecnici."}
+              {vista !== "storico" && richiesteNascosteVistaPulita > 0
+                ? ` Elementi nascosti nella vista pulita: ${richiesteNascosteVistaPulita}.`
+                : ""}
+            </p>
           </div>
 
           {richiesteFiltrate.length === 0 ? (
