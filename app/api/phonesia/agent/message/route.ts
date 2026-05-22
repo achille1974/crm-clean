@@ -115,6 +115,8 @@ type AgentOperationalMetadata = {
   azione_richiesta: OperationalAction;
   priorita: OperationalPriority;
   stato_operativo: OperationalStatus;
+  opportunity_score: number;
+  opportunity_score_reason: string[];
 };
 
 const NEGOZI: Record<
@@ -852,6 +854,105 @@ function getOperationalPriority(
   return "normale";
 }
 
+function clampScore(value: number): number {
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function hasActiveFamily(context: AgentContext, family: string): boolean {
+  return getActiveServiceFamilies(context.servizi).includes(family);
+}
+
+function calculateOpportunityScore(
+  intent: Intent,
+  context: AgentContext,
+  handoffRichiesto: boolean,
+): {
+  score: number;
+  reasons: string[];
+} {
+  let score = 0;
+  const reasons: string[] = [];
+
+  if (context.cliente) {
+    score += 20;
+    reasons.push("Cliente riconosciuto");
+  } else {
+    reasons.push("Cliente non ancora riconosciuto");
+  }
+
+  if (context.marketingConsent) {
+    score += 15;
+    reasons.push("Consenso marketing presente");
+  }
+
+  if (handoffRichiesto) {
+    score += 10;
+    reasons.push("Richiesta da gestire dal negozio");
+  }
+
+  if (intent === "smartphone") {
+    score += 30;
+    reasons.push("Richiesta commerciale smartphone");
+
+    if (!hasActiveFamily(context, "SMARTPHONE")) {
+      score += 15;
+      reasons.push("Nessun servizio smartphone attivo rilevato");
+    }
+  } else if (intent === "energia") {
+    score += 30;
+    reasons.push("Richiesta commerciale energia");
+
+    if (!hasActiveFamily(context, "ENERGIA")) {
+      score += 15;
+      reasons.push("Nessun servizio energia attivo rilevato");
+    }
+  } else if (intent === "fibra") {
+    score += 30;
+    reasons.push("Richiesta commerciale fibra/internet casa");
+
+    if (!hasActiveFamily(context, "FISSO")) {
+      score += 15;
+      reasons.push("Nessun servizio fisso attivo rilevato");
+    }
+  } else if (intent === "offerte_generiche") {
+    score += 25;
+    reasons.push("Richiesta commerciale generica");
+  } else if (intent === "ricontatto") {
+    score += 20;
+    reasons.push("Cliente chiede ricontatto");
+  } else if (intent === "assistenza") {
+    score += 10;
+    reasons.push("Richiesta di assistenza: priorità operativa, non commerciale");
+  } else if (intent === "saluto") {
+    score += 5;
+    reasons.push("Messaggio informativo senza richiesta operativa");
+  }
+
+  if (context.contratti.length === 0 && context.cliente) {
+    score += 10;
+    reasons.push("Nessun contratto recente collegato alla scheda");
+  }
+
+  if (hasNegativeFeedback(context)) {
+    score = Math.min(score, 45);
+    reasons.push("Feedback basso: prima recupero cliente, poi vendita");
+  }
+
+  if (wantsCallback(context)) {
+    score += 10;
+    reasons.push("Feedback o storico indica richiesta di ricontatto");
+  }
+
+  if (!handoffRichiesto) {
+    score = Math.min(score, 20);
+  }
+
+  return {
+    score: clampScore(score),
+    reasons,
+  };
+}
+
 function buildOperationalMetadata(
   intent: Intent,
   context: AgentContext,
@@ -859,6 +960,12 @@ function buildOperationalMetadata(
 ): AgentOperationalMetadata {
   const negozioId =
     context.cliente?.negozio_id ?? context.contratti[0]?.negozio_id ?? null;
+
+  const opportunityScore = calculateOpportunityScore(
+    intent,
+    context,
+    handoffRichiesto,
+  );
 
   return {
     cliente_riconosciuto: Boolean(context.cliente),
@@ -868,6 +975,8 @@ function buildOperationalMetadata(
     azione_richiesta: getOperationalAction(intent, handoffRichiesto),
     priorita: getOperationalPriority(intent, context, handoffRichiesto),
     stato_operativo: handoffRichiesto ? "da_gestire" : "informativo",
+    opportunity_score: opportunityScore.score,
+    opportunity_score_reason: opportunityScore.reasons,
   };
 }
 

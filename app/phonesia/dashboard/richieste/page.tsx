@@ -40,6 +40,8 @@ type OperationalMetadata = {
   azione_richiesta: string;
   priorita: string;
   stato_operativo: string;
+  opportunity_score: number;
+  opportunity_score_reason: string[];
 };
 
 type RequestItem = {
@@ -126,6 +128,27 @@ function readBoolean(value: unknown): boolean {
   return value === true;
 }
 
+function readNumber(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.max(0, Math.min(100, Math.round(value)));
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return Math.max(0, Math.min(100, Math.round(parsed)));
+    }
+  }
+
+  return 0;
+}
+
+function readStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.filter((item): item is string => typeof item === "string");
+}
+
 function getOperationalMetadata(
   metadata: Record<string, unknown> | null,
 ): OperationalMetadata | null {
@@ -148,6 +171,8 @@ function getOperationalMetadata(
     azione_richiesta: azioneRichiesta,
     priorita,
     stato_operativo: statoOperativo,
+    opportunity_score: readNumber(raw.opportunity_score),
+    opportunity_score_reason: readStringArray(raw.opportunity_score_reason),
   };
 }
 
@@ -242,6 +267,29 @@ function handoffClass(status: string) {
   }
 
   return "border-slate-200 bg-slate-50 text-slate-600";
+}
+
+function scoreClass(score: number) {
+  if (score >= 75) {
+    return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  }
+
+  if (score >= 50) {
+    return "border-orange-200 bg-orange-50 text-orange-700";
+  }
+
+  if (score >= 25) {
+    return "border-amber-200 bg-amber-50 text-amber-700";
+  }
+
+  return "border-slate-200 bg-slate-50 text-slate-600";
+}
+
+function scoreLabel(score: number) {
+  if (score >= 75) return "Alta";
+  if (score >= 50) return "Buona";
+  if (score >= 25) return "Media";
+  return "Bassa";
 }
 
 function isRequestItem(value: RequestItem | null): value is RequestItem {
@@ -362,6 +410,15 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
   const duplicatiBloccati = richieste.filter(
     (row) => row.handoff_status === "skipped_duplicate",
   ).length;
+  const scoreMedio =
+    richieste.length > 0
+      ? Math.round(
+          richieste.reduce(
+            (sum, row) => sum + row.operational.opportunity_score,
+            0,
+          ) / richieste.length,
+        )
+      : 0;
 
   const negoziOptions = Array.from(
     new Map(
@@ -434,6 +491,11 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
             label="Duplicati bloccati"
             value={duplicatiBloccati}
             note="Notifiche negozio evitate"
+          />
+          <StatCard
+            label="Score medio"
+            value={scoreMedio}
+            note="Potenziale medio richieste"
           />
         </section>
 
@@ -513,6 +575,7 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
                     <th className="px-5 py-4 font-black">Negozio</th>
                     <th className="px-5 py-4 font-black">Intent</th>
                     <th className="px-5 py-4 font-black">Priorità</th>
+                    <th className="px-5 py-4 font-black">Score</th>
                     <th className="px-5 py-4 font-black">Azione</th>
                     <th className="px-5 py-4 font-black">Messaggio</th>
                     <th className="px-5 py-4 font-black">Handoff</th>
@@ -555,6 +618,27 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
                         >
                           {row.operational.priorita}
                         </span>
+                      </td>
+
+                      <td className="px-5 py-4">
+                        <div
+                          className={[
+                            "inline-flex rounded-full border px-3 py-1 text-xs font-black",
+                            scoreClass(row.operational.opportunity_score),
+                          ].join(" ")}
+                          title={row.operational.opportunity_score_reason.join(" · ")}
+                        >
+                          {row.operational.opportunity_score}/100 ·{" "}
+                          {scoreLabel(row.operational.opportunity_score)}
+                        </div>
+
+                        {row.operational.opportunity_score_reason.length > 0 ? (
+                          <div className="mt-2 max-w-[220px] text-xs leading-relaxed text-slate-500">
+                            {row.operational.opportunity_score_reason
+                              .slice(0, 2)
+                              .join(" · ")}
+                          </div>
+                        ) : null}
                       </td>
 
                       <td className="px-5 py-4">
