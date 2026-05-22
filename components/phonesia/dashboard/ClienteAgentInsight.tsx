@@ -1,3 +1,5 @@
+import CopySuggestedMessageButton from "@/components/phonesia/dashboard/CopySuggestedMessageButton";
+
 type InsightPriority = "alta" | "buona" | "media" | "bassa";
 
 type Props = {
@@ -290,12 +292,18 @@ export default function ClienteAgentInsight({
       </div>
 
       <div className="mt-4 rounded-3xl border border-orange-200 bg-orange-50 p-5">
-        <h3 className="text-sm font-black uppercase tracking-[0.18em] text-orange-700">
-          Messaggio suggerito
-        </h3>
-        <p className="mt-3 text-sm font-semibold leading-relaxed text-slate-800">
-          {suggestedMessage}
-        </p>
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <h3 className="text-sm font-black uppercase tracking-[0.18em] text-orange-700">
+              Messaggio suggerito
+            </h3>
+            <p className="mt-3 text-sm font-semibold leading-relaxed text-slate-800">
+              {suggestedMessage}
+            </p>
+          </div>
+
+          <CopySuggestedMessageButton text={suggestedMessage} />
+        </div>
       </div>
     </section>
   );
