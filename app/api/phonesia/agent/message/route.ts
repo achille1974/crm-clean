@@ -874,24 +874,24 @@ function calculateOpportunityScore(
   const reasons: string[] = [];
 
   if (context.cliente) {
-    score += 20;
+    score += 15;
     reasons.push("Cliente riconosciuto");
   } else {
     reasons.push("Cliente non ancora riconosciuto");
   }
 
   if (context.marketingConsent) {
-    score += 15;
+    score += 10;
     reasons.push("Consenso marketing presente");
   }
 
   if (handoffRichiesto) {
-    score += 10;
+    score += 5;
     reasons.push("Richiesta da gestire dal negozio");
   }
 
   if (intent === "smartphone") {
-    score += 30;
+    score += 25;
     reasons.push("Richiesta commerciale smartphone");
 
     if (!hasActiveFamily(context, "SMARTPHONE")) {
@@ -899,7 +899,7 @@ function calculateOpportunityScore(
       reasons.push("Nessun servizio smartphone attivo rilevato");
     }
   } else if (intent === "energia") {
-    score += 30;
+    score += 25;
     reasons.push("Richiesta commerciale energia");
 
     if (!hasActiveFamily(context, "ENERGIA")) {
@@ -907,7 +907,7 @@ function calculateOpportunityScore(
       reasons.push("Nessun servizio energia attivo rilevato");
     }
   } else if (intent === "fibra") {
-    score += 30;
+    score += 25;
     reasons.push("Richiesta commerciale fibra/internet casa");
 
     if (!hasActiveFamily(context, "FISSO")) {
@@ -915,7 +915,7 @@ function calculateOpportunityScore(
       reasons.push("Nessun servizio fisso attivo rilevato");
     }
   } else if (intent === "offerte_generiche") {
-    score += 25;
+    score += 20;
     reasons.push("Richiesta commerciale generica");
   } else if (intent === "ricontatto") {
     score += 20;
@@ -929,7 +929,7 @@ function calculateOpportunityScore(
   }
 
   if (context.contratti.length === 0 && context.cliente) {
-    score += 10;
+    score += 5;
     reasons.push("Nessun contratto recente collegato alla scheda");
   }
 
