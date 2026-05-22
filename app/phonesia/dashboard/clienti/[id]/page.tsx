@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 
 import ClienteOpportunityPanel from "@/components/phonesia/dashboard/ClienteOpportunityPanel";
+import ClienteAgentInsight from "@/components/phonesia/dashboard/ClienteAgentInsight";
 
 export const dynamic = "force-dynamic";
 
@@ -458,6 +459,18 @@ export default async function DashboardClienteOpportunitaPage({
             </div>
           </div>
         </section>
+
+        <ClienteAgentInsight
+          clienteNome={[cliente.nome, cliente.cognome].filter(Boolean).join(" ") || "Cliente"}
+          activeServices={[...activeFamilies]}
+          operatore={operatore}
+          contactStoreLabel={contactStoreLabel}
+          marketingConsented={marketingConsented}
+          whatsappActive={cliente.whatsapp_active === true}
+          contrattiCount={contratti.length}
+          opportunitaInviateCount={opportunitaInviate.length}
+          ultimaOpportunita={ultimaOpportunita}
+        />
 
         <ClienteOpportunityPanel
           clienteId={cliente.id}
