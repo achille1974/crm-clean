@@ -119,6 +119,27 @@ type AgentOperationalMetadata = {
   opportunity_score_reason: string[];
 };
 
+type ConversationMemoryConfidence = "none" | "probabile" | "alta";
+
+type ConversationMemory = {
+  is_follow_up: boolean;
+  previous_intent: Intent | null;
+  previous_message: string | null;
+  previous_conversation_id: number | string | null;
+  previous_created_at: string | null;
+  confidence: ConversationMemoryConfidence;
+  reason: string | null;
+};
+
+type ConversationMemoryRow = {
+  id: number | string;
+  created_at: string | null;
+  messaggio_utente: string | null;
+  intent: string | null;
+  handoff_richiesto: boolean | null;
+  metadata: Record<string, unknown> | null;
+};
+
 const NEGOZI: Record<
   number,
   {
@@ -294,7 +315,7 @@ function detectIntent(message: string): Intent {
   }
 
   if (
-    /richiam|ricontatt|mi potete chiamare|mi potete contattare|potete chiamarmi|potete contattarmi|vorrei essere chiamato|vorrei essere contattato|chiamarmi|contattarmi|parlare con qualcuno|operatore|persona/i.test(
+    /richiam|ricontatt|mi potete chiamare|mi potete contattare|potete chiamarmi|potete contattarmi|vorrei essere chiamato|vorrei essere contattato|chiamarmi|contattarmi|chiamatemi|contattatemi|parlare con qualcuno|operatore|persona/i.test(
       text,
     )
   ) {
@@ -318,6 +339,129 @@ function detectIntent(message: string): Intent {
   }
 
   return "altro";
+}
+
+function emptyConversationMemory(): ConversationMemory {
+  return {
+    is_follow_up: false,
+    previous_intent: null,
+    previous_message: null,
+    previous_conversation_id: null,
+    previous_created_at: null,
+    confidence: "none",
+    reason: null,
+  };
+}
+
+function isKnownIntent(value: string | null | undefined): value is Intent {
+  return (
+    value === "smartphone" ||
+    value === "fibra" ||
+    value === "energia" ||
+    value === "assistenza" ||
+    value === "ricontatto" ||
+    value === "offerte_generiche" ||
+    value === "saluto" ||
+    value === "altro"
+  );
+}
+
+function isPotentialFollowUpMessage(message: string, detectedIntent: Intent): boolean {
+  const text = String(message ?? "").trim().toLowerCase();
+
+  if (!text) return false;
+
+  if (detectedIntent === "ricontatto") return true;
+
+  if (detectedIntent !== "altro") return false;
+
+  return /^(s[iì]|ok|okay|va bene|perfetto|certo|mi interessa|sono interessato|procediamo|chiamatemi|contattatemi|richiamatemi)[.!?\s]*$/i.test(
+    text,
+  );
+}
+
+function isUsefulPreviousIntent(intent: Intent): boolean {
+  return (
+    intent === "smartphone" ||
+    intent === "energia" ||
+    intent === "fibra" ||
+    intent === "assistenza" ||
+    intent === "offerte_generiche"
+  );
+}
+
+async function findConversationMemory(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  clienteId: number | null | undefined,
+  message: string,
+  detectedIntent: Intent,
+): Promise<ConversationMemory> {
+  if (!clienteId) return emptyConversationMemory();
+
+  if (!isPotentialFollowUpMessage(message, detectedIntent)) {
+    return emptyConversationMemory();
+  }
+
+  const cutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+
+  const { data, error } = await supabase
+    .from("phonesia_conversazioni")
+    .select("id, created_at, messaggio_utente, intent, handoff_richiesto, metadata")
+    .eq("cliente_id", clienteId)
+    .eq("canale", "whatsapp")
+    .gte("created_at", cutoff)
+    .order("created_at", { ascending: false })
+    .limit(8);
+
+  if (error) {
+    throw error;
+  }
+
+  const rows = (data ?? []) as ConversationMemoryRow[];
+
+  const previous = rows.find((row) => {
+    const previousIntentRaw = String(row.intent ?? "").trim().toLowerCase();
+
+    if (!isKnownIntent(previousIntentRaw)) return false;
+    if (!isUsefulPreviousIntent(previousIntentRaw)) return false;
+
+    return row.handoff_richiesto === true;
+  });
+
+  if (!previous) {
+    return emptyConversationMemory();
+  }
+
+  const previousIntentRaw = String(previous.intent ?? "").trim().toLowerCase();
+  const previousIntent = isKnownIntent(previousIntentRaw) ? previousIntentRaw : null;
+
+  return {
+    is_follow_up: true,
+    previous_intent: previousIntent,
+    previous_message: previous.messaggio_utente,
+    previous_conversation_id: previous.id,
+    previous_created_at: previous.created_at,
+    confidence: detectedIntent === "ricontatto" ? "alta" : "probabile",
+    reason:
+      detectedIntent === "ricontatto"
+        ? "Il cliente chiede ricontatto dopo una richiesta recente."
+        : "Messaggio breve collegato a una richiesta recente.",
+  };
+}
+
+function resolveIntentWithMemory(
+  detectedIntent: Intent,
+  conversationMemory: ConversationMemory,
+): Intent {
+  if (!conversationMemory.is_follow_up) {
+    return detectedIntent;
+  }
+
+  if (detectedIntent === "altro") {
+    return "ricontatto";
+  }
+
+  return detectedIntent;
 }
 
 function hasNegativeFeedback(context: AgentContext): boolean {
@@ -993,6 +1137,7 @@ async function logAgentConversation(
     marketingConsent: boolean;
     source: string;
     operationalMetadata: AgentOperationalMetadata;
+    conversationMemory: ConversationMemory;
   },
 ) {
   if (!params.clienteId) return;
@@ -1014,6 +1159,7 @@ async function logAgentConversation(
         marketing_consent: params.marketingConsent,
         source: params.source,
         agent_operational: params.operationalMetadata,
+        conversation_memory: params.conversationMemory,
       },
     });
   } catch (error) {
@@ -1054,7 +1200,7 @@ export async function POST(request: NextRequest) {
     const telefono = normalizePhone(body.telefono);
     const codiceFiscale = normalizeCf(body.codice_fiscale);
     const email = normalizeEmail(body.email);
-    const intent = detectIntent(message);
+    const detectedIntent = detectIntent(message);
 
     const supabase = getSupabaseAdmin();
 
@@ -1082,6 +1228,15 @@ export async function POST(request: NextRequest) {
       ultimoFeedback,
       marketingConsent,
     };
+
+    const conversationMemory = await findConversationMemory(
+      supabase,
+      cliente?.id ?? null,
+      message,
+      detectedIntent,
+    );
+
+    const intent = resolveIntentWithMemory(detectedIntent, conversationMemory);
 
     const deterministic = buildSafeCommercialReply(message, intent, context);
 
@@ -1117,6 +1272,7 @@ export async function POST(request: NextRequest) {
       marketingConsent,
       source: "api_agent_message",
       operationalMetadata,
+      conversationMemory,
     });
 
     return NextResponse.json({
@@ -1147,6 +1303,8 @@ export async function POST(request: NextRequest) {
           }
         : null,
       marketing_consent: marketingConsent,
+      detected_intent: detectedIntent,
+      conversation_memory: conversationMemory,
     });
   } catch (error) {
     console.error("phonesia agent route error:", error);
