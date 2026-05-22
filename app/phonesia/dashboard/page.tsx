@@ -11,6 +11,13 @@ const CARDS = [
       "Vista compatta con matrice servizi e accesso rapido alla scheda opportunità del cliente.",
   },
   {
+    href: "/phonesia/dashboard/richieste",
+    badge: "AI Agent",
+    title: "Richieste clienti da gestire",
+    description:
+      "Elenco operativo delle richieste generate dall’agent WhatsApp: ricontatti, assistenza, offerte e handoff negozio.",
+  },
+  {
     href: "/phonesia/dashboard/feedback",
     badge: "Soddisfazione",
     title: "Feedback clienti",

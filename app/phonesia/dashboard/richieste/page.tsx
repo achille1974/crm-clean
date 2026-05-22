@@ -1,0 +1,625 @@
+import Link from "next/link";
+import { createClient } from "@supabase/supabase-js";
+
+export const dynamic = "force-dynamic";
+
+type SearchParamsInput =
+  | Promise<Record<string, string | string[] | undefined>>
+  | Record<string, string | string[] | undefined>;
+
+type Props = {
+  searchParams?: SearchParamsInput;
+};
+
+type ConversationRow = {
+  id: number | string;
+  created_at: string | null;
+  cliente_id: number | null;
+  messaggio_utente: string | null;
+  intent: string | null;
+  handoff_richiesto: boolean | null;
+  metadata: Record<string, unknown> | null;
+};
+
+type ClienteRow = {
+  id: number;
+  nome: string | null;
+  cognome: string | null;
+  telefono: string | null;
+  email: string | null;
+  negozio_id: number | null;
+  whatsapp_active: boolean | null;
+};
+
+type OperationalMetadata = {
+  cliente_riconosciuto: boolean;
+  negozio_id: number | null;
+  negozio_label: string | null;
+  motivo_handoff: string | null;
+  azione_richiesta: string;
+  priorita: string;
+  stato_operativo: string;
+};
+
+type RequestItem = {
+  id: number | string;
+  created_at: string | null;
+  cliente_id: number;
+  cliente_nome: string;
+  telefono: string;
+  messaggio_utente: string;
+  intent: string;
+  handoff_richiesto: boolean;
+  handoff_status: string;
+  handoff_error: string | null;
+  operational: OperationalMetadata;
+};
+
+const ACTION_LABELS: Record<string, string> = {
+  nessuna_azione: "Nessuna azione",
+  verificare_offerta_smartphone: "Verificare offerta smartphone",
+  verificare_offerta_energia_con_bolletta: "Verificare energia con bolletta",
+  verificare_copertura_fibra: "Verificare copertura fibra",
+  gestire_assistenza_cliente: "Gestire assistenza cliente",
+  richiamare_cliente: "Richiamare cliente",
+  verificare_offerta_adatta: "Verificare offerta adatta",
+  verificare_richiesta_cliente: "Verificare richiesta cliente",
+};
+
+const INTENT_LABELS: Record<string, string> = {
+  smartphone: "Smartphone",
+  fibra: "Fibra",
+  energia: "Energia",
+  assistenza: "Assistenza",
+  ricontatto: "Ricontatto",
+  offerte_generiche: "Offerte",
+  saluto: "Saluto",
+  altro: "Altro",
+};
+
+function getSupabaseAdmin() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!supabaseUrl || !serviceRoleKey) {
+    throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+  }
+
+  return createClient(supabaseUrl, serviceRoleKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  });
+}
+
+function getSingleValue(value: string | string[] | undefined): string {
+  if (Array.isArray(value)) return value[0] ?? "";
+  return value ?? "";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function readNullableString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function readNullableNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+}
+
+function readBoolean(value: unknown): boolean {
+  return value === true;
+}
+
+function getOperationalMetadata(
+  metadata: Record<string, unknown> | null,
+): OperationalMetadata | null {
+  if (!metadata) return null;
+
+  const raw = metadata.agent_operational;
+
+  if (!isRecord(raw)) return null;
+
+  const statoOperativo = readString(raw.stato_operativo) || "da_gestire";
+  const azioneRichiesta =
+    readString(raw.azione_richiesta) || "verificare_richiesta_cliente";
+  const priorita = readString(raw.priorita) || "normale";
+
+  return {
+    cliente_riconosciuto: readBoolean(raw.cliente_riconosciuto),
+    negozio_id: readNullableNumber(raw.negozio_id),
+    negozio_label: readNullableString(raw.negozio_label),
+    motivo_handoff: readNullableString(raw.motivo_handoff),
+    azione_richiesta: azioneRichiesta,
+    priorita,
+    stato_operativo: statoOperativo,
+  };
+}
+
+function formatDate(value: string | null) {
+  if (!value) return "-";
+
+  try {
+    return new Intl.DateTimeFormat("it-IT", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(value));
+  } catch {
+    return value;
+  }
+}
+
+function fullName(cliente: ClienteRow | undefined): string {
+  const name = [cliente?.nome, cliente?.cognome].filter(Boolean).join(" ").trim();
+  return name || "Cliente";
+}
+
+function normalizeSearch(value: string): string {
+  return value.toLowerCase().trim();
+}
+
+function truncateText(value: string, maxLength: number) {
+  const text = value.trim();
+
+  if (text.length <= maxLength) return text;
+
+  return `${text.slice(0, maxLength - 1)}…`;
+}
+
+function getActionLabel(action: string) {
+  return ACTION_LABELS[action] ?? action.replaceAll("_", " ");
+}
+
+function getIntentLabel(intent: string) {
+  return INTENT_LABELS[intent] ?? intent;
+}
+
+function priorityClass(priority: string) {
+  if (priority === "alta") {
+    return "border-red-200 bg-red-50 text-red-700";
+  }
+
+  return "border-slate-200 bg-slate-50 text-slate-700";
+}
+
+function statusClass(status: string) {
+  if (status === "da_gestire") {
+    return "border-amber-200 bg-amber-50 text-amber-700";
+  }
+
+  if (status === "informativo") {
+    return "border-slate-200 bg-slate-50 text-slate-600";
+  }
+
+  return "border-blue-200 bg-blue-50 text-blue-700";
+}
+
+function handoffClass(status: string) {
+  if (status === "sent_template") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  }
+
+  if (status === "skipped_duplicate") {
+    return "border-blue-200 bg-blue-50 text-blue-700";
+  }
+
+  if (status === "failed_template") {
+    return "border-red-200 bg-red-50 text-red-700";
+  }
+
+  return "border-slate-200 bg-slate-50 text-slate-600";
+}
+
+function isRequestItem(value: RequestItem | null): value is RequestItem {
+  return value !== null;
+}
+
+export default async function PhonesiaRichiestePage({ searchParams }: Props) {
+  const resolvedParams = searchParams ? await searchParams : {};
+
+  const q = getSingleValue(resolvedParams.q);
+  const stato = getSingleValue(resolvedParams.stato) || "da_gestire";
+  const priorita = getSingleValue(resolvedParams.priorita) || "tutte";
+  const negozio = getSingleValue(resolvedParams.negozio) || "tutti";
+
+  const supabase = getSupabaseAdmin();
+
+  const { data: conversazioniData, error: conversazioniError } = await supabase
+    .from("phonesia_conversazioni")
+    .select(
+      "id, created_at, cliente_id, messaggio_utente, intent, handoff_richiesto, metadata",
+    )
+    .eq("canale", "whatsapp")
+    .eq("handoff_richiesto", true)
+    .order("created_at", { ascending: false })
+    .limit(300);
+
+  if (conversazioniError) {
+    throw new Error(`Errore lettura richieste agent: ${conversazioniError.message}`);
+  }
+
+  const conversazioni = (conversazioniData ?? []) as ConversationRow[];
+  const clienteIds = Array.from(
+    new Set(
+      conversazioni
+        .map((row) => row.cliente_id)
+        .filter((id): id is number => typeof id === "number"),
+    ),
+  );
+
+  const clientiById = new Map<number, ClienteRow>();
+
+  if (clienteIds.length > 0) {
+    const { data: clientiData, error: clientiError } = await supabase
+      .from("phonesia_clienti")
+      .select("id, nome, cognome, telefono, email, negozio_id, whatsapp_active")
+      .in("id", clienteIds);
+
+    if (clientiError) {
+      throw new Error(`Errore lettura clienti richieste: ${clientiError.message}`);
+    }
+
+    ((clientiData ?? []) as ClienteRow[]).forEach((cliente) => {
+      clientiById.set(cliente.id, cliente);
+    });
+  }
+
+  const richieste = conversazioni
+    .map((row): RequestItem | null => {
+      if (!row.cliente_id) return null;
+
+      const operational = getOperationalMetadata(row.metadata);
+      if (!operational) return null;
+
+      const cliente = clientiById.get(row.cliente_id);
+      const metadata = row.metadata ?? {};
+      const telefonoMetadata = readString(metadata.telefono);
+      const handoffStatus = readString(metadata.handoff_status) || "non_aggiornato";
+
+      return {
+        id: row.id,
+        created_at: row.created_at,
+        cliente_id: row.cliente_id,
+        cliente_nome: fullName(cliente),
+        telefono: cliente?.telefono || telefonoMetadata || "—",
+        messaggio_utente: row.messaggio_utente || "",
+        intent: row.intent || operational.motivo_handoff || "altro",
+        handoff_richiesto: row.handoff_richiesto === true,
+        handoff_status: handoffStatus,
+        handoff_error: readNullableString(metadata.handoff_error),
+        operational,
+      };
+    })
+    .filter(isRequestItem);
+
+  const query = normalizeSearch(q);
+
+  const richiesteFiltrate = richieste.filter((row) => {
+    const matchesStato =
+      stato === "tutte" || row.operational.stato_operativo === stato;
+    const matchesPriorita =
+      priorita === "tutte" || row.operational.priorita === priorita;
+    const matchesNegozio =
+      negozio === "tutti" || String(row.operational.negozio_id ?? "") === negozio;
+
+    const searchBlob = [
+      row.cliente_nome,
+      row.telefono,
+      row.messaggio_utente,
+      row.intent,
+      row.operational.negozio_label,
+      row.operational.azione_richiesta,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+
+    const matchesSearch = !query || searchBlob.includes(query);
+
+    return matchesStato && matchesPriorita && matchesNegozio && matchesSearch;
+  });
+
+  const daGestire = richieste.filter(
+    (row) => row.operational.stato_operativo === "da_gestire",
+  ).length;
+  const altaPriorita = richieste.filter(
+    (row) => row.operational.priorita === "alta",
+  ).length;
+  const duplicatiBloccati = richieste.filter(
+    (row) => row.handoff_status === "skipped_duplicate",
+  ).length;
+
+  const negoziOptions = Array.from(
+    new Map(
+      richieste
+        .filter((row) => row.operational.negozio_id && row.operational.negozio_label)
+        .map((row) => [
+          String(row.operational.negozio_id),
+          row.operational.negozio_label || "Negozio",
+        ]),
+    ).entries(),
+  ).sort((a, b) => a[1].localeCompare(b[1]));
+
+  return (
+    <main className="min-h-screen bg-slate-50 px-4 py-6 text-slate-900 md:px-8">
+      <div className="mx-auto max-w-[1700px] space-y-6">
+        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm md:p-8">
+          <div className="mb-3 inline-flex rounded-full border border-orange-200 bg-orange-50 px-4 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-orange-700">
+            AI Agent
+          </div>
+
+          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+            <div>
+              <h1 className="text-3xl font-black tracking-tight text-slate-950 md:text-5xl">
+                Richieste clienti da gestire
+              </h1>
+
+              <p className="mt-3 max-w-3xl text-sm leading-relaxed text-slate-600 md:text-base">
+                Elenco delle richieste create dall’agent WhatsApp: offerte,
+                assistenza, ricontatti e azioni operative per i negozi.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <Link
+                href="/phonesia/dashboard"
+                className="rounded-2xl border border-orange-300 bg-orange-50 px-5 py-3 text-center text-sm font-semibold text-orange-700 transition hover:border-orange-400 hover:bg-orange-100"
+              >
+                Dashboard
+              </Link>
+
+              <Link
+                href="/phonesia/dashboard/clienti"
+                className="rounded-2xl border border-slate-300 bg-white px-5 py-3 text-center text-sm font-semibold text-slate-700 transition hover:border-slate-400"
+              >
+                Clienti
+              </Link>
+            </div>
+          </div>
+        </section>
+
+        <section className="grid gap-4 md:grid-cols-4">
+          <StatCard
+            label="Richieste operative"
+            value={richieste.length}
+            note="Totale lette dall’agent"
+          />
+          <StatCard
+            label="Da gestire"
+            value={daGestire}
+            note="Stato operativo aperto"
+            warning={daGestire > 0}
+          />
+          <StatCard
+            label="Priorità alta"
+            value={altaPriorita}
+            note="Assistenza, ricontatto o recupero"
+            danger={altaPriorita > 0}
+          />
+          <StatCard
+            label="Duplicati bloccati"
+            value={duplicatiBloccati}
+            note="Notifiche negozio evitate"
+          />
+        </section>
+
+        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+          <form className="grid gap-3 md:grid-cols-[1.5fr_1fr_1fr_1fr_auto]">
+            <input
+              name="q"
+              defaultValue={q}
+              placeholder="Cerca cliente, telefono, messaggio..."
+              className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 outline-none transition focus:border-orange-500"
+            />
+
+            <select
+              name="stato"
+              defaultValue={stato}
+              className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 outline-none transition focus:border-orange-500"
+            >
+              <option value="da_gestire">Da gestire</option>
+              <option value="informativo">Informativo</option>
+              <option value="tutte">Tutti gli stati</option>
+            </select>
+
+            <select
+              name="priorita"
+              defaultValue={priorita}
+              className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 outline-none transition focus:border-orange-500"
+            >
+              <option value="tutte">Tutte le priorità</option>
+              <option value="alta">Alta</option>
+              <option value="normale">Normale</option>
+            </select>
+
+            <select
+              name="negozio"
+              defaultValue={negozio}
+              className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 outline-none transition focus:border-orange-500"
+            >
+              <option value="tutti">Tutti i negozi</option>
+              {negoziOptions.map(([id, label]) => (
+                <option key={id} value={id}>
+                  {label}
+                </option>
+              ))}
+            </select>
+
+            <button
+              type="submit"
+              className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white transition hover:bg-slate-800"
+            >
+              Filtra
+            </button>
+          </form>
+        </section>
+
+        <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-200 px-5 py-4 md:px-6">
+            <h2 className="text-xl font-black tracking-tight text-slate-950">
+              Richieste trovate: {richiesteFiltrate.length}
+            </h2>
+          </div>
+
+          {richiesteFiltrate.length === 0 ? (
+            <div className="p-8 text-sm font-semibold text-slate-500">
+              Nessuna richiesta trovata con questi filtri.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-[1200px] w-full border-collapse text-left text-sm">
+                <thead className="bg-slate-50 text-xs uppercase tracking-[0.16em] text-slate-500">
+                  <tr>
+                    <th className="px-5 py-4 font-black">Data</th>
+                    <th className="px-5 py-4 font-black">Cliente</th>
+                    <th className="px-5 py-4 font-black">Negozio</th>
+                    <th className="px-5 py-4 font-black">Intent</th>
+                    <th className="px-5 py-4 font-black">Priorità</th>
+                    <th className="px-5 py-4 font-black">Azione</th>
+                    <th className="px-5 py-4 font-black">Messaggio</th>
+                    <th className="px-5 py-4 font-black">Handoff</th>
+                    <th className="px-5 py-4 font-black">Scheda</th>
+                  </tr>
+                </thead>
+
+                <tbody className="divide-y divide-slate-100">
+                  {richiesteFiltrate.map((row) => (
+                    <tr key={row.id} className="align-top hover:bg-orange-50/30">
+                      <td className="whitespace-nowrap px-5 py-4 text-slate-600">
+                        {formatDate(row.created_at)}
+                      </td>
+
+                      <td className="px-5 py-4">
+                        <div className="font-black text-slate-950">
+                          {row.cliente_nome}
+                        </div>
+                        <div className="mt-1 text-xs font-semibold text-slate-500">
+                          {row.telefono}
+                        </div>
+                      </td>
+
+                      <td className="px-5 py-4 text-slate-700">
+                        {row.operational.negozio_label || "—"}
+                      </td>
+
+                      <td className="px-5 py-4">
+                        <span className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-black text-slate-700">
+                          {getIntentLabel(row.intent)}
+                        </span>
+                      </td>
+
+                      <td className="px-5 py-4">
+                        <span
+                          className={[
+                            "inline-flex rounded-full border px-3 py-1 text-xs font-black",
+                            priorityClass(row.operational.priorita),
+                          ].join(" ")}
+                        >
+                          {row.operational.priorita}
+                        </span>
+                      </td>
+
+                      <td className="px-5 py-4">
+                        <div className="font-semibold text-slate-800">
+                          {getActionLabel(row.operational.azione_richiesta)}
+                        </div>
+                        <div
+                          className={[
+                            "mt-2 inline-flex rounded-full border px-3 py-1 text-xs font-black",
+                            statusClass(row.operational.stato_operativo),
+                          ].join(" ")}
+                        >
+                          {row.operational.stato_operativo}
+                        </div>
+                      </td>
+
+                      <td className="max-w-md px-5 py-4 text-slate-600">
+                        {truncateText(row.messaggio_utente, 180)}
+                      </td>
+
+                      <td className="px-5 py-4">
+                        <span
+                          className={[
+                            "inline-flex rounded-full border px-3 py-1 text-xs font-black",
+                            handoffClass(row.handoff_status),
+                          ].join(" ")}
+                          title={row.handoff_error || undefined}
+                        >
+                          {row.handoff_status}
+                        </span>
+                      </td>
+
+                      <td className="px-5 py-4">
+                        <Link
+                          href={`/phonesia/dashboard/clienti/${row.cliente_id}`}
+                          className="inline-flex rounded-2xl bg-orange-500 px-4 py-2 text-xs font-black text-white transition hover:bg-orange-600"
+                        >
+                          Apri
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      </div>
+    </main>
+  );
+}
+
+function StatCard({
+  label,
+  value,
+  note,
+  warning,
+  danger,
+}: {
+  label: string;
+  value: number | string;
+  note: string;
+  warning?: boolean;
+  danger?: boolean;
+}) {
+  const cardClass = danger
+    ? "border-red-200 bg-red-50"
+    : warning
+      ? "border-amber-200 bg-amber-50"
+      : "border-slate-200 bg-white";
+
+  const valueClass = danger
+    ? "text-red-700"
+    : warning
+      ? "text-amber-700"
+      : "text-slate-950";
+
+  return (
+    <div className={`rounded-3xl border p-5 shadow-sm ${cardClass}`}>
+      <div className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">
+        {label}
+      </div>
+      <div className={`mt-3 text-4xl font-black tracking-tight ${valueClass}`}>
+        {value}
+      </div>
+      <div className="mt-2 text-sm font-semibold text-slate-500">{note}</div>
+    </div>
+  );
+}
