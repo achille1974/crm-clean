@@ -77,6 +77,31 @@ type SentOpportunityView = {
   sentAt: string;
 };
 
+type AgentConversationRow = {
+  id: number | string;
+  created_at: string | null;
+  messaggio_utente: string | null;
+  intent: string | null;
+  handoff_richiesto: boolean | null;
+  risposta_agente: string | null;
+  metadata: Record<string, unknown> | null;
+};
+
+type AgentConversationView = {
+  id: number | string;
+  createdAt: string | null;
+  message: string;
+  intent: string;
+  handoffRequired: boolean;
+  operationalStatus: string;
+  action: string;
+  priority: string;
+  score: number;
+  scoreReasons: string[];
+  previousIntent: string | null;
+  previousMessage: string | null;
+};
+
 const NEGOZI: Record<number, string> = {
   1: "Floridia",
   2: "Augusta",
@@ -206,6 +231,113 @@ function formatDistinctStoreLabels(values: Array<number | null | undefined>): st
   return unique.map((value) => negozioLabel(value)).join(", ");
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function readNullableString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function readNumber(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.max(0, Math.min(100, Math.round(value)));
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return Math.max(0, Math.min(100, Math.round(parsed)));
+    }
+  }
+
+  return 0;
+}
+
+function readStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string");
+}
+
+function getAgentConversationView(row: AgentConversationRow): AgentConversationView {
+  const metadata = row.metadata ?? {};
+  const operationalRaw = metadata.agent_operational;
+  const operational = isRecord(operationalRaw) ? operationalRaw : {};
+  const memoryRaw = metadata.conversation_memory;
+  const memory = isRecord(memoryRaw) ? memoryRaw : {};
+
+  return {
+    id: row.id,
+    createdAt: row.created_at,
+    message: normalizeText(row.messaggio_utente),
+    intent: normalizeText(row.intent) || "altro",
+    handoffRequired: row.handoff_richiesto === true,
+    operationalStatus: readString(operational.stato_operativo) || "informativo",
+    action: readString(operational.azione_richiesta) || "nessuna_azione",
+    priority: readString(operational.priorita) || "normale",
+    score: readNumber(operational.opportunity_score),
+    scoreReasons: readStringArray(operational.opportunity_score_reason),
+    previousIntent: readNullableString(memory.previous_intent),
+    previousMessage: readNullableString(memory.previous_message),
+  };
+}
+
+function actionLabel(action: string): string {
+  const labels: Record<string, string> = {
+    nessuna_azione: "Nessuna azione",
+    verificare_offerta_smartphone: "Verificare offerta smartphone",
+    verificare_offerta_energia_con_bolletta: "Verificare energia con bolletta",
+    verificare_copertura_fibra: "Verificare copertura fibra",
+    gestire_assistenza_cliente: "Gestire assistenza cliente",
+    richiamare_cliente: "Richiamare cliente",
+    verificare_offerta_adatta: "Verificare offerta adatta",
+    verificare_richiesta_cliente: "Verificare richiesta cliente",
+  };
+
+  return labels[action] ?? action.replaceAll("_", " ");
+}
+
+function intentLabel(intent: string): string {
+  const labels: Record<string, string> = {
+    smartphone: "Smartphone",
+    fibra: "Fibra",
+    energia: "Energia",
+    assistenza: "Assistenza",
+    ricontatto: "Ricontatto",
+    offerte_generiche: "Offerte",
+    saluto: "Saluto",
+    altro: "Altro",
+  };
+
+  return labels[intent] ?? intent;
+}
+
+function statusClass(status: string): string {
+  if (status === "da_gestire") return "border-amber-200 bg-amber-50 text-amber-700";
+  if (status === "in_lavorazione") return "border-blue-200 bg-blue-50 text-blue-700";
+  if (status === "ricontattato") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (status === "chiusa") return "border-slate-300 bg-slate-100 text-slate-700";
+  if (status === "non_interessato") return "border-red-200 bg-red-50 text-red-700";
+  return "border-slate-200 bg-slate-50 text-slate-600";
+}
+
+function scoreClass(score: number): string {
+  if (score >= 75) return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (score >= 50) return "border-orange-200 bg-orange-50 text-orange-700";
+  if (score >= 25) return "border-amber-200 bg-amber-50 text-amber-700";
+  return "border-slate-200 bg-slate-50 text-slate-600";
+}
+
+function truncateText(value: string, maxLength: number): string {
+  const normalized = normalizeText(value);
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength - 1)}…`;
+}
+
 function buildDistinctOpportunityBadges(rows: SentOpportunityView[]): string[] {
   const labels = rows.map((row) => {
     const label = normalizeText(row.opportunityLabel);
@@ -255,6 +387,7 @@ export default async function DashboardClienteOpportunitaPage({
     { data: contrattiData, error: contrattiError },
     { data: marketingConsentData, error: marketingConsentError },
     { data: opportunitaData, error: opportunitaError },
+    { data: agentConversationsData, error: agentConversationsError },
   ] = await Promise.all([
     supabase
       .from("phonesia_clienti")
@@ -290,6 +423,15 @@ export default async function DashboardClienteOpportunitaPage({
       )
       .eq("cliente_id", clienteId)
       .order("inviato_at", { ascending: false }),
+    supabase
+      .from("phonesia_conversazioni")
+      .select(
+        "id, created_at, messaggio_utente, intent, handoff_richiesto, risposta_agente, metadata",
+      )
+      .eq("cliente_id", clienteId)
+      .eq("canale", "whatsapp")
+      .order("created_at", { ascending: false })
+      .limit(5),
   ]);
 
   if (clienteError) throw new Error(`Errore lettura cliente: ${clienteError.message}`);
@@ -300,6 +442,11 @@ export default async function DashboardClienteOpportunitaPage({
   }
   if (opportunitaError) {
     throw new Error(`Errore lettura opportunità inviate: ${opportunitaError.message}`);
+  }
+  if (agentConversationsError) {
+    throw new Error(
+      `Errore lettura conversazioni agent: ${agentConversationsError.message}`,
+    );
   }
 
   const cliente = clienteData as ClienteRow | null;
@@ -321,6 +468,10 @@ export default async function DashboardClienteOpportunitaPage({
     negozioContatto: normalizeText(row.negozio_contatto),
     sentAt: normalizeText(row.inviato_at),
   }));
+
+  const agentConversations = ((agentConversationsData ?? []) as AgentConversationRow[])
+    .map(getAgentConversationView)
+    .filter((row) => row.message || row.intent !== "altro");
 
   const activeFamilies = new Set<ServiceFamily>();
   for (const servizio of servizi) {
@@ -458,6 +609,108 @@ export default async function DashboardClienteOpportunitaPage({
               </div>
             </div>
           </div>
+        </section>
+
+        <section className="rounded-3xl border border-slate-200 bg-white px-5 py-5 shadow-sm md:px-6">
+          <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+            <div>
+              <div className="mb-3 inline-flex rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-black uppercase tracking-[0.18em] text-blue-700">
+                Conversazioni agent
+              </div>
+
+              <h2 className="text-xl font-black text-slate-950">
+                Ultime richieste agent
+              </h2>
+
+              <p className="mt-1 text-sm text-slate-600">
+                Le ultime richieste WhatsApp salvate dall’agent per questo cliente.
+              </p>
+            </div>
+
+            <Link
+              href={`/phonesia/dashboard/richieste?q=${encodeURIComponent(
+                [cliente.nome, cliente.cognome].filter(Boolean).join(" ") ||
+                  cliente.telefono ||
+                  String(cliente.id),
+              )}&vista=storico&stato=tutte`}
+              className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-center text-sm font-bold text-slate-700 transition hover:border-orange-300 hover:text-orange-700"
+            >
+              Vedi in dashboard richieste
+            </Link>
+          </div>
+
+          {agentConversations.length === 0 ? (
+            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5 text-sm font-semibold text-slate-500">
+              Nessuna richiesta agent salvata per questo cliente.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {agentConversations.map((row) => (
+                <div
+                  key={row.id}
+                  className="rounded-3xl border border-slate-200 bg-slate-50 p-4"
+                >
+                  <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-black text-slate-700">
+                          {intentLabel(row.intent)}
+                        </span>
+                        <span
+                          className={[
+                            "rounded-full border px-3 py-1 text-xs font-black",
+                            statusClass(row.operationalStatus),
+                          ].join(" ")}
+                        >
+                          {row.operationalStatus}
+                        </span>
+                        <span
+                          className={[
+                            "rounded-full border px-3 py-1 text-xs font-black",
+                            scoreClass(row.score),
+                          ].join(" ")}
+                          title={row.scoreReasons.join(" · ")}
+                        >
+                          Score {row.score}/100
+                        </span>
+                      </div>
+
+                      <div className="mt-3 text-sm font-bold text-slate-950">
+                        {truncateText(row.message, 220)}
+                      </div>
+
+                      <div className="mt-2 text-xs font-semibold text-slate-500">
+                        {formatDateTime(row.createdAt)} · {actionLabel(row.action)}
+                      </div>
+
+                      {row.previousMessage ? (
+                        <div className="mt-3 rounded-2xl border border-blue-200 bg-blue-50 px-3 py-3 text-xs leading-relaxed text-blue-800">
+                          <div className="font-black uppercase tracking-[0.14em] text-blue-700">
+                            Collegata a richiesta precedente
+                          </div>
+                          <div className="mt-2">
+                            Tipo:{" "}
+                            <strong>
+                              {row.previousIntent
+                                ? intentLabel(row.previousIntent)
+                                : "—"}
+                            </strong>
+                          </div>
+                          <div className="mt-1">
+                            Prima richiesta: {truncateText(row.previousMessage, 180)}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div className="shrink-0 text-xs font-semibold text-slate-500">
+                      ID #{row.id}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
 
         <ClienteAgentInsight
