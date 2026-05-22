@@ -27,10 +27,21 @@ type ClienteRow = {
   whatsapp_activated_at: string | null;
 };
 
+type ConversationMemory = {
+  is_follow_up?: boolean;
+  previous_intent?: string | null;
+  previous_message?: string | null;
+  previous_conversation_id?: number | string | null;
+  previous_created_at?: string | null;
+  confidence?: string | null;
+  reason?: string | null;
+};
+
 type AgentResponse = {
   ok?: boolean;
   reply?: string;
   intent?: string;
+  detected_intent?: string;
   handoff_richiesto?: boolean;
   used_local_agent?: boolean;
   matched_customer?: {
@@ -49,6 +60,7 @@ type AgentResponse = {
     created_at?: string | null;
   } | null;
   marketing_consent?: boolean;
+  conversation_memory?: ConversationMemory | null;
   error?: string;
   detail?: string;
 };
@@ -229,6 +241,44 @@ function truncateText(value: string, maxLength: number) {
   }
 
   return `${text.slice(0, maxLength - 1)}…`;
+}
+
+function buildStoreHandoffRequestText(
+  bodyOriginal: string,
+  agentResponse: AgentResponse | null,
+) {
+  const memory = agentResponse?.conversation_memory;
+
+  if (
+    memory?.is_follow_up === true &&
+    memory.previous_message &&
+    memory.previous_intent
+  ) {
+    return [
+      `Messaggio cliente: ${bodyOriginal}`,
+      "",
+      "Collegato a richiesta precedente:",
+      memory.previous_message,
+      "",
+      `Tipo precedente: ${memory.previous_intent}`,
+      memory.reason ? `Nota agent: ${memory.reason}` : null,
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  return bodyOriginal;
+}
+
+function buildStoreHandoffRequestType(agentResponse: AgentResponse | null) {
+  const intent = agentResponse?.intent || "richiesta_cliente";
+  const memory = agentResponse?.conversation_memory;
+
+  if (memory?.is_follow_up === true && memory.previous_intent) {
+    return `${intent} collegato a ${memory.previous_intent}`;
+  }
+
+  return intent;
 }
 
 function getFullName(cliente: ClienteRow | null, agentResponse?: AgentResponse | null) {
@@ -782,8 +832,8 @@ async function notifyStoreIfNeeded(params: {
       negozioNome: store.label,
       clienteNome,
       telefonoCliente,
-      richiestaCliente: params.bodyOriginal,
-      tipoRichiesta: agentResponse.intent || "richiesta_cliente",
+      richiestaCliente: buildStoreHandoffRequestText(params.bodyOriginal, agentResponse),
+      tipoRichiesta: buildStoreHandoffRequestType(agentResponse),
       linkSchedaCliente,
     });
 
