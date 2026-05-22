@@ -292,6 +292,29 @@ function scoreLabel(score: number) {
   return "Bassa";
 }
 
+function scoreDescription(score: number) {
+  if (score >= 75) return "Da gestire velocemente";
+  if (score >= 50) return "Opportunità interessante";
+  if (score >= 25) return "Da valutare";
+  return "Bassa priorità";
+}
+
+function scoreExplanation(score: number) {
+  if (score >= 75) {
+    return "Cliente con richiesta concreta e buon potenziale commerciale.";
+  }
+
+  if (score >= 50) {
+    return "Richiesta utile, da verificare senza urgenza massima.";
+  }
+
+  if (score >= 25) {
+    return "Richiesta da leggere e valutare caso per caso.";
+  }
+
+  return "Messaggio informativo o con poco potenziale commerciale.";
+}
+
 function isRequestItem(value: RequestItem | null): value is RequestItem {
   return value !== null;
 }
@@ -469,7 +492,7 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
           </div>
         </section>
 
-        <section className="grid gap-4 md:grid-cols-4">
+        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           <StatCard
             label="Richieste operative"
             value={richieste.length}
@@ -493,9 +516,9 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
             note="Notifiche negozio evitate"
           />
           <StatCard
-            label="Score medio"
-            value={scoreMedio}
-            note="Potenziale medio richieste"
+            label="Score medio opportunità"
+            value={`${scoreMedio}/100`}
+            note="Più è alto, più va gestita prima"
           />
         </section>
 
@@ -552,6 +575,45 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
               Filtra
             </button>
           </form>
+        </section>
+
+        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+          <div className="mb-4">
+            <h2 className="text-lg font-black tracking-tight text-slate-950">
+              Come leggere lo score opportunità
+            </h2>
+            <p className="mt-1 text-sm leading-relaxed text-slate-600">
+              Lo score aiuta a capire quali richieste gestire prima: non è una vendita garantita,
+              ma un indicatore di priorità commerciale e operativa.
+            </p>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-4">
+            <ScoreLegendItem
+              range="75-100"
+              label="Alta"
+              description="Da gestire velocemente"
+              className="border-emerald-200 bg-emerald-50 text-emerald-700"
+            />
+            <ScoreLegendItem
+              range="50-74"
+              label="Buona"
+              description="Opportunità interessante"
+              className="border-orange-200 bg-orange-50 text-orange-700"
+            />
+            <ScoreLegendItem
+              range="25-49"
+              label="Media"
+              description="Da valutare"
+              className="border-amber-200 bg-amber-50 text-amber-700"
+            />
+            <ScoreLegendItem
+              range="0-24"
+              label="Bassa"
+              description="Bassa priorità"
+              className="border-slate-200 bg-slate-50 text-slate-600"
+            />
+          </div>
         </section>
 
         <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
@@ -632,12 +694,25 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
                           {scoreLabel(row.operational.opportunity_score)}
                         </div>
 
+                        <div className="mt-2 max-w-[230px] text-xs font-bold leading-relaxed text-slate-700">
+                          {scoreDescription(row.operational.opportunity_score)}
+                        </div>
+
+                        <div className="mt-1 max-w-[230px] text-[11px] leading-relaxed text-slate-500">
+                          {scoreExplanation(row.operational.opportunity_score)}
+                        </div>
+
                         {row.operational.opportunity_score_reason.length > 0 ? (
-                          <div className="mt-2 max-w-[220px] text-xs leading-relaxed text-slate-500">
-                            {row.operational.opportunity_score_reason
-                              .slice(0, 2)
-                              .join(" · ")}
-                          </div>
+                          <details className="mt-2 max-w-[230px] text-[11px] text-slate-500">
+                            <summary className="cursor-pointer font-bold text-slate-600">
+                              Perché questo score
+                            </summary>
+                            <ul className="mt-2 list-disc space-y-1 pl-4">
+                              {row.operational.opportunity_score_reason.map((reason) => (
+                                <li key={reason}>{reason}</li>
+                              ))}
+                            </ul>
+                          </details>
                         ) : null}
                       </td>
 
@@ -693,6 +768,28 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
         </section>
       </div>
     </main>
+  );
+}
+
+function ScoreLegendItem({
+  range,
+  label,
+  description,
+  className,
+}: {
+  range: string;
+  label: string;
+  description: string;
+  className: string;
+}) {
+  return (
+    <div className={`rounded-3xl border p-4 ${className}`}>
+      <div className="text-xs font-black uppercase tracking-[0.18em] opacity-75">
+        Score {range}
+      </div>
+      <div className="mt-2 text-xl font-black">{label}</div>
+      <div className="mt-1 text-sm font-semibold opacity-85">{description}</div>
+    </div>
   );
 }
 
