@@ -107,6 +107,16 @@ type OperationalAction =
   | "verificare_offerta_adatta"
   | "verificare_richiesta_cliente";
 
+type OperationalSlaLevel = "nessuna" | "oggi" | "24_ore" | "48_ore";
+type OperationalSlaStatus = "in_tempo";
+
+type OperationalSla = {
+  due_at: string | null;
+  level: OperationalSlaLevel;
+  status: OperationalSlaStatus;
+  reason: string | null;
+};
+
 type AgentOperationalMetadata = {
   cliente_riconosciuto: boolean;
   negozio_id: number | null;
@@ -117,6 +127,7 @@ type AgentOperationalMetadata = {
   stato_operativo: OperationalStatus;
   opportunity_score: number;
   opportunity_score_reason: string[];
+  sla: OperationalSla;
 };
 
 type ConversationMemoryConfidence = "none" | "probabile" | "alta";
@@ -1097,6 +1108,58 @@ function calculateOpportunityScore(
   };
 }
 
+function addHoursToNow(hours: number): string {
+  return new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
+}
+
+function buildOperationalSla(
+  intent: Intent,
+  handoffRichiesto: boolean,
+): OperationalSla {
+  if (!handoffRichiesto || intent === "saluto") {
+    return {
+      due_at: null,
+      level: "nessuna",
+      status: "in_tempo",
+      reason: "Nessuna scadenza operativa: richiesta informativa o senza handoff.",
+    };
+  }
+
+  if (intent === "assistenza" || intent === "ricontatto") {
+    return {
+      due_at: addHoursToNow(8),
+      level: "oggi",
+      status: "in_tempo",
+      reason: "Richiesta urgente: assistenza o ricontatto da gestire entro oggi.",
+    };
+  }
+
+  if (intent === "smartphone" || intent === "energia" || intent === "fibra") {
+    return {
+      due_at: addHoursToNow(24),
+      level: "24_ore",
+      status: "in_tempo",
+      reason: "Richiesta commerciale concreta da gestire entro 24 ore.",
+    };
+  }
+
+  if (intent === "offerte_generiche") {
+    return {
+      due_at: addHoursToNow(48),
+      level: "48_ore",
+      status: "in_tempo",
+      reason: "Richiesta commerciale generica da gestire entro 48 ore.",
+    };
+  }
+
+  return {
+    due_at: addHoursToNow(48),
+    level: "48_ore",
+    status: "in_tempo",
+    reason: "Richiesta cliente da verificare entro 48 ore.",
+  };
+}
+
 function buildOperationalMetadata(
   intent: Intent,
   context: AgentContext,
@@ -1121,6 +1184,7 @@ function buildOperationalMetadata(
     stato_operativo: handoffRichiesto ? "da_gestire" : "informativo",
     opportunity_score: opportunityScore.score,
     opportunity_score_reason: opportunityScore.reasons,
+    sla: buildOperationalSla(intent, handoffRichiesto),
   };
 }
 
