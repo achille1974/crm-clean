@@ -32,6 +32,13 @@ type ClienteRow = {
   whatsapp_active: boolean | null;
 };
 
+type OperationalSla = {
+  due_at: string | null;
+  level: string;
+  status: string;
+  reason: string | null;
+};
+
 type OperationalMetadata = {
   cliente_riconosciuto: boolean;
   negozio_id: number | null;
@@ -42,6 +49,7 @@ type OperationalMetadata = {
   stato_operativo: string;
   opportunity_score: number;
   opportunity_score_reason: string[];
+  sla: OperationalSla | null;
 };
 
 type ConversationMemory = {
@@ -191,6 +199,91 @@ function getConversationMemory(
   };
 }
 
+function getOperationalSla(value: unknown): OperationalSla | null {
+  if (!isRecord(value)) return null;
+
+  return {
+    due_at: readNullableString(value.due_at),
+    level: readString(value.level) || "nessuna",
+    status: readString(value.status) || "in_tempo",
+    reason: readNullableString(value.reason),
+  };
+}
+
+function isClosedOperationalStatus(status: string): boolean {
+  return (
+    status === "chiusa" ||
+    status === "ricontattato" ||
+    status === "non_interessato"
+  );
+}
+
+function getSlaStatus(
+  sla: OperationalSla | null,
+  operationalStatus: string,
+): string {
+  if (isClosedOperationalStatus(operationalStatus)) {
+    return "completata";
+  }
+
+  if (!sla?.due_at) {
+    return "nessuna";
+  }
+
+  const dueTime = new Date(sla.due_at).getTime();
+
+  if (!Number.isFinite(dueTime)) {
+    return "nessuna";
+  }
+
+  const diffMs = dueTime - Date.now();
+
+  if (diffMs < 0) {
+    return "in_ritardo";
+  }
+
+  if (diffMs <= 2 * 60 * 60 * 1000) {
+    return "in_scadenza";
+  }
+
+  return "in_tempo";
+}
+
+function slaClass(status: string): string {
+  if (status === "in_ritardo") {
+    return "border-red-200 bg-red-50 text-red-700";
+  }
+
+  if (status === "in_scadenza") {
+    return "border-amber-200 bg-amber-50 text-amber-700";
+  }
+
+  if (status === "in_tempo") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  }
+
+  if (status === "completata") {
+    return "border-slate-300 bg-slate-100 text-slate-700";
+  }
+
+  return "border-slate-200 bg-slate-50 text-slate-600";
+}
+
+function slaLabel(status: string): string {
+  if (status === "in_ritardo") return "In ritardo";
+  if (status === "in_scadenza") return "In scadenza";
+  if (status === "in_tempo") return "In tempo";
+  if (status === "completata") return "Completata";
+  return "Nessuna SLA";
+}
+
+function slaLevelLabel(level: string): string {
+  if (level === "oggi") return "Entro oggi";
+  if (level === "24_ore") return "Entro 24 ore";
+  if (level === "48_ore") return "Entro 48 ore";
+  return "Nessuna scadenza";
+}
+
 function getOperationalMetadata(
   metadata: Record<string, unknown> | null,
 ): OperationalMetadata | null {
@@ -215,6 +308,7 @@ function getOperationalMetadata(
     stato_operativo: statoOperativo,
     opportunity_score: readNumber(raw.opportunity_score),
     opportunity_score_reason: readStringArray(raw.opportunity_score_reason),
+    sla: getOperationalSla(raw.sla),
   };
 }
 
@@ -723,7 +817,7 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="min-w-[1200px] w-full border-collapse text-left text-sm">
+              <table className="min-w-[1400px] w-full border-collapse text-left text-sm">
                 <thead className="bg-slate-50 text-xs uppercase tracking-[0.16em] text-slate-500">
                   <tr>
                     <th className="px-5 py-4 font-black">Data</th>
@@ -732,6 +826,7 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
                     <th className="px-5 py-4 font-black">Intent</th>
                     <th className="px-5 py-4 font-black">Priorità</th>
                     <th className="px-5 py-4 font-black">Score</th>
+                    <th className="px-5 py-4 font-black">SLA</th>
                     <th className="px-5 py-4 font-black">Azione</th>
                     <th className="px-5 py-4 font-black">Messaggio</th>
                     <th className="px-5 py-4 font-black">Handoff</th>
@@ -807,6 +902,43 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
                               ))}
                             </ul>
                           </details>
+                        ) : null}
+                      </td>
+
+                      <td className="px-5 py-4">
+                        <span
+                          className={[
+                            "inline-flex rounded-full border px-3 py-1 text-xs font-black",
+                            slaClass(
+                              getSlaStatus(
+                                row.operational.sla,
+                                row.operational.stato_operativo,
+                              ),
+                            ),
+                          ].join(" ")}
+                        >
+                          {slaLabel(
+                            getSlaStatus(
+                              row.operational.sla,
+                              row.operational.stato_operativo,
+                            ),
+                          )}
+                        </span>
+
+                        <div className="mt-2 text-xs font-bold text-slate-700">
+                          {slaLevelLabel(row.operational.sla?.level ?? "nessuna")}
+                        </div>
+
+                        {row.operational.sla?.due_at ? (
+                          <div className="mt-1 text-[11px] leading-relaxed text-slate-500">
+                            Scadenza: {formatDate(row.operational.sla.due_at)}
+                          </div>
+                        ) : null}
+
+                        {row.operational.sla?.reason ? (
+                          <div className="mt-1 max-w-[220px] text-[11px] leading-relaxed text-slate-500">
+                            {row.operational.sla.reason}
+                          </div>
                         ) : null}
                       </td>
 
