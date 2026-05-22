@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@supabase/supabase-js";
+import RichiestaStatusActions from "@/components/phonesia/dashboard/RichiestaStatusActions";
 
 export const dynamic = "force-dynamic";
 
@@ -202,6 +203,22 @@ function priorityClass(priority: string) {
 function statusClass(status: string) {
   if (status === "da_gestire") {
     return "border-amber-200 bg-amber-50 text-amber-700";
+  }
+
+  if (status === "in_lavorazione") {
+    return "border-blue-200 bg-blue-50 text-blue-700";
+  }
+
+  if (status === "ricontattato") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  }
+
+  if (status === "chiusa") {
+    return "border-slate-300 bg-slate-100 text-slate-700";
+  }
+
+  if (status === "non_interessato") {
+    return "border-red-200 bg-red-50 text-red-700";
   }
 
   if (status === "informativo") {
@@ -435,6 +452,10 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
               className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 outline-none transition focus:border-orange-500"
             >
               <option value="da_gestire">Da gestire</option>
+              <option value="in_lavorazione">In lavorazione</option>
+              <option value="ricontattato">Ricontattato</option>
+              <option value="chiusa">Chiusa</option>
+              <option value="non_interessato">Non interessato</option>
               <option value="informativo">Informativo</option>
               <option value="tutte">Tutti gli stati</option>
             </select>
@@ -548,6 +569,11 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
                         >
                           {row.operational.stato_operativo}
                         </div>
+
+                        <RichiestaStatusActions
+                          richiestaId={row.id}
+                          currentStatus={row.operational.stato_operativo}
+                        />
                       </td>
 
                       <td className="max-w-md px-5 py-4 text-slate-600">
