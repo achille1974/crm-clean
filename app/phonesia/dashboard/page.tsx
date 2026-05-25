@@ -18,6 +18,13 @@ const CARDS = [
       "Elenco operativo delle richieste generate dall’agent WhatsApp: ricontatti, assistenza, offerte e handoff negozio.",
   },
   {
+    href: "/phonesia/dashboard/qr",
+    badge: "QR Code",
+    title: "Registrazioni QR",
+    description:
+      "Conta i form QR compilati e mostra da quale negozio arrivano le registrazioni clienti.",
+  },
+  {
     href: "/phonesia/dashboard/feedback",
     badge: "Soddisfazione",
     title: "Feedback clienti",
