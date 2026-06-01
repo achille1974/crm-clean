@@ -62,6 +62,20 @@ type ConversationMemory = {
   reason: string | null;
 };
 
+type AgentNextBestAction = {
+  code: string;
+  label: string;
+  reason: string;
+};
+
+type AgentDecision = {
+  next_best_action: AgentNextBestAction;
+  required_data: string[];
+  questions_to_ask: string[];
+  risk_flags: string[];
+  operator_summary: string;
+};
+
 type RequestItem = {
   id: number | string;
   created_at: string | null;
@@ -75,6 +89,7 @@ type RequestItem = {
   handoff_error: string | null;
   operational: OperationalMetadata;
   conversation_memory: ConversationMemory | null;
+  agent_decision: AgentDecision | null;
 };
 
 const ACTION_LABELS: Record<string, string> = {
@@ -196,6 +211,36 @@ function getConversationMemory(
     previous_created_at: readNullableString(raw.previous_created_at),
     confidence: readNullableString(raw.confidence),
     reason: readNullableString(raw.reason),
+  };
+}
+
+function getAgentDecision(
+  metadata: Record<string, unknown> | null,
+): AgentDecision | null {
+  if (!metadata) return null;
+
+  const raw = metadata.agent_decision;
+
+  if (!isRecord(raw)) return null;
+
+  const nextBestActionRaw = raw.next_best_action;
+  const nextBestAction = isRecord(nextBestActionRaw) ? nextBestActionRaw : {};
+  const code = readString(nextBestAction.code) || "verify_customer_request";
+  const label = readString(nextBestAction.label) || "Verificare richiesta cliente";
+  const reason =
+    readString(nextBestAction.reason) ||
+    "Decisione operativa generata dall’agent.";
+
+  return {
+    next_best_action: {
+      code,
+      label,
+      reason,
+    },
+    required_data: readStringArray(raw.required_data),
+    questions_to_ask: readStringArray(raw.questions_to_ask),
+    risk_flags: readStringArray(raw.risk_flags),
+    operator_summary: readString(raw.operator_summary),
   };
 }
 
@@ -541,6 +586,7 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
       const telefonoMetadata = readString(metadata.telefono);
       const handoffStatus = readString(metadata.handoff_status) || "non_aggiornato";
       const conversationMemory = getConversationMemory(row.metadata);
+      const agentDecision = getAgentDecision(row.metadata);
 
       return {
         id: row.id,
@@ -555,6 +601,7 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
         handoff_error: readNullableString(metadata.handoff_error),
         operational,
         conversation_memory: conversationMemory,
+        agent_decision: agentDecision,
       };
     })
     .filter(isRequestItem);
@@ -582,6 +629,12 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
       row.intent,
       row.conversation_memory?.previous_intent,
       row.conversation_memory?.previous_message,
+      row.agent_decision?.next_best_action.label,
+      row.agent_decision?.next_best_action.reason,
+      row.agent_decision?.operator_summary,
+      ...(row.agent_decision?.required_data ?? []),
+      ...(row.agent_decision?.questions_to_ask ?? []),
+      ...(row.agent_decision?.risk_flags ?? []),
       row.operational.negozio_label,
       row.operational.azione_richiesta,
     ]
@@ -959,6 +1012,10 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
                           richiestaId={row.id}
                           currentStatus={row.operational.stato_operativo}
                         />
+
+                        {row.agent_decision ? (
+                          <AgentDecisionBox decision={row.agent_decision} />
+                        ) : null}
                       </td>
 
                       <td className="max-w-md px-5 py-4 text-slate-600">
@@ -1027,6 +1084,69 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
         </section>
       </div>
     </main>
+  );
+}
+
+function AgentDecisionBox({ decision }: { decision: AgentDecision }) {
+  return (
+    <div className="mt-4 max-w-[320px] rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-3 text-xs leading-relaxed text-emerald-900">
+      <div className="font-black uppercase tracking-[0.14em] text-emerald-700">
+        Decisione agent
+      </div>
+
+      <div className="mt-2 font-black text-slate-950">
+        {decision.next_best_action.label}
+      </div>
+
+      <div className="mt-1 text-emerald-800">
+        {decision.next_best_action.reason}
+      </div>
+
+      {decision.operator_summary ? (
+        <div className="mt-2 rounded-xl border border-emerald-200 bg-white/70 px-3 py-2 text-[11px] font-semibold text-slate-700">
+          {decision.operator_summary}
+        </div>
+      ) : null}
+
+      {decision.required_data.length > 0 ? (
+        <details className="mt-2">
+          <summary className="cursor-pointer font-black text-emerald-800">
+            Dati da raccogliere
+          </summary>
+          <ul className="mt-2 list-disc space-y-1 pl-4 text-emerald-900">
+            {decision.required_data.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+
+      {decision.questions_to_ask.length > 0 ? (
+        <details className="mt-2">
+          <summary className="cursor-pointer font-black text-emerald-800">
+            Domande suggerite
+          </summary>
+          <ul className="mt-2 list-disc space-y-1 pl-4 text-emerald-900">
+            {decision.questions_to_ask.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+
+      {decision.risk_flags.length > 0 ? (
+        <details className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-red-800">
+          <summary className="cursor-pointer font-black text-red-700">
+            Rischi operativi
+          </summary>
+          <ul className="mt-2 list-disc space-y-1 pl-4">
+            {decision.risk_flags.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+    </div>
   );
 }
 
