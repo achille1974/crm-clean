@@ -151,6 +151,20 @@ type ConversationMemoryRow = {
   metadata: Record<string, unknown> | null;
 };
 
+type AgentNextBestAction = {
+  code: string;
+  label: string;
+  reason: string;
+};
+
+type AgentDecision = {
+  next_best_action: AgentNextBestAction;
+  required_data: string[];
+  questions_to_ask: string[];
+  risk_flags: string[];
+  operator_summary: string;
+};
+
 const NEGOZI: Record<
   number,
   {
@@ -1188,6 +1202,206 @@ function buildOperationalMetadata(
   };
 }
 
+function buildAgentDecision(
+  intent: Intent,
+  context: AgentContext,
+  handoffRichiesto: boolean,
+  operationalMetadata: AgentOperationalMetadata,
+  conversationMemory: ConversationMemory,
+): AgentDecision {
+  const riskFlags: string[] = [];
+
+  if (!context.cliente) {
+    riskFlags.push("Cliente non identificato: non usare dati sensibili e non collegare contratti.");
+  }
+
+  if (context.cliente && !context.cliente.negozio_id) {
+    riskFlags.push("Cliente senza negozio_id: verificare anomalia prima di assegnare la richiesta.");
+  }
+
+  if (!context.marketingConsent) {
+    riskFlags.push("Consenso marketing assente: evitare campagne o offerte outbound.");
+  }
+
+  if (hasNegativeFeedback(context)) {
+    riskFlags.push("Feedback basso: prima recupero cliente, poi eventuale proposta commerciale.");
+  }
+
+  if (intent === "assistenza") {
+    riskFlags.push("Richiesta di assistenza: non proporre offerte prima di chiarire il problema.");
+  }
+
+  if (conversationMemory.is_follow_up) {
+    riskFlags.push("Follow-up collegato a richiesta precedente: leggere il contesto prima di contattare.");
+  }
+
+  let nextBestAction: AgentNextBestAction = {
+    code: "verify_customer_request",
+    label: "Verificare richiesta cliente",
+    reason: "La richiesta richiede controllo manuale del negozio.",
+  };
+
+  let requiredData: string[] = ["dettaglio richiesta", "telefono confermato"];
+  let questionsToAsk: string[] = ["Puoi spiegarmi meglio di cosa hai bisogno?"];
+
+  if (!context.cliente) {
+    nextBestAction = {
+      code: "identify_customer",
+      label: "Identificare il cliente",
+      reason: "Il numero non è collegato a una scheda cliente certa.",
+    };
+    requiredData = ["nome", "cognome", "telefono", "negozio di riferimento"];
+    questionsToAsk = ["Puoi indicarmi nome, cognome e negozio di riferimento?"];
+  } else if (hasNegativeFeedback(context)) {
+    nextBestAction = {
+      code: "recover_customer_before_sales",
+      label: "Recuperare il cliente prima di vendere",
+      reason: "Esiste un feedback basso o una richiesta delicata collegata alla scheda.",
+    };
+    requiredData = ["motivo insoddisfazione", "esito ultimo contatto", "azione correttiva"];
+    questionsToAsk = [
+      "Cosa non ha funzionato?",
+      "Preferisci essere richiamato o passare in negozio?",
+    ];
+  } else if (!handoffRichiesto && intent === "saluto") {
+    nextBestAction = {
+      code: "no_action_required",
+      label: "Nessuna azione richiesta",
+      reason: "Il cliente ha inviato un saluto o un messaggio informativo.",
+    };
+    requiredData = [];
+    questionsToAsk = [];
+  } else if (intent === "smartphone") {
+    nextBestAction = {
+      code: "check_mobile_plan_for_smartphone",
+      label: "Verificare tariffa attuale e possibilità smartphone",
+      reason: "Il cliente ha mostrato interesse per smartphone.",
+    };
+    requiredData = [
+      "operatore attuale",
+      "tariffa attuale",
+      "preferenza marca/modello",
+      "documento cliente",
+      "budget o rata desiderata",
+    ];
+    questionsToAsk = [
+      "Che telefono stai usando adesso?",
+      "Hai preferenze tra iPhone, Samsung o altri brand?",
+      "Vuoi mantenere lo stesso numero?",
+    ];
+  } else if (intent === "energia") {
+    nextBestAction = {
+      code: "request_recent_energy_bill",
+      label: "Chiedere bolletta luce/gas recente",
+      reason: "Per valutare energia servono dati reali della fornitura.",
+    };
+    requiredData = [
+      "bolletta luce/gas recente",
+      "indirizzo fornitura",
+      "consumo annuo",
+      "potenza contatore",
+      "fornitura domestica o business",
+    ];
+    questionsToAsk = [
+      "Hai una bolletta recente?",
+      "Vuoi verificare luce, gas o entrambe?",
+      "La fornitura è domestica o business?",
+    ];
+  } else if (intent === "fibra") {
+    nextBestAction = {
+      code: "check_fiber_coverage",
+      label: "Verificare copertura fibra",
+      reason: "Serve controllare indirizzo e copertura prima di proporre internet casa.",
+    };
+    requiredData = [
+      "indirizzo completo",
+      "operatore attuale",
+      "tecnologia attuale",
+      "numero fisso da mantenere",
+    ];
+    questionsToAsk = [
+      "Qual è l’indirizzo dove vuoi verificare la copertura?",
+      "Hai già una linea internet casa?",
+      "Vuoi mantenere il numero fisso?",
+    ];
+  } else if (intent === "assistenza") {
+    nextBestAction = {
+      code: "support_before_sales",
+      label: "Gestire assistenza prima di proporre offerte",
+      reason: "Il cliente segnala un problema tecnico o operativo.",
+    };
+    requiredData = [
+      "servizio interessato",
+      "descrizione problema",
+      "da quando succede",
+      "zona in cui si verifica",
+    ];
+    questionsToAsk = [
+      "Da quando hai il problema?",
+      "Succede ovunque o solo in una zona?",
+      "Il problema riguarda SIM, telefono, modem o linea?",
+    ];
+  } else if (intent === "ricontatto") {
+    nextBestAction = {
+      code: conversationMemory.is_follow_up
+        ? "call_customer_for_previous_request"
+        : "call_customer",
+      label: conversationMemory.is_follow_up
+        ? "Richiamare il cliente sul contesto precedente"
+        : "Richiamare il cliente",
+      reason: conversationMemory.is_follow_up
+        ? "Il cliente chiede ricontatto dopo una richiesta recente."
+        : "Il cliente ha chiesto esplicitamente di essere ricontattato.",
+    };
+    requiredData = ["orario preferito", "motivo del ricontatto", "telefono confermato"];
+    questionsToAsk = [
+      "Quando preferisci essere richiamato?",
+      "Vuoi essere ricontattato dal negozio di riferimento?",
+    ];
+  } else if (intent === "offerte_generiche") {
+    nextBestAction = {
+      code: "qualify_commercial_need",
+      label: "Qualificare esigenza commerciale",
+      reason: "La richiesta è generica: serve capire quale servizio interessa.",
+    };
+    requiredData = [
+      "servizio di interesse",
+      "spesa attuale",
+      "operatore attuale",
+      "preferenza tra negozio o ricontatto",
+    ];
+    questionsToAsk = [
+      "Quale servizio ti interessa verificare?",
+      "Hai già un operatore attivo?",
+      "Preferisci passare in negozio o essere richiamato?",
+    ];
+  }
+
+  const summaryParts = [
+    context.cliente ? "Cliente riconosciuto." : "Cliente non riconosciuto.",
+    `Intent: ${intent}.`,
+    `Azione consigliata: ${nextBestAction.label}.`,
+    `Score: ${operationalMetadata.opportunity_score}/100.`,
+    `Priorità: ${operationalMetadata.priorita}.`,
+  ];
+
+  if (operationalMetadata.sla.due_at) {
+    summaryParts.push(`SLA: ${operationalMetadata.sla.level}.`);
+  }
+
+  if (conversationMemory.is_follow_up && conversationMemory.previous_intent) {
+    summaryParts.push(`Follow-up collegato a: ${conversationMemory.previous_intent}.`);
+  }
+
+  return {
+    next_best_action: nextBestAction,
+    required_data: requiredData,
+    questions_to_ask: questionsToAsk,
+    risk_flags: riskFlags,
+    operator_summary: summaryParts.join(" "),
+  };
+}
+
 async function logAgentConversation(
   supabase: ReturnType<typeof getSupabaseAdmin>,
   params: {
@@ -1202,6 +1416,7 @@ async function logAgentConversation(
     source: string;
     operationalMetadata: AgentOperationalMetadata;
     conversationMemory: ConversationMemory;
+    agentDecision: AgentDecision;
   },
 ) {
   if (!params.clienteId) return;
@@ -1224,6 +1439,7 @@ async function logAgentConversation(
         source: params.source,
         agent_operational: params.operationalMetadata,
         conversation_memory: params.conversationMemory,
+        agent_decision: params.agentDecision,
       },
     });
   } catch (error) {
@@ -1325,6 +1541,14 @@ export async function POST(request: NextRequest) {
       deterministic.handoffRichiesto,
     );
 
+    const agentDecision = buildAgentDecision(
+      intent,
+      context,
+      deterministic.handoffRichiesto,
+      operationalMetadata,
+      conversationMemory,
+    );
+
     await logAgentConversation(supabase, {
       clienteId: cliente?.id ?? null,
       message,
@@ -1337,6 +1561,7 @@ export async function POST(request: NextRequest) {
       source: "api_agent_message",
       operationalMetadata,
       conversationMemory,
+      agentDecision,
     });
 
     return NextResponse.json({
@@ -1369,6 +1594,7 @@ export async function POST(request: NextRequest) {
       marketing_consent: marketingConsent,
       detected_intent: detectedIntent,
       conversation_memory: conversationMemory,
+      agent_decision: agentDecision,
     });
   } catch (error) {
     console.error("phonesia agent route error:", error);
