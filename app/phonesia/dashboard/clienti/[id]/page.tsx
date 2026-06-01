@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 
+import ClienteAgentDecisionPanel from "@/components/phonesia/dashboard/ClienteAgentDecisionPanel";
 import ClienteOpportunityPanel from "@/components/phonesia/dashboard/ClienteOpportunityPanel";
 import ClienteAgentInsight from "@/components/phonesia/dashboard/ClienteAgentInsight";
 
@@ -713,6 +714,7 @@ export default async function DashboardClienteOpportunitaPage({
           )}
         </section>
 
+	<ClienteAgentDecisionPanel clienteId={cliente.id} />
         <ClienteAgentInsight
           clienteNome={[cliente.nome, cliente.cognome].filter(Boolean).join(" ") || "Cliente"}
           activeServices={[...activeFamilies]}
