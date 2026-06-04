@@ -18,6 +18,105 @@ const NEGOZI: Record<number, string> = {
   5: "Tabacchino Floridia",
 };
 
+type ClienteQrRow = {
+  id: number;
+  nome: string | null;
+  cognome: string | null;
+  telefono: string | null;
+  email: string | null;
+  codice_fiscale: string | null;
+  negozio_id: number | null;
+  qr_id: string | null;
+};
+
+function normalizeEmail(value: FormDataEntryValue | null): string | null {
+  const email = String(value || "").trim().toLowerCase();
+  return email || null;
+}
+
+function normalizeCodiceFiscale(value: FormDataEntryValue | null): string {
+  return String(value || "").trim().toUpperCase();
+}
+
+function isDuplicateInsertError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const record = error as {
+    code?: unknown;
+    message?: unknown;
+    details?: unknown;
+  };
+
+  const code = typeof record.code === "string" ? record.code : "";
+  const message = typeof record.message === "string" ? record.message : "";
+  const details = typeof record.details === "string" ? record.details : "";
+
+  return (
+    code === "23505" ||
+    message.toLowerCase().includes("duplicate") ||
+    details.toLowerCase().includes("already exists")
+  );
+}
+
+async function findExistingCliente(params: {
+  telefono: string;
+  codiceFiscale: string;
+  email: string | null;
+}): Promise<ClienteQrRow | null> {
+  const { data: byPhone, error: phoneError } = await supabase
+    .from("phonesia_clienti")
+    .select("id, nome, cognome, telefono, email, codice_fiscale, negozio_id, qr_id")
+    .eq("telefono", params.telefono)
+    .limit(1);
+
+  if (phoneError) {
+    throw phoneError;
+  }
+
+  const phoneRows = (byPhone ?? []) as ClienteQrRow[];
+  if (phoneRows[0]) {
+    return phoneRows[0];
+  }
+
+  if (params.codiceFiscale) {
+    const { data: byCf, error: cfError } = await supabase
+      .from("phonesia_clienti")
+      .select("id, nome, cognome, telefono, email, codice_fiscale, negozio_id, qr_id")
+      .ilike("codice_fiscale", params.codiceFiscale)
+      .limit(1);
+
+    if (cfError) {
+      throw cfError;
+    }
+
+    const cfRows = (byCf ?? []) as ClienteQrRow[];
+    if (cfRows[0]) {
+      return cfRows[0];
+    }
+  }
+
+  if (params.email) {
+    const { data: byEmail, error: emailError } = await supabase
+      .from("phonesia_clienti")
+      .select("id, nome, cognome, telefono, email, codice_fiscale, negozio_id, qr_id")
+      .ilike("email", params.email)
+      .limit(1);
+
+    if (emailError) {
+      throw emailError;
+    }
+
+    const emailRows = (byEmail ?? []) as ClienteQrRow[];
+    if (emailRows[0]) {
+      return emailRows[0];
+    }
+  }
+
+  return null;
+}
+
 export default function QrForm({
   negozioId,
 }: {
@@ -72,58 +171,29 @@ export default function QrForm({
     }
 
     const telefonoFormatted = `+39${telefonoRaw}`;
+    const codiceFiscale = normalizeCodiceFiscale(data.get("codice_fiscale"));
+    const email = normalizeEmail(data.get("email"));
 
-    const codiceFiscale = String(data.get("codice_fiscale") || "")
-      .trim()
-      .toUpperCase();
+    try {
+      const clienteEsistente = await findExistingCliente({
+        telefono: telefonoFormatted,
+        codiceFiscale,
+        email,
+      });
 
-    const { data: clienteEsistente, error: searchError } = await supabase
-      .from("phonesia_clienti")
-      .select("*")
-      .eq("telefono", telefonoFormatted)
-      .single();
-
-    if (searchError && searchError.code !== "PGRST116") {
-      console.error("Errore ricerca cliente:", searchError);
-      alert("Errore durante la verifica del cliente");
-      setLoading(false);
-      return;
-    }
-
-    let clienteFinale = clienteEsistente;
-
-    if (clienteEsistente) {
-      const { error: updateError } = await supabase
-        .from("phonesia_clienti")
-        .update({
-          nome: data.get("nome"),
-          cognome: data.get("cognome"),
-          email: data.get("email") || null,
-          codice_fiscale: codiceFiscale,
-          negozio_id: negozioId,
-        })
-        .eq("id", clienteEsistente.id);
-
-      if (updateError) {
-        console.error("Errore aggiornamento cliente:", updateError);
-        alert("Errore aggiornamento cliente");
+      if (clienteEsistente) {
+        alert("Cliente già registrato");
         setLoading(false);
         return;
       }
 
-      clienteFinale = {
-        ...clienteEsistente,
-        codice_fiscale: codiceFiscale,
-        negozio_id: negozioId,
-      };
-    } else {
       const { data: nuovoCliente, error: insertError } = await supabase
         .from("phonesia_clienti")
         .insert({
           nome: data.get("nome"),
           cognome: data.get("cognome"),
           telefono: telefonoFormatted,
-          email: data.get("email") || null,
+          email,
           codice_fiscale: codiceFiscale,
           qr_id: "phonesia_qr",
           negozio_id: negozioId,
@@ -133,49 +203,55 @@ export default function QrForm({
 
       if (insertError || !nuovoCliente) {
         console.error("Errore creazione cliente:", insertError);
-        alert("Errore durante la registrazione del cliente");
+
+        if (isDuplicateInsertError(insertError)) {
+          alert("Cliente già registrato");
+        } else {
+          alert("Errore durante la registrazione del cliente");
+        }
+
         setLoading(false);
         return;
       }
 
-      clienteFinale = nuovoCliente;
-    }
-
-    if (!clienteFinale) {
-      alert("Errore imprevisto nella registrazione.");
-      setLoading(false);
-      return;
-    }
-
-    const { error: errConsenso } = await registraPrivacyAccepted({
-      cliente_id: clienteFinale.id,
-      qr_id: "phonesia_qr",
-    });
-
-    if (errConsenso) {
-      console.error("Errore consenso:", errConsenso);
-      alert("Errore durante la registrazione del consenso");
-      setLoading(false);
-      return;
-    }
-
-    if (marketingAccepted) {
-      await registraMarketingAccepted({
-        cliente_id: clienteFinale.id,
+      const { error: errConsenso } = await registraPrivacyAccepted({
+        cliente_id: nuovoCliente.id,
         qr_id: "phonesia_qr",
-        negozio_id: negozioId,
       });
-    }
 
-    try {
-      await sendWelcome(clienteFinale.id);
-      setLoading(false);
-      window.location.href = `/phonesia/welcome?id=${clienteFinale.id}`;
+      if (errConsenso) {
+        console.error("Errore consenso:", errConsenso);
+        alert("Errore durante la registrazione del consenso");
+        setLoading(false);
+        return;
+      }
+
+      if (marketingAccepted) {
+        const { error: marketingError } = await registraMarketingAccepted({
+          cliente_id: nuovoCliente.id,
+          qr_id: "phonesia_qr",
+          negozio_id: negozioId,
+        });
+
+        if (marketingError) {
+          console.error("Errore consenso marketing:", marketingError);
+        }
+      }
+
+      try {
+        await sendWelcome(nuovoCliente.id);
+        setLoading(false);
+        window.location.href = `/phonesia/welcome?id=${nuovoCliente.id}`;
+      } catch (error) {
+        console.error(error);
+        alert(
+          "Registrazione completata, ma non siamo riusciti a inviare il messaggio WhatsApp automatico.",
+        );
+        setLoading(false);
+      }
     } catch (error) {
-      console.error(error);
-      alert(
-        "Registrazione completata, ma non siamo riusciti a inviare il messaggio WhatsApp automatico.",
-      );
+      console.error("Errore imprevisto registrazione QR:", error);
+      alert("Errore imprevisto nella registrazione.");
       setLoading(false);
     }
   }
@@ -226,7 +302,7 @@ export default function QrForm({
                     </label>
 
                     <div className="flex overflow-hidden rounded-2xl border border-slate-300 bg-white">
-                      <span className="px-4 py-3 bg-slate-50 border-r">+39</span>
+                      <span className="border-r bg-slate-50 px-4 py-3">+39</span>
                       <input
                         name="telefono"
                         type="tel"
@@ -248,7 +324,7 @@ export default function QrForm({
                   <button
                     type="submit"
                     disabled={loading}
-                    className="w-full bg-orange-500 text-white py-3 rounded-xl"
+                    className="w-full rounded-xl bg-orange-500 py-3 text-white"
                   >
                     {loading ? "..." : "Completa registrazione"}
                   </button>
@@ -275,7 +351,7 @@ function InputField({
 }) {
   return (
     <div>
-      <label className="block mb-2 text-sm">{label}</label>
+      <label className="mb-2 block text-sm">{label}</label>
       <input
         name={name}
         required={required}
@@ -284,7 +360,7 @@ function InputField({
             e.currentTarget.value = e.currentTarget.value.toUpperCase();
           }
         }}
-        className="w-full px-4 py-3 border rounded-xl"
+        className="w-full rounded-xl border px-4 py-3"
       />
     </div>
   );
