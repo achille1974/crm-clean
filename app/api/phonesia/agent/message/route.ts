@@ -408,7 +408,7 @@ function isPotentialFollowUpMessage(message: string, detectedIntent: Intent): bo
 
   if (detectedIntent !== "altro") return false;
 
-  return /^(s[iì]|ok|okay|va bene|perfetto|certo|mi interessa|sono interessato|procediamo|chiamatemi|contattatemi|richiamatemi)[.!?\s]*$/i.test(
+  return /^(s[iì](\s+(grazie|gtazie))?|ok(ay)?(\s+(grazie|gtazie))?|va bene(\s+(grazie|gtazie))?|perfetto(\s+(grazie|gtazie))?|certo(\s+(grazie|gtazie))?|mi interessa|sono interessato|procediamo|chiamatemi|contattatemi|richiamatemi)[.!?\s]*$/i.test(
     text,
   );
 }
@@ -419,7 +419,8 @@ function isUsefulPreviousIntent(intent: Intent): boolean {
     intent === "energia" ||
     intent === "fibra" ||
     intent === "assistenza" ||
-    intent === "offerte_generiche"
+    intent === "offerte_generiche" ||
+    intent === "altro"
   );
 }
 
