@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@supabase/supabase-js";
-import RichiestaStatusActions from "@/components/phonesia/dashboard/RichiestaStatusActions";
+import AgentTaskStatusActions from "@/components/phonesia/dashboard/AgentTaskStatusActions";
 
 export const dynamic = "force-dynamic";
 
@@ -12,54 +12,38 @@ type Props = {
   searchParams?: SearchParamsInput;
 };
 
-type ConversationRow = {
+type AgentTaskRow = {
   id: number | string;
-  created_at: string | null;
+  conversation_id: number | string | null;
+  thread_id: string | null;
   cliente_id: number | null;
-  messaggio_utente: string | null;
-  intent: string | null;
-  handoff_richiesto: boolean | null;
-  metadata: Record<string, unknown> | null;
-};
-
-type ClienteRow = {
-  id: number;
-  nome: string | null;
-  cognome: string | null;
-  telefono: string | null;
-  email: string | null;
-  negozio_id: number | null;
-  whatsapp_active: boolean | null;
-};
-
-type OperationalSla = {
-  due_at: string | null;
-  level: string;
-  status: string;
-  reason: string | null;
-};
-
-type OperationalMetadata = {
-  cliente_riconosciuto: boolean;
   negozio_id: number | null;
   negozio_label: string | null;
-  motivo_handoff: string | null;
-  azione_richiesta: string;
-  priorita: string;
-  stato_operativo: string;
-  opportunity_score: number;
-  opportunity_score_reason: string[];
-  sla: OperationalSla | null;
-};
-
-type ConversationMemory = {
-  is_follow_up: boolean;
-  previous_intent: string | null;
-  previous_message: string | null;
-  previous_conversation_id: number | string | null;
-  previous_created_at: string | null;
-  confidence: string | null;
-  reason: string | null;
+  customer_name: string | null;
+  customer_phone: string | null;
+  source: string | null;
+  intent: string | null;
+  detected_intent: string | null;
+  message: string | null;
+  reply: string | null;
+  next_best_action_code: string | null;
+  next_best_action_label: string | null;
+  next_best_action_reason: string | null;
+  required_data: unknown;
+  questions_to_ask: unknown;
+  risk_flags: unknown;
+  operator_summary: string | null;
+  priority: string | null;
+  score: number | null;
+  score_reasons: unknown;
+  sla_due_at: string | null;
+  sla_level: string | null;
+  sla_status: string | null;
+  sla_reason: string | null;
+  status: string | null;
+  created_at: string | null;
+  closed_at: string | null;
+  metadata: Record<string, unknown> | null;
 };
 
 type AgentNextBestAction = {
@@ -76,31 +60,40 @@ type AgentDecision = {
   operator_summary: string;
 };
 
-type RequestItem = {
+type ConversationMemory = {
+  is_follow_up: boolean;
+  previous_intent: string | null;
+  previous_message: string | null;
+  previous_conversation_id: number | string | null;
+  previous_created_at: string | null;
+  confidence: string | null;
+  reason: string | null;
+};
+
+type TaskItem = {
   id: number | string;
+  conversation_id: number | string | null;
   created_at: string | null;
+  closed_at: string | null;
   cliente_id: number;
   cliente_nome: string;
   telefono: string;
+  negozio_id: number | null;
+  negozio_label: string | null;
   messaggio_utente: string;
   intent: string;
-  handoff_richiesto: boolean;
-  handoff_status: string;
-  handoff_error: string | null;
-  operational: OperationalMetadata;
-  conversation_memory: ConversationMemory | null;
+  detected_intent: string | null;
+  status: string;
+  priority: string;
+  score: number;
+  score_reasons: string[];
+  sla_due_at: string | null;
+  sla_level: string;
+  sla_status: string;
+  sla_reason: string | null;
+  source: string;
   agent_decision: AgentDecision | null;
-};
-
-const ACTION_LABELS: Record<string, string> = {
-  nessuna_azione: "Nessuna azione",
-  verificare_offerta_smartphone: "Verificare offerta smartphone",
-  verificare_offerta_energia_con_bolletta: "Verificare energia con bolletta",
-  verificare_copertura_fibra: "Verificare copertura fibra",
-  gestire_assistenza_cliente: "Gestire assistenza cliente",
-  richiamare_cliente: "Richiamare cliente",
-  verificare_offerta_adatta: "Verificare offerta adatta",
-  verificare_richiesta_cliente: "Verificare richiesta cliente",
+  conversation_memory: ConversationMemory | null;
 };
 
 const INTENT_LABELS: Record<string, string> = {
@@ -112,6 +105,16 @@ const INTENT_LABELS: Record<string, string> = {
   offerte_generiche: "Offerte",
   saluto: "Saluto",
   altro: "Altro",
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  da_gestire: "Da gestire",
+  in_lavorazione: "In lavorazione",
+  ricontattato: "Ricontattato",
+  chiusa: "Chiusa",
+  non_interessato: "Non interessato",
+  informativo: "Informativo",
+  annullata: "Annullata",
 };
 
 function getSupabaseAdmin() {
@@ -147,21 +150,6 @@ function readNullableString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value : null;
 }
 
-function readNullableNumber(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-
-  return null;
-}
-
-function readBoolean(value: unknown): boolean {
-  return value === true;
-}
-
 function readNumber(value: unknown): number {
   if (typeof value === "number" && Number.isFinite(value)) {
     return Math.max(0, Math.min(100, Math.round(value)));
@@ -179,21 +167,25 @@ function readNumber(value: unknown): number {
 
 function readStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
-
   return value.filter((item): item is string => typeof item === "string");
+}
+
+function getMetadataRecord(
+  metadata: Record<string, unknown> | null,
+  key: string,
+): Record<string, unknown> | null {
+  if (!metadata) return null;
+  const value = metadata[key];
+  return isRecord(value) ? value : null;
 }
 
 function getConversationMemory(
   metadata: Record<string, unknown> | null,
 ): ConversationMemory | null {
-  if (!metadata) return null;
+  const raw = getMetadataRecord(metadata, "conversation_memory");
+  if (!raw) return null;
 
-  const raw = metadata.conversation_memory;
-
-  if (!isRecord(raw)) return null;
-
-  const isFollowUp = readBoolean(raw.is_follow_up);
-
+  const isFollowUp = raw.is_follow_up === true;
   if (!isFollowUp) return null;
 
   const previousConversationId = raw.previous_conversation_id;
@@ -214,68 +206,103 @@ function getConversationMemory(
   };
 }
 
-function getAgentDecision(
-  metadata: Record<string, unknown> | null,
-): AgentDecision | null {
-  if (!metadata) return null;
+function getAgentDecision(row: AgentTaskRow): AgentDecision | null {
+  const metadataDecision = getMetadataRecord(row.metadata, "agent_decision");
 
-  const raw = metadata.agent_decision;
+  if (metadataDecision) {
+    const nextBestActionRaw = metadataDecision.next_best_action;
+    if (isRecord(nextBestActionRaw)) {
+      const code = readString(nextBestActionRaw.code);
+      const label = readString(nextBestActionRaw.label);
+      const reason = readString(nextBestActionRaw.reason);
 
-  if (!isRecord(raw)) return null;
+      if (code && label) {
+        return {
+          next_best_action: {
+            code,
+            label,
+            reason,
+          },
+          required_data: readStringArray(metadataDecision.required_data),
+          questions_to_ask: readStringArray(metadataDecision.questions_to_ask),
+          risk_flags: readStringArray(metadataDecision.risk_flags),
+          operator_summary: readString(metadataDecision.operator_summary),
+        };
+      }
+    }
+  }
 
-  const nextBestActionRaw = raw.next_best_action;
-  const nextBestAction = isRecord(nextBestActionRaw) ? nextBestActionRaw : {};
-  const code = readString(nextBestAction.code) || "verify_customer_request";
-  const label = readString(nextBestAction.label) || "Verificare richiesta cliente";
-  const reason =
-    readString(nextBestAction.reason) ||
-    "Decisione operativa generata dall’agent.";
+  const code = row.next_best_action_code ?? "";
+  const label = row.next_best_action_label ?? "";
+
+  if (!code || !label) return null;
 
   return {
     next_best_action: {
       code,
       label,
-      reason,
+      reason: row.next_best_action_reason ?? "",
     },
-    required_data: readStringArray(raw.required_data),
-    questions_to_ask: readStringArray(raw.questions_to_ask),
-    risk_flags: readStringArray(raw.risk_flags),
-    operator_summary: readString(raw.operator_summary),
+    required_data: readStringArray(row.required_data),
+    questions_to_ask: readStringArray(row.questions_to_ask),
+    risk_flags: readStringArray(row.risk_flags),
+    operator_summary: row.operator_summary ?? "",
   };
 }
 
-function getOperationalSla(value: unknown): OperationalSla | null {
-  if (!isRecord(value)) return null;
+function formatDate(value: string | null) {
+  if (!value) return "-";
 
-  return {
-    due_at: readNullableString(value.due_at),
-    level: readString(value.level) || "nessuna",
-    status: readString(value.status) || "in_tempo",
-    reason: readNullableString(value.reason),
-  };
+  try {
+    return new Intl.DateTimeFormat("it-IT", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(value));
+  } catch {
+    return value;
+  }
 }
 
-function isClosedOperationalStatus(status: string): boolean {
+function normalizeSearch(value: string): string {
+  return value.toLowerCase().trim();
+}
+
+function truncateText(value: string, maxLength: number) {
+  const text = value.trim();
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength - 1)}…`;
+}
+
+function getIntentLabel(intent: string) {
+  return INTENT_LABELS[intent] ?? intent;
+}
+
+function getStatusLabel(status: string) {
+  return STATUS_LABELS[status] ?? status;
+}
+
+function isClosedStatus(status: string): boolean {
   return (
     status === "chiusa" ||
     status === "ricontattato" ||
-    status === "non_interessato"
+    status === "non_interessato" ||
+    status === "annullata"
   );
 }
 
-function getSlaStatus(
-  sla: OperationalSla | null,
-  operationalStatus: string,
-): string {
-  if (isClosedOperationalStatus(operationalStatus)) {
+function getSlaStatus(task: TaskItem): string {
+  if (isClosedStatus(task.status)) {
     return "completata";
   }
 
-  if (!sla?.due_at) {
+  if (!task.sla_due_at) {
     return "nessuna";
   }
 
-  const dueTime = new Date(sla.due_at).getTime();
+  const dueTime = new Date(task.sla_due_at).getTime();
 
   if (!Number.isFinite(dueTime)) {
     return "nessuna";
@@ -329,75 +356,6 @@ function slaLevelLabel(level: string): string {
   return "Nessuna scadenza";
 }
 
-function getOperationalMetadata(
-  metadata: Record<string, unknown> | null,
-): OperationalMetadata | null {
-  if (!metadata) return null;
-
-  const raw = metadata.agent_operational;
-
-  if (!isRecord(raw)) return null;
-
-  const statoOperativo = readString(raw.stato_operativo) || "da_gestire";
-  const azioneRichiesta =
-    readString(raw.azione_richiesta) || "verificare_richiesta_cliente";
-  const priorita = readString(raw.priorita) || "normale";
-
-  return {
-    cliente_riconosciuto: readBoolean(raw.cliente_riconosciuto),
-    negozio_id: readNullableNumber(raw.negozio_id),
-    negozio_label: readNullableString(raw.negozio_label),
-    motivo_handoff: readNullableString(raw.motivo_handoff),
-    azione_richiesta: azioneRichiesta,
-    priorita,
-    stato_operativo: statoOperativo,
-    opportunity_score: readNumber(raw.opportunity_score),
-    opportunity_score_reason: readStringArray(raw.opportunity_score_reason),
-    sla: getOperationalSla(raw.sla),
-  };
-}
-
-function formatDate(value: string | null) {
-  if (!value) return "-";
-
-  try {
-    return new Intl.DateTimeFormat("it-IT", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    }).format(new Date(value));
-  } catch {
-    return value;
-  }
-}
-
-function fullName(cliente: ClienteRow | undefined): string {
-  const name = [cliente?.nome, cliente?.cognome].filter(Boolean).join(" ").trim();
-  return name || "Cliente";
-}
-
-function normalizeSearch(value: string): string {
-  return value.toLowerCase().trim();
-}
-
-function truncateText(value: string, maxLength: number) {
-  const text = value.trim();
-
-  if (text.length <= maxLength) return text;
-
-  return `${text.slice(0, maxLength - 1)}…`;
-}
-
-function getActionLabel(action: string) {
-  return ACTION_LABELS[action] ?? action.replaceAll("_", " ");
-}
-
-function getIntentLabel(intent: string) {
-  return INTENT_LABELS[intent] ?? intent;
-}
-
 function priorityClass(priority: string) {
   if (priority === "alta") {
     return "border-red-200 bg-red-50 text-red-700";
@@ -423,7 +381,7 @@ function statusClass(status: string) {
     return "border-slate-300 bg-slate-100 text-slate-700";
   }
 
-  if (status === "non_interessato") {
+  if (status === "non_interessato" || status === "annullata") {
     return "border-red-200 bg-red-50 text-red-700";
   }
 
@@ -432,22 +390,6 @@ function statusClass(status: string) {
   }
 
   return "border-blue-200 bg-blue-50 text-blue-700";
-}
-
-function handoffClass(status: string) {
-  if (status === "sent_template") {
-    return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  }
-
-  if (status === "skipped_duplicate") {
-    return "border-blue-200 bg-blue-50 text-blue-700";
-  }
-
-  if (status === "failed_template") {
-    return "border-red-200 bg-red-50 text-red-700";
-  }
-
-  return "border-slate-200 bg-slate-50 text-slate-600";
 }
 
 function scoreClass(score: number) {
@@ -496,23 +438,15 @@ function scoreExplanation(score: number) {
   return "Messaggio informativo o con poco potenziale commerciale.";
 }
 
-function isRequestItem(value: RequestItem | null): value is RequestItem {
-  return value !== null;
+function getTaskGroupKey(task: TaskItem): string {
+  return String(task.cliente_id);
 }
 
-function buildRequestGroupKey(row: RequestItem): string {
-  return String(row.cliente_id);
-}
-
-function getLatestOperationalRequests(rows: RequestItem[]): RequestItem[] {
-  const uniqueRows = new Map<string, RequestItem>();
+function getLatestOperationalTasks(rows: TaskItem[]): TaskItem[] {
+  const uniqueRows = new Map<string, TaskItem>();
 
   for (const row of rows) {
-    if (row.handoff_status === "skipped_duplicate") {
-      continue;
-    }
-
-    const key = buildRequestGroupKey(row);
+    const key = getTaskGroupKey(row);
 
     if (!uniqueRows.has(key)) {
       uniqueRows.set(key, row);
@@ -520,6 +454,40 @@ function getLatestOperationalRequests(rows: RequestItem[]): RequestItem[] {
   }
 
   return Array.from(uniqueRows.values());
+}
+
+function getTaskItem(row: AgentTaskRow): TaskItem | null {
+  if (!row.cliente_id) return null;
+
+  return {
+    id: row.id,
+    conversation_id: row.conversation_id,
+    created_at: row.created_at,
+    closed_at: row.closed_at,
+    cliente_id: row.cliente_id,
+    cliente_nome: row.customer_name || "Cliente",
+    telefono: row.customer_phone || "—",
+    negozio_id: row.negozio_id,
+    negozio_label: row.negozio_label,
+    messaggio_utente: row.message || "",
+    intent: row.intent || "altro",
+    detected_intent: row.detected_intent,
+    status: row.status || "da_gestire",
+    priority: row.priority || "normale",
+    score: readNumber(row.score),
+    score_reasons: readStringArray(row.score_reasons),
+    sla_due_at: row.sla_due_at,
+    sla_level: row.sla_level || "nessuna",
+    sla_status: row.sla_status || "in_tempo",
+    sla_reason: row.sla_reason,
+    source: row.source || "agent_message",
+    agent_decision: getAgentDecision(row),
+    conversation_memory: getConversationMemory(row.metadata),
+  };
+}
+
+function isTaskItem(value: TaskItem | null): value is TaskItem {
+  return value !== null;
 }
 
 export default async function PhonesiaRichiestePage({ searchParams }: Props) {
@@ -531,112 +499,53 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
   const stato = getSingleValue(resolvedParams.stato) || "da_gestire";
   const priorita = getSingleValue(resolvedParams.priorita) || "tutte";
   const negozio = getSingleValue(resolvedParams.negozio) || "tutti";
+  const sla = getSingleValue(resolvedParams.sla) || "tutte";
 
   const supabase = getSupabaseAdmin();
 
-  const { data: conversazioniData, error: conversazioniError } = await supabase
-    .from("phonesia_conversazioni")
+  const { data: tasksData, error: tasksError } = await supabase
+    .from("phonesia_agent_tasks")
     .select(
-      "id, created_at, cliente_id, messaggio_utente, intent, handoff_richiesto, metadata",
+      "id, conversation_id, thread_id, cliente_id, negozio_id, negozio_label, customer_name, customer_phone, source, intent, detected_intent, message, reply, next_best_action_code, next_best_action_label, next_best_action_reason, required_data, questions_to_ask, risk_flags, operator_summary, priority, score, score_reasons, sla_due_at, sla_level, sla_status, sla_reason, status, created_at, closed_at, metadata",
     )
-    .eq("canale", "whatsapp")
-    .eq("handoff_richiesto", true)
     .order("created_at", { ascending: false })
-    .limit(300);
+    .limit(500);
 
-  if (conversazioniError) {
-    throw new Error(`Errore lettura richieste agent: ${conversazioniError.message}`);
+  if (tasksError) {
+    throw new Error(`Errore lettura task agent: ${tasksError.message}`);
   }
 
-  const conversazioni = (conversazioniData ?? []) as ConversationRow[];
-  const clienteIds = Array.from(
-    new Set(
-      conversazioni
-        .map((row) => row.cliente_id)
-        .filter((id): id is number => typeof id === "number"),
-    ),
-  );
-
-  const clientiById = new Map<number, ClienteRow>();
-
-  if (clienteIds.length > 0) {
-    const { data: clientiData, error: clientiError } = await supabase
-      .from("phonesia_clienti")
-      .select("id, nome, cognome, telefono, email, negozio_id, whatsapp_active")
-      .in("id", clienteIds);
-
-    if (clientiError) {
-      throw new Error(`Errore lettura clienti richieste: ${clientiError.message}`);
-    }
-
-    ((clientiData ?? []) as ClienteRow[]).forEach((cliente) => {
-      clientiById.set(cliente.id, cliente);
-    });
-  }
-
-  const richieste = conversazioni
-    .map((row): RequestItem | null => {
-      if (!row.cliente_id) return null;
-
-      const operational = getOperationalMetadata(row.metadata);
-      if (!operational) return null;
-
-      const cliente = clientiById.get(row.cliente_id);
-      const metadata = row.metadata ?? {};
-      const telefonoMetadata = readString(metadata.telefono);
-      const handoffStatus = readString(metadata.handoff_status) || "non_aggiornato";
-      const conversationMemory = getConversationMemory(row.metadata);
-      const agentDecision = getAgentDecision(row.metadata);
-
-      return {
-        id: row.id,
-        created_at: row.created_at,
-        cliente_id: row.cliente_id,
-        cliente_nome: fullName(cliente),
-        telefono: cliente?.telefono || telefonoMetadata || "—",
-        messaggio_utente: row.messaggio_utente || "",
-        intent: row.intent || operational.motivo_handoff || "altro",
-        handoff_richiesto: row.handoff_richiesto === true,
-        handoff_status: handoffStatus,
-        handoff_error: readNullableString(metadata.handoff_error),
-        operational,
-        conversation_memory: conversationMemory,
-        agent_decision: agentDecision,
-      };
-    })
-    .filter(isRequestItem);
+  const tasks = ((tasksData ?? []) as AgentTaskRow[])
+    .map(getTaskItem)
+    .filter(isTaskItem);
 
   const query = normalizeSearch(q);
-  const richiestePulite = getLatestOperationalRequests(richieste);
-  const richiesteBase = vista === "storico" ? richieste : richiestePulite;
-  const richiesteNascosteVistaPulita = Math.max(
-    0,
-    richieste.length - richiestePulite.length,
-  );
+  const tasksPulite = getLatestOperationalTasks(tasks);
+  const tasksBase = vista === "storico" ? tasks : tasksPulite;
+  const tasksNascosteVistaPulita = Math.max(0, tasks.length - tasksPulite.length);
 
-  const richiesteFiltrate = richiesteBase.filter((row) => {
-    const matchesStato =
-      stato === "tutte" || row.operational.stato_operativo === stato;
-    const matchesPriorita =
-      priorita === "tutte" || row.operational.priorita === priorita;
-    const matchesNegozio =
-      negozio === "tutti" || String(row.operational.negozio_id ?? "") === negozio;
+  const tasksFiltrate = tasksBase.filter((row) => {
+    const slaStatus = getSlaStatus(row);
+    const matchesStato = stato === "tutte" || row.status === stato;
+    const matchesPriorita = priorita === "tutte" || row.priority === priorita;
+    const matchesNegozio = negozio === "tutti" || String(row.negozio_id ?? "") === negozio;
+    const matchesSla = sla === "tutte" || slaStatus === sla;
 
     const searchBlob = [
       row.cliente_nome,
       row.telefono,
       row.messaggio_utente,
       row.intent,
+      row.detected_intent,
       row.conversation_memory?.previous_intent,
       row.conversation_memory?.previous_message,
+      row.negozio_label,
       row.agent_decision?.next_best_action.label,
       row.agent_decision?.next_best_action.reason,
       row.agent_decision?.operator_summary,
       ...(row.agent_decision?.required_data ?? []),
       ...(row.agent_decision?.questions_to_ask ?? []),
       ...(row.agent_decision?.risk_flags ?? []),
-      row.operational.negozio_label,
-      row.operational.azione_richiesta,
     ]
       .filter(Boolean)
       .join(" ")
@@ -644,36 +553,23 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
 
     const matchesSearch = !query || searchBlob.includes(query);
 
-    return matchesStato && matchesPriorita && matchesNegozio && matchesSearch;
+    return matchesStato && matchesPriorita && matchesNegozio && matchesSla && matchesSearch;
   });
 
-  const daGestire = richiesteBase.filter(
-    (row) => row.operational.stato_operativo === "da_gestire",
-  ).length;
-  const altaPriorita = richiesteBase.filter(
-    (row) => row.operational.priorita === "alta",
-  ).length;
-  const duplicatiBloccati = richieste.filter(
-    (row) => row.handoff_status === "skipped_duplicate",
-  ).length;
+  const daGestire = tasksBase.filter((row) => row.status === "da_gestire").length;
+  const altaPriorita = tasksBase.filter((row) => row.priority === "alta").length;
+  const inRitardo = tasksBase.filter((row) => getSlaStatus(row) === "in_ritardo").length;
+  const inScadenza = tasksBase.filter((row) => getSlaStatus(row) === "in_scadenza").length;
   const scoreMedio =
-    richiesteBase.length > 0
-      ? Math.round(
-          richiesteBase.reduce(
-            (sum, row) => sum + row.operational.opportunity_score,
-            0,
-          ) / richiesteBase.length,
-        )
+    tasksBase.length > 0
+      ? Math.round(tasksBase.reduce((sum, row) => sum + row.score, 0) / tasksBase.length)
       : 0;
 
   const negoziOptions = Array.from(
     new Map(
-      richieste
-        .filter((row) => row.operational.negozio_id && row.operational.negozio_label)
-        .map((row) => [
-          String(row.operational.negozio_id),
-          row.operational.negozio_label || "Negozio",
-        ]),
+      tasks
+        .filter((row) => row.negozio_id && row.negozio_label)
+        .map((row) => [String(row.negozio_id), row.negozio_label || "Negozio"]),
     ).entries(),
   ).sort((a, b) => a[1].localeCompare(b[1]));
 
@@ -688,12 +584,12 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
           <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
             <div>
               <h1 className="text-3xl font-black tracking-tight text-slate-950 md:text-5xl">
-                Richieste clienti da gestire
+                Task clienti da gestire
               </h1>
 
               <p className="mt-3 max-w-3xl text-sm leading-relaxed text-slate-600 md:text-base">
-                Elenco delle richieste create dall’agent WhatsApp: offerte,
-                assistenza, ricontatti e azioni operative per i negozi.
+                Coda operativa generata dall’agent WhatsApp: prossime azioni,
+                SLA, score, dati da raccogliere e rischi per i negozi.
               </p>
             </div>
 
@@ -717,8 +613,8 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
 
         <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           <StatCard
-            label="Richieste operative"
-            value={richiesteBase.length}
+            label="Task operative"
+            value={tasksBase.length}
             note={vista === "storico" ? "Storico completo" : "Vista pulita"}
           />
           <StatCard
@@ -734,9 +630,11 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
             danger={altaPriorita > 0}
           />
           <StatCard
-            label="Duplicati bloccati"
-            value={duplicatiBloccati}
-            note="Notifiche negozio evitate"
+            label="SLA critica"
+            value={inRitardo + inScadenza}
+            note={`${inRitardo} in ritardo · ${inScadenza} in scadenza`}
+            danger={inRitardo > 0}
+            warning={inRitardo === 0 && inScadenza > 0}
           />
           <StatCard
             label="Score medio opportunità"
@@ -746,11 +644,11 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
         </section>
 
         <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm md:p-6">
-          <form className="grid gap-3 md:grid-cols-[1.5fr_1fr_1fr_1fr_1fr_auto]">
+          <form className="grid gap-3 md:grid-cols-[1.5fr_1fr_1fr_1fr_1fr_1fr_auto]">
             <input
               name="q"
               defaultValue={q}
-              placeholder="Cerca cliente, telefono, messaggio..."
+              placeholder="Cerca cliente, telefono, azione, dati, domande..."
               className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 outline-none transition focus:border-orange-500"
             />
 
@@ -774,6 +672,7 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
               <option value="chiusa">Chiusa</option>
               <option value="non_interessato">Non interessato</option>
               <option value="informativo">Informativo</option>
+              <option value="annullata">Annullata</option>
               <option value="tutte">Tutti gli stati</option>
             </select>
 
@@ -785,6 +684,19 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
               <option value="tutte">Tutte le priorità</option>
               <option value="alta">Alta</option>
               <option value="normale">Normale</option>
+            </select>
+
+            <select
+              name="sla"
+              defaultValue={sla}
+              className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 outline-none transition focus:border-orange-500"
+            >
+              <option value="tutte">Tutte le SLA</option>
+              <option value="in_ritardo">In ritardo</option>
+              <option value="in_scadenza">In scadenza</option>
+              <option value="in_tempo">In tempo</option>
+              <option value="completata">Completata</option>
+              <option value="nessuna">Nessuna SLA</option>
             </select>
 
             <select
@@ -815,7 +727,7 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
               Come leggere lo score opportunità
             </h2>
             <p className="mt-1 text-sm leading-relaxed text-slate-600">
-              Lo score aiuta a capire quali richieste gestire prima: non è una vendita garantita,
+              Lo score aiuta a capire quali task gestire prima: non è una vendita garantita,
               ma un indicatore di priorità commerciale e operativa.
             </p>
           </div>
@@ -851,26 +763,26 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
         <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 px-5 py-4 md:px-6">
             <h2 className="text-xl font-black tracking-tight text-slate-950">
-              Richieste trovate: {richiesteFiltrate.length}
+              Task trovate: {tasksFiltrate.length}
             </h2>
 
             <p className="mt-2 max-w-4xl text-sm leading-relaxed text-slate-600">
               {vista === "storico"
-                ? "Stai vedendo lo storico completo delle conversazioni operative, inclusi duplicati tecnici e richieste ripetute."
-                : "Vista pulita: mostra solo l’ultima richiesta utile per ogni cliente, nascondendo duplicati tecnici e richieste ripetute."}
-              {vista !== "storico" && richiesteNascosteVistaPulita > 0
-                ? ` Elementi nascosti nella vista pulita: ${richiesteNascosteVistaPulita}.`
+                ? "Stai vedendo lo storico completo delle task operative, incluse richieste ripetute dello stesso cliente."
+                : "Vista pulita: mostra solo l’ultima task utile per ogni cliente."}
+              {vista !== "storico" && tasksNascosteVistaPulita > 0
+                ? ` Elementi nascosti nella vista pulita: ${tasksNascosteVistaPulita}.`
                 : ""}
             </p>
           </div>
 
-          {richiesteFiltrate.length === 0 ? (
+          {tasksFiltrate.length === 0 ? (
             <div className="p-8 text-sm font-semibold text-slate-500">
-              Nessuna richiesta trovata con questi filtri.
+              Nessuna task trovata con questi filtri.
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="min-w-[1400px] w-full border-collapse text-left text-sm">
+              <table className="min-w-[1500px] w-full border-collapse text-left text-sm">
                 <thead className="bg-slate-50 text-xs uppercase tracking-[0.16em] text-slate-500">
                   <tr>
                     <th className="px-5 py-4 font-black">Data</th>
@@ -880,203 +792,177 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
                     <th className="px-5 py-4 font-black">Priorità</th>
                     <th className="px-5 py-4 font-black">Score</th>
                     <th className="px-5 py-4 font-black">SLA</th>
-                    <th className="px-5 py-4 font-black">Azione</th>
+                    <th className="px-5 py-4 font-black">Azione agent</th>
                     <th className="px-5 py-4 font-black">Messaggio</th>
-                    <th className="px-5 py-4 font-black">Handoff</th>
                     <th className="px-5 py-4 font-black">Scheda</th>
                   </tr>
                 </thead>
 
                 <tbody className="divide-y divide-slate-100">
-                  {richiesteFiltrate.map((row) => (
-                    <tr key={row.id} className="align-top hover:bg-orange-50/30">
-                      <td className="whitespace-nowrap px-5 py-4 text-slate-600">
-                        {formatDate(row.created_at)}
-                      </td>
+                  {tasksFiltrate.map((row) => {
+                    const slaStatus = getSlaStatus(row);
 
-                      <td className="px-5 py-4">
-                        <div className="font-black text-slate-950">
-                          {row.cliente_nome}
-                        </div>
-                        <div className="mt-1 text-xs font-semibold text-slate-500">
-                          {row.telefono}
-                        </div>
-                      </td>
+                    return (
+                      <tr key={row.id} className="align-top hover:bg-orange-50/30">
+                        <td className="whitespace-nowrap px-5 py-4 text-slate-600">
+                          {formatDate(row.created_at)}
+                        </td>
 
-                      <td className="px-5 py-4 text-slate-700">
-                        {row.operational.negozio_label || "—"}
-                      </td>
-
-                      <td className="px-5 py-4">
-                        <span className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-black text-slate-700">
-                          {getIntentLabel(row.intent)}
-                        </span>
-                      </td>
-
-                      <td className="px-5 py-4">
-                        <span
-                          className={[
-                            "inline-flex rounded-full border px-3 py-1 text-xs font-black",
-                            priorityClass(row.operational.priorita),
-                          ].join(" ")}
-                        >
-                          {row.operational.priorita}
-                        </span>
-                      </td>
-
-                      <td className="px-5 py-4">
-                        <div
-                          className={[
-                            "inline-flex rounded-full border px-3 py-1 text-xs font-black",
-                            scoreClass(row.operational.opportunity_score),
-                          ].join(" ")}
-                          title={row.operational.opportunity_score_reason.join(" · ")}
-                        >
-                          {row.operational.opportunity_score}/100 ·{" "}
-                          {scoreLabel(row.operational.opportunity_score)}
-                        </div>
-
-                        <div className="mt-2 max-w-[230px] text-xs font-bold leading-relaxed text-slate-700">
-                          {scoreDescription(row.operational.opportunity_score)}
-                        </div>
-
-                        <div className="mt-1 max-w-[230px] text-[11px] leading-relaxed text-slate-500">
-                          {scoreExplanation(row.operational.opportunity_score)}
-                        </div>
-
-                        {row.operational.opportunity_score_reason.length > 0 ? (
-                          <details className="mt-2 max-w-[230px] text-[11px] text-slate-500">
-                            <summary className="cursor-pointer font-bold text-slate-600">
-                              Perché questo score
-                            </summary>
-                            <ul className="mt-2 list-disc space-y-1 pl-4">
-                              {row.operational.opportunity_score_reason.map((reason) => (
-                                <li key={reason}>{reason}</li>
-                              ))}
-                            </ul>
-                          </details>
-                        ) : null}
-                      </td>
-
-                      <td className="px-5 py-4">
-                        <span
-                          className={[
-                            "inline-flex rounded-full border px-3 py-1 text-xs font-black",
-                            slaClass(
-                              getSlaStatus(
-                                row.operational.sla,
-                                row.operational.stato_operativo,
-                              ),
-                            ),
-                          ].join(" ")}
-                        >
-                          {slaLabel(
-                            getSlaStatus(
-                              row.operational.sla,
-                              row.operational.stato_operativo,
-                            ),
-                          )}
-                        </span>
-
-                        <div className="mt-2 text-xs font-bold text-slate-700">
-                          {slaLevelLabel(row.operational.sla?.level ?? "nessuna")}
-                        </div>
-
-                        {row.operational.sla?.due_at ? (
-                          <div className="mt-1 text-[11px] leading-relaxed text-slate-500">
-                            Scadenza: {formatDate(row.operational.sla.due_at)}
+                        <td className="px-5 py-4">
+                          <div className="font-black text-slate-950">
+                            {row.cliente_nome}
                           </div>
-                        ) : null}
-
-                        {row.operational.sla?.reason ? (
-                          <div className="mt-1 max-w-[220px] text-[11px] leading-relaxed text-slate-500">
-                            {row.operational.sla.reason}
+                          <div className="mt-1 text-xs font-semibold text-slate-500">
+                            {row.telefono}
                           </div>
-                        ) : null}
-                      </td>
+                        </td>
 
-                      <td className="px-5 py-4">
-                        <div className="font-semibold text-slate-800">
-                          {getActionLabel(row.operational.azione_richiesta)}
-                        </div>
-                        <div
-                          className={[
-                            "mt-2 inline-flex rounded-full border px-3 py-1 text-xs font-black",
-                            statusClass(row.operational.stato_operativo),
-                          ].join(" ")}
-                        >
-                          {row.operational.stato_operativo}
-                        </div>
+                        <td className="px-5 py-4 text-slate-700">
+                          {row.negozio_label || "—"}
+                        </td>
 
-                        <RichiestaStatusActions
-                          richiestaId={row.id}
-                          currentStatus={row.operational.stato_operativo}
-                        />
+                        <td className="px-5 py-4">
+                          <span className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-black text-slate-700">
+                            {getIntentLabel(row.intent)}
+                          </span>
+                        </td>
 
-                        {row.agent_decision ? (
-                          <AgentDecisionBox decision={row.agent_decision} />
-                        ) : null}
-                      </td>
+                        <td className="px-5 py-4">
+                          <span
+                            className={[
+                              "inline-flex rounded-full border px-3 py-1 text-xs font-black",
+                              priorityClass(row.priority),
+                            ].join(" ")}
+                          >
+                            {row.priority}
+                          </span>
+                        </td>
 
-                      <td className="max-w-md px-5 py-4 text-slate-600">
-                        <div className="font-semibold text-slate-800">
-                          {truncateText(row.messaggio_utente, 180)}
-                        </div>
+                        <td className="px-5 py-4">
+                          <div
+                            className={[
+                              "inline-flex rounded-full border px-3 py-1 text-xs font-black",
+                              scoreClass(row.score),
+                            ].join(" ")}
+                            title={row.score_reasons.join(" · ")}
+                          >
+                            {row.score}/100 · {scoreLabel(row.score)}
+                          </div>
 
-                        {row.conversation_memory ? (
-                          <div className="mt-3 rounded-2xl border border-blue-200 bg-blue-50 px-3 py-3 text-xs leading-relaxed text-blue-800">
-                            <div className="font-black uppercase tracking-[0.14em] text-blue-700">
-                              Collegata a richiesta precedente
+                          <div className="mt-2 max-w-[230px] text-xs font-bold leading-relaxed text-slate-700">
+                            {scoreDescription(row.score)}
+                          </div>
+
+                          <div className="mt-1 max-w-[230px] text-[11px] leading-relaxed text-slate-500">
+                            {scoreExplanation(row.score)}
+                          </div>
+
+                          {row.score_reasons.length > 0 ? (
+                            <details className="mt-2 max-w-[230px] text-[11px] text-slate-500">
+                              <summary className="cursor-pointer font-bold text-slate-600">
+                                Perché questo score
+                              </summary>
+                              <ul className="mt-2 list-disc space-y-1 pl-4">
+                                {row.score_reasons.map((reason) => (
+                                  <li key={reason}>{reason}</li>
+                                ))}
+                              </ul>
+                            </details>
+                          ) : null}
+                        </td>
+
+                        <td className="px-5 py-4">
+                          <span
+                            className={[
+                              "inline-flex rounded-full border px-3 py-1 text-xs font-black",
+                              slaClass(slaStatus),
+                            ].join(" ")}
+                          >
+                            {slaLabel(slaStatus)}
+                          </span>
+
+                          <div className="mt-2 text-xs font-bold text-slate-700">
+                            {slaLevelLabel(row.sla_level)}
+                          </div>
+
+                          {row.sla_due_at ? (
+                            <div className="mt-1 text-[11px] leading-relaxed text-slate-500">
+                              Scadenza: {formatDate(row.sla_due_at)}
                             </div>
+                          ) : null}
 
-                            <div className="mt-2">
-                              <span className="font-black">Tipo:</span>{" "}
-                              {row.conversation_memory.previous_intent
-                                ? getIntentLabel(row.conversation_memory.previous_intent)
-                                : "—"}
+                          {row.sla_reason ? (
+                            <div className="mt-1 max-w-[220px] text-[11px] leading-relaxed text-slate-500">
+                              {row.sla_reason}
                             </div>
+                          ) : null}
+                        </td>
 
-                            {row.conversation_memory.previous_message ? (
-                              <div className="mt-1">
-                                <span className="font-black">Prima richiesta:</span>{" "}
-                                {truncateText(
-                                  row.conversation_memory.previous_message,
-                                  130,
-                                )}
-                              </div>
-                            ) : null}
-
-                            {row.conversation_memory.reason ? (
-                              <div className="mt-1 text-blue-700">
-                                {row.conversation_memory.reason}
-                              </div>
-                            ) : null}
+                        <td className="px-5 py-4">
+                          <div
+                            className={[
+                              "inline-flex rounded-full border px-3 py-1 text-xs font-black",
+                              statusClass(row.status),
+                            ].join(" ")}
+                          >
+                            {getStatusLabel(row.status)}
                           </div>
-                        ) : null}
-                      </td>
 
-                      <td className="px-5 py-4">
-                        <span
-                          className={[
-                            "inline-flex rounded-full border px-3 py-1 text-xs font-black",
-                            handoffClass(row.handoff_status),
-                          ].join(" ")}
-                          title={row.handoff_error || undefined}
-                        >
-                          {row.handoff_status}
-                        </span>
-                      </td>
+                          <AgentTaskStatusActions
+                            taskId={row.id}
+                            currentStatus={row.status}
+                          />
 
-                      <td className="px-5 py-4">
-                        <Link
-                          href={`/phonesia/dashboard/clienti/${row.cliente_id}`}
-                          className="inline-flex rounded-2xl bg-orange-500 px-4 py-2 text-xs font-black text-white transition hover:bg-orange-600"
-                        >
-                          Apri
-                        </Link>
-                      </td>
-                    </tr>
-                  ))}
+                          {row.agent_decision ? (
+                            <AgentDecisionBox decision={row.agent_decision} />
+                          ) : null}
+                        </td>
+
+                        <td className="max-w-md px-5 py-4 text-slate-600">
+                          <div className="font-semibold text-slate-800">
+                            {truncateText(row.messaggio_utente, 180)}
+                          </div>
+
+                          {row.conversation_memory ? (
+                            <div className="mt-3 rounded-2xl border border-blue-200 bg-blue-50 px-3 py-3 text-xs leading-relaxed text-blue-800">
+                              <div className="font-black uppercase tracking-[0.14em] text-blue-700">
+                                Collegata a richiesta precedente
+                              </div>
+
+                              <div className="mt-2">
+                                <span className="font-black">Tipo:</span>{" "}
+                                {row.conversation_memory.previous_intent
+                                  ? getIntentLabel(row.conversation_memory.previous_intent)
+                                  : "—"}
+                              </div>
+
+                              {row.conversation_memory.previous_message ? (
+                                <div className="mt-1">
+                                  <span className="font-black">Prima richiesta:</span>{" "}
+                                  {truncateText(row.conversation_memory.previous_message, 130)}
+                                </div>
+                              ) : null}
+
+                              {row.conversation_memory.reason ? (
+                                <div className="mt-1 text-blue-700">
+                                  {row.conversation_memory.reason}
+                                </div>
+                              ) : null}
+                            </div>
+                          ) : null}
+                        </td>
+
+                        <td className="px-5 py-4">
+                          <Link
+                            href={`/phonesia/dashboard/clienti/${row.cliente_id}`}
+                            className="inline-flex rounded-2xl bg-orange-500 px-4 py-2 text-xs font-black text-white transition hover:bg-orange-600"
+                          >
+                            Apri
+                          </Link>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -1089,8 +975,8 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
 
 function AgentDecisionBox({ decision }: { decision: AgentDecision }) {
   return (
-    <div className="mt-4 max-w-[320px] rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-3 text-xs leading-relaxed text-emerald-900">
-      <div className="font-black uppercase tracking-[0.14em] text-emerald-700">
+    <div className="mt-4 max-w-[360px] rounded-3xl border border-violet-200 bg-violet-50 px-4 py-4 text-xs leading-relaxed text-slate-700">
+      <div className="font-black uppercase tracking-[0.14em] text-violet-700">
         Decisione agent
       </div>
 
@@ -1098,55 +984,54 @@ function AgentDecisionBox({ decision }: { decision: AgentDecision }) {
         {decision.next_best_action.label}
       </div>
 
-      <div className="mt-1 text-emerald-800">
-        {decision.next_best_action.reason}
-      </div>
+      {decision.next_best_action.reason ? (
+        <div className="mt-1 text-slate-600">
+          {decision.next_best_action.reason}
+        </div>
+      ) : null}
 
       {decision.operator_summary ? (
-        <div className="mt-2 rounded-xl border border-emerald-200 bg-white/70 px-3 py-2 text-[11px] font-semibold text-slate-700">
+        <div className="mt-2 rounded-2xl border border-violet-200 bg-white px-3 py-2 font-semibold text-slate-700">
           {decision.operator_summary}
         </div>
       ) : null}
 
-      {decision.required_data.length > 0 ? (
-        <details className="mt-2">
-          <summary className="cursor-pointer font-black text-emerald-800">
-            Dati da raccogliere
-          </summary>
-          <ul className="mt-2 list-disc space-y-1 pl-4 text-emerald-900">
-            {decision.required_data.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
-        </details>
-      ) : null}
-
-      {decision.questions_to_ask.length > 0 ? (
-        <details className="mt-2">
-          <summary className="cursor-pointer font-black text-emerald-800">
-            Domande suggerite
-          </summary>
-          <ul className="mt-2 list-disc space-y-1 pl-4 text-emerald-900">
-            {decision.questions_to_ask.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
-        </details>
-      ) : null}
-
-      {decision.risk_flags.length > 0 ? (
-        <details className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-red-800">
-          <summary className="cursor-pointer font-black text-red-700">
-            Rischi operativi
-          </summary>
-          <ul className="mt-2 list-disc space-y-1 pl-4">
-            {decision.risk_flags.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
-        </details>
-      ) : null}
+      <div className="mt-3 grid gap-2">
+        <CompactList title="Dati" items={decision.required_data} />
+        <CompactList title="Domande" items={decision.questions_to_ask} />
+        <CompactList title="Rischi" items={decision.risk_flags} danger />
+      </div>
     </div>
+  );
+}
+
+function CompactList({
+  title,
+  items,
+  danger,
+}: {
+  title: string;
+  items: string[];
+  danger?: boolean;
+}) {
+  if (items.length === 0) return null;
+
+  return (
+    <details className="rounded-2xl border border-white/80 bg-white/80 px-3 py-2">
+      <summary
+        className={[
+          "cursor-pointer font-black",
+          danger ? "text-red-700" : "text-slate-700",
+        ].join(" ")}
+      >
+        {title}: {items.length}
+      </summary>
+      <ul className="mt-2 list-disc space-y-1 pl-4 text-slate-600">
+        {items.map((item) => (
+          <li key={item}>{item}</li>
+        ))}
+      </ul>
+    </details>
   );
 }
 
@@ -1209,3 +1094,4 @@ function StatCard({
     </div>
   );
 }
+
