@@ -4,6 +4,13 @@ import { createClient } from "@supabase/supabase-js";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+type AgentRequestOrigin = {
+  source?: string;
+  wa_message_id?: string | null;
+  wa_profile_name?: string | null;
+  received_from?: string | null;
+};
+
 type AgentRequestBody = {
   message?: string;
   telefono?: string;
@@ -11,6 +18,7 @@ type AgentRequestBody = {
   email?: string;
   nome?: string;
   cognome?: string;
+  origin?: AgentRequestOrigin;
 };
 
 type ClienteRow = {
@@ -1414,6 +1422,7 @@ async function logAgentConversation(
     telefono?: string | null;
     marketingConsent: boolean;
     source: string;
+    origin?: AgentRequestOrigin | null;
     operationalMetadata: AgentOperationalMetadata;
     conversationMemory: ConversationMemory;
     agentDecision: AgentDecision;
@@ -1437,6 +1446,9 @@ async function logAgentConversation(
         telefono: params.telefono,
         marketing_consent: params.marketingConsent,
         source: params.source,
+        origin: params.origin ?? {
+          source: params.source,
+        },
         agent_operational: params.operationalMetadata,
         conversation_memory: params.conversationMemory,
         agent_decision: params.agentDecision,
@@ -1558,7 +1570,10 @@ export async function POST(request: NextRequest) {
       handoffRichiesto: deterministic.handoffRichiesto,
       telefono,
       marketingConsent,
-      source: "api_agent_message",
+      source: body.origin?.source || "api_agent_message",
+      origin: body.origin ?? {
+        source: "api_agent_message",
+      },
       operationalMetadata,
       conversationMemory,
       agentDecision,
@@ -1595,6 +1610,9 @@ export async function POST(request: NextRequest) {
       detected_intent: detectedIntent,
       conversation_memory: conversationMemory,
       agent_decision: agentDecision,
+      origin: body.origin ?? {
+        source: "api_agent_message",
+      },
     });
   } catch (error) {
     console.error("phonesia agent route error:", error);

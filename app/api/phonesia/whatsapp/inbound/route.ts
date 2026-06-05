@@ -603,6 +603,11 @@ async function askPhonesiaAgent(params: {
   origin: string;
   telefono: string;
   message: string;
+  requestOrigin?: {
+    source: string;
+    wa_message_id?: string | null;
+    received_from?: string | null;
+  };
 }): Promise<AgentResponse> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -618,6 +623,9 @@ async function askPhonesiaAgent(params: {
     body: JSON.stringify({
       telefono: params.telefono,
       message: params.message,
+      origin: params.requestOrigin ?? {
+        source: "api_agent_message",
+      },
     }),
     cache: "no-store",
   });
@@ -983,6 +991,11 @@ export async function POST(request: Request) {
           origin,
           telefono,
           message: bodyOriginal,
+          requestOrigin: {
+            source: "whatsapp_inbound",
+            wa_message_id: inbound.messageId,
+            received_from: telefono,
+          },
         });
 
         if (agentResponse.reply?.trim()) {
