@@ -896,7 +896,7 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
                     <th className="px-5 py-4 font-black">Score</th>
                     <th className="px-5 py-4 font-black">SLA</th>
                     <th className="px-5 py-4 font-black">Azione agent</th>
-                    <th className="px-5 py-4 font-black">Messaggio</th>
+                    <th className="px-5 py-4 font-black">Messaggio cliente</th>
                     <th className="px-5 py-4 font-black">Scheda</th>
                   </tr>
                 </thead>
