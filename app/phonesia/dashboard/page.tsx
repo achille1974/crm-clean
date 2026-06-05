@@ -18,6 +18,13 @@ const CARDS = [
       "Elenco operativo delle richieste generate dall’agent WhatsApp: ricontatti, assistenza, offerte e handoff negozio.",
   },
   {
+    href: "/phonesia/dashboard/agent-report",
+    badge: "Controllo agent",
+    title: "Report operativo agent",
+    description:
+      "Misura task generate dall’agent, SLA, ritardi, score medio e andamento operativo per negozio.",
+  },
+  {
     href: "/phonesia/dashboard/qr",
     badge: "QR Code",
     title: "Registrazioni QR",
