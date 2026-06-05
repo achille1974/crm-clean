@@ -557,6 +557,10 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
   });
 
   const daGestire = tasksBase.filter((row) => row.status === "da_gestire").length;
+  const inLavorazione = tasksBase.filter((row) => row.status === "in_lavorazione").length;
+  const ricontattati = tasksBase.filter((row) => row.status === "ricontattato").length;
+  const chiuse = tasksBase.filter((row) => row.status === "chiusa").length;
+  const nonInteressati = tasksBase.filter((row) => row.status === "non_interessato").length;
   const altaPriorita = tasksBase.filter((row) => row.priority === "alta").length;
   const inRitardo = tasksBase.filter((row) => getSlaStatus(row) === "in_ritardo").length;
   const inScadenza = tasksBase.filter((row) => getSlaStatus(row) === "in_scadenza").length;
@@ -564,6 +568,31 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
     tasksBase.length > 0
       ? Math.round(tasksBase.reduce((sum, row) => sum + row.score, 0) / tasksBase.length)
       : 0;
+
+  const buildFilterHref = (overrides: Record<string, string>) => {
+    const nextParams: Record<string, string> = {
+      q,
+      vista,
+      stato,
+      priorita,
+      negozio,
+      sla,
+      ...overrides,
+    };
+
+    const params = new URLSearchParams();
+
+    Object.entries(nextParams).forEach(([key, value]) => {
+      if (value) {
+        params.set(key, value);
+      }
+    });
+
+    const queryString = params.toString();
+    return queryString
+      ? `/phonesia/dashboard/richieste?${queryString}`
+      : "/phonesia/dashboard/richieste";
+  };
 
   const negoziOptions = Array.from(
     new Map(
@@ -641,6 +670,80 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
             value={`${scoreMedio}/100`}
             note="Più è alto, più va gestita prima"
           />
+        </section>
+
+        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+          <div className="mb-4">
+            <h2 className="text-lg font-black tracking-tight text-slate-950">
+              Filtri rapidi
+            </h2>
+            <p className="mt-1 text-sm leading-relaxed text-slate-600">
+              Usa questi pulsanti per passare subito da una corsia operativa all’altra.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <QuickFilterLink
+              href={buildFilterHref({ stato: "da_gestire", sla: "tutte", priorita: "tutte" })}
+              label="Da gestire"
+              count={daGestire}
+              active={stato === "da_gestire" && sla === "tutte" && priorita === "tutte"}
+            />
+            <QuickFilterLink
+              href={buildFilterHref({ stato: "in_lavorazione", sla: "tutte", priorita: "tutte" })}
+              label="In lavorazione"
+              count={inLavorazione}
+              active={stato === "in_lavorazione" && sla === "tutte" && priorita === "tutte"}
+            />
+            <QuickFilterLink
+              href={buildFilterHref({ stato: "ricontattato", sla: "tutte", priorita: "tutte" })}
+              label="Ricontattati"
+              count={ricontattati}
+              active={stato === "ricontattato" && sla === "tutte" && priorita === "tutte"}
+            />
+            <QuickFilterLink
+              href={buildFilterHref({ stato: "chiusa", sla: "tutte", priorita: "tutte" })}
+              label="Chiuse"
+              count={chiuse}
+              active={stato === "chiusa" && sla === "tutte" && priorita === "tutte"}
+            />
+            <QuickFilterLink
+              href={buildFilterHref({ stato: "non_interessato", sla: "tutte", priorita: "tutte" })}
+              label="Non interessati"
+              count={nonInteressati}
+              active={stato === "non_interessato" && sla === "tutte" && priorita === "tutte"}
+            />
+            <QuickFilterLink
+              href={buildFilterHref({ stato: "tutte", sla: "tutte", priorita: "tutte" })}
+              label="Tutti"
+              count={tasksBase.length}
+              active={stato === "tutte" && sla === "tutte" && priorita === "tutte"}
+            />
+          </div>
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            <QuickFilterLink
+              href={buildFilterHref({ stato: "tutte", sla: "in_ritardo", priorita: "tutte" })}
+              label="In ritardo"
+              count={inRitardo}
+              active={sla === "in_ritardo"}
+              danger
+            />
+            <QuickFilterLink
+              href={buildFilterHref({ stato: "tutte", sla: "in_scadenza", priorita: "tutte" })}
+              label="In scadenza"
+              count={inScadenza}
+              active={sla === "in_scadenza"}
+              warning
+            />
+            <QuickFilterLink
+              href={buildFilterHref({ stato: "tutte", sla: "tutte", priorita: "alta" })}
+              label="Alta priorità"
+              count={altaPriorita}
+              active={priorita === "alta" && sla === "tutte"}
+              danger
+            />
+          </div>
         </section>
 
         <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm md:p-6">
@@ -1032,6 +1135,47 @@ function CompactList({
         ))}
       </ul>
     </details>
+  );
+}
+
+function QuickFilterLink({
+  href,
+  label,
+  count,
+  active,
+  warning,
+  danger,
+}: {
+  href: string;
+  label: string;
+  count: number;
+  active?: boolean;
+  warning?: boolean;
+  danger?: boolean;
+}) {
+  const className = active
+    ? "border-slate-950 bg-slate-950 text-white"
+    : danger
+      ? "border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
+      : warning
+        ? "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"
+        : "border-slate-200 bg-white text-slate-700 hover:border-orange-300 hover:bg-orange-50";
+
+  return (
+    <Link
+      href={href}
+      className={`inline-flex items-center gap-2 rounded-2xl border px-4 py-2 text-sm font-black transition ${className}`}
+    >
+      <span>{label}</span>
+      <span
+        className={[
+          "rounded-full px-2 py-0.5 text-xs font-black",
+          active ? "bg-white/20 text-white" : "bg-slate-900/5 text-current",
+        ].join(" ")}
+      >
+        {count}
+      </span>
+    </Link>
   );
 }
 
