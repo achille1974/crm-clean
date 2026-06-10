@@ -11,6 +11,13 @@ const CARDS = [
       "Vista compatta con matrice servizi e accesso rapido alla scheda opportunità del cliente.",
   },
   {
+    href: "/phonesia/dashboard/attivita-negozi",
+    badge: "Registro negozi",
+    title: "Attività negozi",
+    description:
+      "Consulta le attività importate dagli Excel dei punti vendita e i collegamenti ai clienti CRM.",
+  },
+  {
     href: "/phonesia/dashboard/richieste",
     badge: "AI Agent",
     title: "Richieste clienti da gestire",
