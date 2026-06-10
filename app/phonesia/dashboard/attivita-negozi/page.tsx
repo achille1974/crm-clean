@@ -477,10 +477,6 @@ export default async function AttivitaNegoziPage({ searchParams }: Props) {
   );
   const relevantBatches = batches.filter((batch) => batchIds.has(batch.id));
   const latestImport = relevantBatches[0]?.created_at ?? null;
-  const detailRowsAmount = filteredRows.reduce(
-    (sum, row) => sum + (parseNumeric(row.totale) ?? 0),
-    0,
-  );
   const uniqueDocumentAmount = calculateUniqueDocumentTotal(filteredRows);
 
   return (
@@ -509,7 +505,7 @@ export default async function AttivitaNegoziPage({ searchParams }: Props) {
           </div>
         </section>
 
-        <section className="grid grid-cols-2 gap-4 xl:grid-cols-7">
+        <section className="grid grid-cols-2 gap-4 xl:grid-cols-6">
           <SummaryCard label="Attività importate" value={String(totalRows)} />
           <SummaryCard label="Collegate a cliente CRM" value={String(linkedCount)} />
           <SummaryCard label="Non collegate" value={String(totalRows - linkedCount)} />
@@ -520,7 +516,6 @@ export default async function AttivitaNegoziPage({ searchParams }: Props) {
             value={formatCurrency(uniqueDocumentAmount)}
             helper="Calcolato una sola volta per documento"
           />
-          <SummaryCard label="Somma righe dettaglio" value={formatCurrency(detailRowsAmount)} />
         </section>
 
         <section className="rounded-3xl border border-slate-200 bg-white px-5 py-5 shadow-sm">
