@@ -16,11 +16,17 @@ const HASH_COLUMN = "source_file_hash";
 function parseArgs(argv) {
   const args = {
     commit: false,
+    silentNoFile: false,
+    finalMondayCheck: false,
   };
 
   for (const arg of argv) {
     if (arg === "--commit") {
       args.commit = true;
+    } else if (arg === "--silent-no-file") {
+      args.silentNoFile = true;
+    } else if (arg === "--final-monday-check") {
+      args.finalMondayCheck = true;
     } else if (arg === "--force") {
       throw new Error("Argomento vietato: --force non deve essere usato dal runner.");
     } else if (arg === "--help" || arg === "-h") {
@@ -28,6 +34,10 @@ function parseArgs(argv) {
     } else {
       throw new Error(`Argomento non riconosciuto: ${arg}`);
     }
+  }
+
+  if (args.silentNoFile && args.finalMondayCheck) {
+    throw new Error("Usa solo una opzione tra --silent-no-file e --final-monday-check.");
   }
 
   return args;
@@ -40,6 +50,8 @@ function printHelp() {
       "",
       "Senza --commit esegue solo simulazione e non sposta/elimina file.",
       "Con --commit importa, esegue il matching clienti e pulisce la inbox.",
+      "--silent-no-file non invia alert se la inbox e vuota e termina con exit code 0.",
+      "--final-monday-check invia alert se la inbox e vuota e termina con exit code 1.",
     ].join("\n")
   );
 }
@@ -290,9 +302,18 @@ function deleteFile(sourcePath) {
   fs.unlinkSync(sourcePath);
 }
 
-function makeFailureEvent({ outcome, fileResult, failedPhase, error, logPath, recommendedAction }) {
+function makeFailureEvent({
+  outcome,
+  fileResult,
+  failedPhase,
+  error,
+  logPath,
+  recommendedAction,
+  subject,
+}) {
   return {
     outcome,
+    subject: subject || null,
     executed_at: nowIso(),
     file_name: fileResult ? fileResult.file_name : null,
     file_path: fileResult ? fileResult.file_path : null,
@@ -306,7 +327,7 @@ function makeFailureEvent({ outcome, fileResult, failedPhase, error, logPath, re
 }
 
 function buildAlertEmail(event) {
-  const subject = `[PHONESIA IMPORT] ${event.outcome} - ${event.failed_phase}`;
+  const subject = event.subject || `[PHONESIA IMPORT] ${event.outcome} - ${event.failed_phase}`;
   const body = [
     `Esito: ${event.outcome}`,
     `Data e ora esecuzione: ${event.executed_at}`,
@@ -658,6 +679,11 @@ async function main() {
     duration_ms: null,
     started_ms: Date.now(),
     mode: args.commit ? "commit" : "dry_run",
+    no_file_mode: args.finalMondayCheck
+      ? "final_monday_check"
+      : args.silentNoFile
+        ? "silent_no_file"
+        : "normal",
     inbox_dir: INBOX_DIR,
     error_dir: ERROR_DIR,
     logs_dir: LOGS_DIR,
@@ -673,6 +699,7 @@ async function main() {
     files_found: [],
     results: [],
     alerts: [],
+    status: "started",
     outcome: "started",
   };
 
@@ -681,7 +708,18 @@ async function main() {
     log.files_found = files.map(({ modified_ms: _modifiedMs, ...item }) => item);
 
     if (files.length === 0) {
-      log.outcome = "no_file";
+      if (args.silentNoFile) {
+        log.status = "no_file_silent";
+        log.outcome = "no_file_silent";
+        log.no_file_reason = `Nessun file .xlsx trovato in ${INBOX_DIR}. Controllo intermedio silenzioso.`;
+        await writeLogAndMaybeAlert({ log, env, event: null });
+        process.exitCode = 0;
+        return;
+      }
+
+      const isFinalMondayCheck = args.finalMondayCheck;
+      log.status = isFinalMondayCheck ? "no_file_final_alert" : "no_file_alert";
+      log.outcome = log.status;
       const event = makeFailureEvent({
         outcome: "NESSUN FILE",
         fileResult: null,
@@ -690,6 +728,7 @@ async function main() {
         logPath: log.log_path,
         recommendedAction:
           "Copiare il file Excel ufficiale nella inbox e rilanciare il runner.",
+        subject: isFinalMondayCheck ? "PHONESIA IMPORT - Nessun file trovato alle 22" : null,
       });
       await writeLogAndMaybeAlert({ log, env, event });
       process.exitCode = 1;
@@ -702,6 +741,7 @@ async function main() {
     for (const file of files) {
       const { result, failure } = await processFile({ file, args, supabase });
       log.results.push(result);
+      log.status = failure ? "error" : "running";
       log.outcome = failure ? "error" : "running";
 
       if (failure) {
@@ -724,11 +764,13 @@ async function main() {
       }
     }
 
-    log.outcome = hadFailure ? "error" : "ok";
+    log.status = hadFailure ? "error" : "ok";
+    log.outcome = log.status;
     await writeLogAndMaybeAlert({ log, env, event: null });
     if (hadFailure) process.exitCode = 1;
   } catch (error) {
     const serialized = serializeError(error);
+    log.status = "unexpected";
     log.outcome = "unexpected";
     log.unexpected_error = serialized;
     const event = makeFailureEvent({

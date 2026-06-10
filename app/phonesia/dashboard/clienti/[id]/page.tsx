@@ -103,6 +103,58 @@ type AgentConversationView = {
   previousMessage: string | null;
 };
 
+type ActivityImportRow = {
+  id: number;
+  data_vendita: string | null;
+  data: string | null;
+  negozio_label: string | null;
+  documento: string | null;
+  numero: string | null;
+  descrizione: string | null;
+  codice: string | null;
+  totale: number | string | null;
+  pag_1: string | null;
+  pag_2: string | null;
+  numero_tel: string | null;
+  operatore: string | null;
+  scontrino: string | null;
+  fattura: string | null;
+};
+
+type ActivityCustomerLinkRow = {
+  id: number;
+  activity_row_id: number;
+  batch_id: number;
+  cliente_id: number;
+  match_method: string | null;
+  confidence: number | string | null;
+  activity_phone: string | null;
+  crm_phone: string | null;
+  created_at: string | null;
+  phonesia_activity_import_rows: ActivityImportRow | ActivityImportRow[] | null;
+};
+
+type StoreActivityView = {
+  linkId: number;
+  activityRowId: number;
+  batchId: number;
+  activityDate: string | null;
+  negozioLabel: string;
+  documento: string;
+  numero: string;
+  descrizione: string;
+  codice: string;
+  totale: number | null;
+  pag1: string;
+  pag2: string;
+  numeroTel: string;
+  operatore: string;
+  scontrino: string;
+  fattura: string;
+  matchMethod: string;
+  confidence: number | null;
+};
+
 const NEGOZI: Record<number, string> = {
   1: "Floridia",
   2: "Augusta",
@@ -183,6 +235,23 @@ function formatDateTime(value?: string | null): string {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
+}
+
+function formatCurrency(value?: number | null): string {
+  if (value === null || value === undefined) return "—";
+  return new Intl.NumberFormat("it-IT", {
+    style: "currency",
+    currency: "EUR",
+  }).format(value);
+}
+
+function parseNumeric(value: number | string | null | undefined): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value.replace(",", "."));
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
 }
 
 function resolveOperatore(servizi: ServizioRow[], contratti: ContrattoRow[]): string {
@@ -349,6 +418,34 @@ function buildDistinctOpportunityBadges(rows: SentOpportunityView[]): string[] {
   return [...new Set(labels.filter(Boolean))];
 }
 
+function getStoreActivityView(row: ActivityCustomerLinkRow): StoreActivityView | null {
+  const activity = Array.isArray(row.phonesia_activity_import_rows)
+    ? row.phonesia_activity_import_rows[0]
+    : row.phonesia_activity_import_rows;
+  if (!activity) return null;
+
+  return {
+    linkId: row.id,
+    activityRowId: row.activity_row_id,
+    batchId: row.batch_id,
+    activityDate: activity.data_vendita ?? activity.data,
+    negozioLabel: normalizeText(activity.negozio_label) || "—",
+    documento: normalizeText(activity.documento) || "—",
+    numero: normalizeText(activity.numero) || "—",
+    descrizione: normalizeText(activity.descrizione) || "—",
+    codice: normalizeText(activity.codice) || "—",
+    totale: parseNumeric(activity.totale),
+    pag1: normalizeText(activity.pag_1) || "—",
+    pag2: normalizeText(activity.pag_2) || "—",
+    numeroTel: normalizeText(activity.numero_tel) || "—",
+    operatore: normalizeText(activity.operatore) || "—",
+    scontrino: normalizeText(activity.scontrino) || "—",
+    fattura: normalizeText(activity.fattura) || "—",
+    matchMethod: normalizeText(row.match_method) || "—",
+    confidence: parseNumeric(row.confidence),
+  };
+}
+
 function InfoCard({
   label,
   value,
@@ -389,6 +486,7 @@ export default async function DashboardClienteOpportunitaPage({
     { data: marketingConsentData, error: marketingConsentError },
     { data: opportunitaData, error: opportunitaError },
     { data: agentConversationsData, error: agentConversationsError },
+    { data: activityLinksData, error: activityLinksError },
   ] = await Promise.all([
     supabase
       .from("phonesia_clienti")
@@ -433,6 +531,12 @@ export default async function DashboardClienteOpportunitaPage({
       .eq("canale", "whatsapp")
       .order("created_at", { ascending: false })
       .limit(5),
+    supabase
+      .from("phonesia_activity_customer_links")
+      .select(
+        "id, activity_row_id, batch_id, cliente_id, match_method, confidence, activity_phone, crm_phone, created_at, phonesia_activity_import_rows!inner(id, data_vendita, data, negozio_label, documento, numero, descrizione, codice, totale, pag_1, pag_2, numero_tel, operatore, scontrino, fattura)",
+      )
+      .eq("cliente_id", clienteId),
   ]);
 
   if (clienteError) throw new Error(`Errore lettura cliente: ${clienteError.message}`);
@@ -448,6 +552,9 @@ export default async function DashboardClienteOpportunitaPage({
     throw new Error(
       `Errore lettura conversazioni agent: ${agentConversationsError.message}`,
     );
+  }
+  if (activityLinksError) {
+    throw new Error(`Errore lettura attività negozio: ${activityLinksError.message}`);
   }
 
   const cliente = clienteData as ClienteRow | null;
@@ -473,6 +580,20 @@ export default async function DashboardClienteOpportunitaPage({
   const agentConversations = ((agentConversationsData ?? []) as AgentConversationRow[])
     .map(getAgentConversationView)
     .filter((row) => row.message || row.intent !== "altro");
+  const storeActivities = ((activityLinksData ?? []) as ActivityCustomerLinkRow[])
+    .map(getStoreActivityView)
+    .filter((row): row is StoreActivityView => Boolean(row))
+    .sort((a, b) => {
+      const timeA = a.activityDate ? new Date(a.activityDate).getTime() : 0;
+      const timeB = b.activityDate ? new Date(b.activityDate).getTime() : 0;
+      return timeB - timeA || b.activityRowId - a.activityRowId;
+    });
+  const visibleStoreActivities = storeActivities.slice(0, 20);
+  const storeActivityTotal = storeActivities.reduce((sum, row) => sum + (row.totale ?? 0), 0);
+  const storeActivityStores = [
+    ...new Set(storeActivities.map((row) => row.negozioLabel).filter((value) => value !== "—")),
+  ];
+  const lastStoreActivity = storeActivities[0]?.activityDate ?? null;
 
   const activeFamilies = new Set<ServiceFamily>();
   for (const servizio of servizi) {
@@ -710,6 +831,102 @@ export default async function DashboardClienteOpportunitaPage({
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+        </section>
+
+        <section className="rounded-3xl border border-slate-200 bg-white px-5 py-5 shadow-sm md:px-6">
+          <div className="mb-4">
+            <div className="mb-3 inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-black uppercase tracking-[0.18em] text-emerald-700">
+              Attività negozio
+            </div>
+
+            <h2 className="text-xl font-black text-slate-950">
+              Registro attività collegate
+            </h2>
+
+            <p className="mt-1 text-sm text-slate-600">
+              Ultime attività importate e collegate al cliente tramite telefono.
+            </p>
+          </div>
+
+          <div className="mb-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <InfoCard label="Attività collegate" value={String(storeActivities.length)} />
+            <InfoCard label="Ultimo acquisto/attività" value={formatDateTime(lastStoreActivity)} />
+            <InfoCard label="Totale importi" value={formatCurrency(storeActivityTotal)} />
+            <InfoCard
+              label="Negozi coinvolti"
+              value={storeActivityStores.length > 0 ? storeActivityStores.join(", ") : "—"}
+            />
+          </div>
+
+          {visibleStoreActivities.length === 0 ? (
+            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5 text-sm font-semibold text-slate-500">
+              Nessuna attività negozio collegata.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-[1100px] divide-y divide-slate-200 text-sm">
+                <thead className="bg-slate-50 text-left text-xs font-black uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th className="px-3 py-3">Data</th>
+                    <th className="px-3 py-3">Negozio</th>
+                    <th className="px-3 py-3">Documento</th>
+                    <th className="px-3 py-3">Descrizione</th>
+                    <th className="px-3 py-3">Codice</th>
+                    <th className="px-3 py-3 text-right">Totale</th>
+                    <th className="px-3 py-3">Pagamenti</th>
+                    <th className="px-3 py-3">Telefono</th>
+                    <th className="px-3 py-3">Operatore</th>
+                    <th className="px-3 py-3">Doc. fiscali</th>
+                    <th className="px-3 py-3">Match</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {visibleStoreActivities.map((row) => (
+                    <tr key={row.linkId} className="align-top">
+                      <td className="whitespace-nowrap px-3 py-3 font-semibold text-slate-700">
+                        {formatDateTime(row.activityDate)}
+                      </td>
+                      <td className="px-3 py-3 font-semibold text-slate-700">
+                        {row.negozioLabel}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-3 text-slate-600">
+                        {row.documento} {row.numero}
+                      </td>
+                      <td className="max-w-[260px] px-3 py-3 font-semibold text-slate-950">
+                        {row.descrizione}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-3 font-mono text-xs text-slate-600">
+                        {row.codice}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right font-bold text-slate-950">
+                        {formatCurrency(row.totale)}
+                      </td>
+                      <td className="px-3 py-3 text-slate-600">
+                        <div>{row.pag1}</div>
+                        <div className="text-xs text-slate-400">{row.pag2}</div>
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-3 font-mono text-xs text-slate-600">
+                        {row.numeroTel}
+                      </td>
+                      <td className="px-3 py-3 text-slate-600">{row.operatore}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-slate-600">
+                        <div>Scontrino: {row.scontrino}</div>
+                        <div className="text-xs text-slate-400">Fattura: {row.fattura}</div>
+                      </td>
+                      <td className="px-3 py-3">
+                        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700">
+                          {row.matchMethod}
+                          <div className="mt-1 text-emerald-600">
+                            Confidenza {row.confidence ?? "—"}
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </section>
