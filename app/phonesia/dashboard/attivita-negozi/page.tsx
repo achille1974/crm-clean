@@ -45,6 +45,7 @@ type ActivityRow = {
   source_row_index: number | null;
   data_vendita: string | null;
   data: string | null;
+  magazzino: string | null;
   negozio_label: string | null;
   documento: string | null;
   numero: string | null;
@@ -226,6 +227,36 @@ function buildSearchBlob(row: ActivityRow): string {
     .join(" ");
 }
 
+function documentKey(row: ActivityRow): string {
+  return [
+    row.batch_id ?? "",
+    normalizeSearch(row.magazzino),
+    normalizeSearch(row.documento),
+    normalizeSearch(row.numero),
+    dateKey(row.data) || dateKey(row.data_vendita),
+  ].join("|");
+}
+
+function calculateUniqueDocumentTotal(rows: ActivityRow[]): number {
+  const totalsByDocument = new Map<string, number | null>();
+
+  for (const row of rows) {
+    const key = documentKey(row);
+    const total = parseNumeric(row.totale);
+
+    if (!totalsByDocument.has(key) || totalsByDocument.get(key) === null) {
+      totalsByDocument.set(key, total);
+    }
+  }
+
+  let sum = 0;
+  for (const total of totalsByDocument.values()) {
+    sum += total ?? 0;
+  }
+
+  return sum;
+}
+
 function matchesDateFilters(row: ActivityRow, filters: Filters): boolean {
   const value = dateKey(activityDate(row));
   if (filters.dataDa && (!value || value < filters.dataDa)) return false;
@@ -285,7 +316,7 @@ async function fetchActivityRows(
     let query = supabase
       .from("phonesia_activity_import_rows")
       .select(
-        "id, batch_id, source_row_index, data_vendita, data, negozio_label, documento, numero, descrizione, codice, totale, pag_1, pag_2, altro_pag, numero_tel, cliente_pda, operatore",
+        "id, batch_id, source_row_index, data_vendita, data, magazzino, negozio_label, documento, numero, descrizione, codice, totale, pag_1, pag_2, altro_pag, numero_tel, cliente_pda, operatore",
       )
       .order("id", { ascending: false })
       .range(from, from + FETCH_PAGE_SIZE - 1);
@@ -364,11 +395,20 @@ function buildBestLinkMap(links: ActivityCustomerLinkRow[]) {
   return map;
 }
 
-function SummaryCard({ label, value }: { label: string; value: string }) {
+function SummaryCard({
+  label,
+  value,
+  helper,
+}: {
+  label: string;
+  value: string;
+  helper?: string;
+}) {
   return (
     <div className="rounded-3xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
       <div className="text-sm text-slate-500">{label}</div>
       <div className="mt-2 text-2xl font-black text-slate-950">{value}</div>
+      {helper ? <div className="mt-1 text-xs font-semibold text-slate-500">{helper}</div> : null}
     </div>
   );
 }
@@ -437,10 +477,11 @@ export default async function AttivitaNegoziPage({ searchParams }: Props) {
   );
   const relevantBatches = batches.filter((batch) => batchIds.has(batch.id));
   const latestImport = relevantBatches[0]?.created_at ?? null;
-  const totalAmount = filteredRows.reduce(
+  const detailRowsAmount = filteredRows.reduce(
     (sum, row) => sum + (parseNumeric(row.totale) ?? 0),
     0,
   );
+  const uniqueDocumentAmount = calculateUniqueDocumentTotal(filteredRows);
 
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-6 md:px-8">
@@ -468,13 +509,18 @@ export default async function AttivitaNegoziPage({ searchParams }: Props) {
           </div>
         </section>
 
-        <section className="grid grid-cols-2 gap-4 xl:grid-cols-6">
+        <section className="grid grid-cols-2 gap-4 xl:grid-cols-7">
           <SummaryCard label="Attività importate" value={String(totalRows)} />
           <SummaryCard label="Collegate a cliente CRM" value={String(linkedCount)} />
           <SummaryCard label="Non collegate" value={String(totalRows - linkedCount)} />
           <SummaryCard label="Batch importati" value={String(batchIds.size)} />
           <SummaryCard label="Ultimo import" value={formatDateTime(latestImport)} />
-          <SummaryCard label="Totale importi" value={formatCurrency(totalAmount)} />
+          <SummaryCard
+            label="Totale documenti unici"
+            value={formatCurrency(uniqueDocumentAmount)}
+            helper="Calcolato una sola volta per documento"
+          />
+          <SummaryCard label="Somma righe dettaglio" value={formatCurrency(detailRowsAmount)} />
         </section>
 
         <section className="rounded-3xl border border-slate-200 bg-white px-5 py-5 shadow-sm">
