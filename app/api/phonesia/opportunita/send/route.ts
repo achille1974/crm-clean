@@ -40,6 +40,7 @@ const WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_IMAGE_NAME =
   "phonesia_messaggio_personalizzato_media_v1";
 const WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_DOCUMENT_NAME =
   "phonesia_messaggio_personalizzato_documento_v1";
+const CUSTOM_MESSAGE_BODY_PARAMETER_NAMES = ["nome_cliente", "messaggio"] as const;
 
 const OPPORTUNITA_HEADER_IMAGE_URL =
   "https://crm-clean.vercel.app/phonesia/welcome-header.jpg";
@@ -162,6 +163,8 @@ type MetaTemplateSendDiagnostics = {
   mediaUrl: string | null;
   mediaMime: string | null;
   bodyParamsCount: number;
+  parameterFormat: "NAMED" | "POSITIONAL";
+  bodyParameterNames: string[];
   mediaPreflight?: MediaUrlPreflightResult | null;
 };
 
@@ -453,6 +456,41 @@ function getTemplateComponents(payload: Record<string, unknown>): unknown[] {
   return Array.isArray(components) ? components : [];
 }
 
+function getBodyTextParameters(payload: Record<string, unknown>): Record<string, unknown>[] {
+  const body = getTemplateComponents(payload)
+    .map(asRecord)
+    .find((component) => component?.type === "body");
+  const parameters = body ? body.parameters : null;
+
+  if (!Array.isArray(parameters)) {
+    return [];
+  }
+
+  return parameters
+    .map(asRecord)
+    .filter(
+      (parameter): parameter is Record<string, unknown> =>
+        parameter !== null && parameter.type === "text",
+    );
+}
+
+function getBodyParameterNames(payload: Record<string, unknown>): string[] {
+  return getBodyTextParameters(payload)
+    .map((parameter) =>
+      typeof parameter.parameter_name === "string" ? parameter.parameter_name : "",
+    )
+    .filter(Boolean);
+}
+
+function getBodyParameterFormat(payload: Record<string, unknown>): "NAMED" | "POSITIONAL" {
+  const parameters = getBodyTextParameters(payload);
+
+  return parameters.length > 0 &&
+    parameters.every((parameter) => typeof parameter.parameter_name === "string")
+    ? "NAMED"
+    : "POSITIONAL";
+}
+
 function summarizeComponent(component: unknown): Record<string, unknown> {
   const item = asRecord(component);
 
@@ -461,11 +499,30 @@ function summarizeComponent(component: unknown): Record<string, unknown> {
   }
 
   const parameters = Array.isArray(item.parameters) ? item.parameters : [];
+  const bodyParameterNames =
+    item.type === "body"
+      ? parameters
+          .map(asRecord)
+          .map((parameter) =>
+            typeof parameter?.parameter_name === "string"
+              ? parameter.parameter_name
+              : "",
+          )
+          .filter(Boolean)
+      : [];
 
   return {
     type: typeof item.type === "string" ? item.type : "unknown",
     sub_type: typeof item.sub_type === "string" ? item.sub_type : undefined,
     index: typeof item.index === "string" ? item.index : undefined,
+    parameter_format:
+      item.type === "body" && bodyParameterNames.length === parameters.length
+        ? "NAMED"
+        : item.type === "body"
+          ? "POSITIONAL"
+          : undefined,
+    body_parameter_names:
+      item.type === "body" ? bodyParameterNames : undefined,
     parameters: parameters.map((parameter) => {
       const param = asRecord(parameter);
       if (!param) return { type: "unknown" };
@@ -526,17 +583,15 @@ function summarizeMetaPayload(payload: Record<string, unknown>): Record<string, 
       language: {
         code: language?.code,
       },
+      parameter_format: getBodyParameterFormat(payload),
+      body_parameter_names: getBodyParameterNames(payload),
       components: getTemplateComponents(payload).map(summarizeComponent),
     },
   };
 }
 
 function getBodyParamsCount(payload: Record<string, unknown>): number {
-  const body = getTemplateComponents(payload)
-    .map(asRecord)
-    .find((component) => component?.type === "body");
-  const parameters = body ? body.parameters : null;
-  return Array.isArray(parameters) ? parameters.length : 0;
+  return getBodyTextParameters(payload).length;
 }
 
 function hasExpiringQueryToken(url: URL): boolean {
@@ -710,6 +765,8 @@ async function sendWhatsAppOpportunityTemplate(params: {
       mediaUrl: sanitizeUrl(params.headerImageUrl),
       mediaMime: params.mediaPreflight?.content_type ?? null,
       bodyParamsCount: getBodyParamsCount(payload),
+      parameterFormat: getBodyParameterFormat(payload),
+      bodyParameterNames: getBodyParameterNames(payload),
       mediaPreflight: params.mediaPreflight ?? null,
     },
   });
@@ -833,6 +890,8 @@ async function sendMetaTemplateWithRetry(params: {
     "phonesia.whatsapp.template_send.before",
     JSON.stringify({
       ...params.diagnostics,
+      parameter_format: params.diagnostics.parameterFormat,
+      body_parameter_names: params.diagnostics.bodyParameterNames,
       payload: payloadSummary,
     }),
   );
@@ -973,12 +1032,12 @@ async function sendWhatsAppCustomMessageTemplate(params: {
     parameters: [
       {
         type: "text",
-        parameter_name: "nome_cliente",
+        parameter_name: CUSTOM_MESSAGE_BODY_PARAMETER_NAMES[0],
         text: params.nomeCliente,
       },
       {
         type: "text",
-        parameter_name: "messaggio",
+        parameter_name: CUSTOM_MESSAGE_BODY_PARAMETER_NAMES[1],
         text: params.messaggio,
       },
     ],
@@ -1011,6 +1070,8 @@ async function sendWhatsAppCustomMessageTemplate(params: {
         params.mediaPreflight?.content_type ??
         null,
       bodyParamsCount: getBodyParamsCount(payload),
+      parameterFormat: "NAMED",
+      bodyParameterNames: [...CUSTOM_MESSAGE_BODY_PARAMETER_NAMES],
       mediaPreflight: params.mediaPreflight ?? null,
     },
   });
