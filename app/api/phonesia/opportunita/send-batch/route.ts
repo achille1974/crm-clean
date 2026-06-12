@@ -89,11 +89,13 @@ type TemplateHeaderParameter =
   | {
       kind: "image";
       link: string;
+      mimeType?: string | null;
     }
   | {
       kind: "document";
       link: string;
       fileName: string | null;
+      mimeType?: string | null;
     };
 
 type MetaTemplateSendAttempt = {
@@ -101,10 +103,15 @@ type MetaTemplateSendAttempt = {
   template_name: string;
   status: "success" | "error";
   http_status: number | null;
+  error_message: string | null;
+  error_type: string | null;
   error_code: number | null;
+  error_subcode: number | null;
+  error_data: unknown | null;
   is_transient: boolean | null;
   fbtrace_id: string | null;
   message: string | null;
+  payload_summary: Record<string, unknown> | null;
 };
 
 type MetaTemplateSendResult = {
@@ -114,9 +121,37 @@ type MetaTemplateSendResult = {
 
 type ParsedMetaError = {
   message: string | null;
+  type: string | null;
   code: number | null;
+  subcode: number | null;
+  errorData: unknown | null;
   isTransient: boolean | null;
   fbtraceId: string | null;
+};
+
+type MediaUrlPreflightResult = {
+  checked: boolean;
+  ok: boolean;
+  url_is_https: boolean;
+  accessible_without_login: boolean;
+  is_direct_media: boolean;
+  has_expiring_query: boolean;
+  http_status: number | null;
+  content_type: string | null;
+  expected_kind: "image" | "document";
+  sanitized_url: string | null;
+  error: string | null;
+};
+
+type MetaTemplateSendDiagnostics = {
+  mode: string;
+  templateName: string;
+  language: string;
+  hasHeaderMedia: boolean;
+  mediaUrl: string | null;
+  mediaMime: string | null;
+  bodyParamsCount: number;
+  mediaPreflight?: MediaUrlPreflightResult | null;
 };
 
 class MetaTemplateSendError extends Error {
@@ -365,12 +400,233 @@ function toMetaRecipient(rawPhone: string) {
   return numeric ? numeric.replace(/^\+/, "") : null;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function sanitizeUrl(value: unknown): string | null {
+  if (typeof value !== "string" || !value) return null;
+
+  try {
+    const url = new URL(value);
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return value.slice(0, 160);
+  }
+}
+
+function maskRecipient(value: unknown): string | null {
+  if (typeof value !== "string" || !value) return null;
+  const suffix = value.slice(-4);
+  return suffix ? `***${suffix}` : "***";
+}
+
+function getTemplateComponents(payload: Record<string, unknown>): unknown[] {
+  const template = asRecord(payload.template);
+  const components = template?.components;
+  return Array.isArray(components) ? components : [];
+}
+
+function summarizeComponent(component: unknown): Record<string, unknown> {
+  const item = asRecord(component);
+
+  if (!item) {
+    return { type: "unknown" };
+  }
+
+  const parameters = Array.isArray(item.parameters) ? item.parameters : [];
+
+  return {
+    type: typeof item.type === "string" ? item.type : "unknown",
+    sub_type: typeof item.sub_type === "string" ? item.sub_type : undefined,
+    index: typeof item.index === "string" ? item.index : undefined,
+    parameters: parameters.map((parameter) => {
+      const param = asRecord(parameter);
+      if (!param) return { type: "unknown" };
+
+      if (param.type === "image") {
+        const image = asRecord(param.image);
+        return {
+          type: "image",
+          image: {
+            has_link: Boolean(image?.link),
+            link: sanitizeUrl(image?.link),
+          },
+        };
+      }
+
+      if (param.type === "document") {
+        const document = asRecord(param.document);
+        return {
+          type: "document",
+          document: {
+            has_link: Boolean(document?.link),
+            link: sanitizeUrl(document?.link),
+            filename:
+              typeof document?.filename === "string"
+                ? document.filename.slice(0, 120)
+                : null,
+          },
+        };
+      }
+
+      if (param.type === "text") {
+        const text = typeof param.text === "string" ? param.text : "";
+        return {
+          type: "text",
+          parameter_name:
+            typeof param.parameter_name === "string" ? param.parameter_name : null,
+          text_length: text.length,
+        };
+      }
+
+      return {
+        type: typeof param.type === "string" ? param.type : "unknown",
+      };
+    }),
+  };
+}
+
+function summarizeMetaPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  const template = asRecord(payload.template);
+  const language = asRecord(template?.language);
+
+  return {
+    messaging_product: payload.messaging_product,
+    to: maskRecipient(payload.to),
+    type: payload.type,
+    template: {
+      name: template?.name,
+      language: {
+        code: language?.code,
+      },
+      components: getTemplateComponents(payload).map(summarizeComponent),
+    },
+  };
+}
+
+function getBodyParamsCount(payload: Record<string, unknown>): number {
+  const body = getTemplateComponents(payload)
+    .map(asRecord)
+    .find((component) => component?.type === "body");
+  const parameters = body ? body.parameters : null;
+  return Array.isArray(parameters) ? parameters.length : 0;
+}
+
+function hasExpiringQueryToken(url: URL): boolean {
+  const expiringKeys = [
+    "token",
+    "expires",
+    "expires_in",
+    "x-amz-expires",
+    "x-amz-signature",
+    "signature",
+  ];
+
+  return expiringKeys.some((key) => url.searchParams.has(key));
+}
+
+async function inspectTemplateMediaUrl(
+  publicUrl: string,
+  expectedKind: "image" | "document",
+): Promise<MediaUrlPreflightResult> {
+  let parsedUrl: URL;
+
+  try {
+    parsedUrl = new URL(publicUrl);
+  } catch {
+    return {
+      checked: true,
+      ok: false,
+      url_is_https: false,
+      accessible_without_login: false,
+      is_direct_media: false,
+      has_expiring_query: false,
+      http_status: null,
+      content_type: null,
+      expected_kind: expectedKind,
+      sanitized_url: null,
+      error: "URL media non valido.",
+    };
+  }
+
+  const urlIsHttps = parsedUrl.protocol === "https:";
+  const hasExpiringQuery = hasExpiringQueryToken(parsedUrl);
+
+  try {
+    let response = await fetch(publicUrl, {
+      method: "HEAD",
+      cache: "no-store",
+      redirect: "follow",
+    });
+
+    if (response.status === 405 || response.status === 403) {
+      response = await fetch(publicUrl, {
+        method: "GET",
+        cache: "no-store",
+        redirect: "follow",
+        headers: {
+          Range: "bytes=0-0",
+        },
+      });
+    }
+
+    const contentType = response.headers.get("content-type");
+    const normalizedContentType = normalizeText(contentType).toLowerCase();
+    const isDirectMedia =
+      expectedKind === "image"
+        ? normalizedContentType.startsWith("image/")
+        : normalizedContentType.startsWith("application/pdf");
+    const accessibleWithoutLogin = response.ok && !normalizedContentType.includes("text/html");
+    const ok = urlIsHttps && accessibleWithoutLogin && isDirectMedia && !hasExpiringQuery;
+
+    return {
+      checked: true,
+      ok,
+      url_is_https: urlIsHttps,
+      accessible_without_login: accessibleWithoutLogin,
+      is_direct_media: isDirectMedia,
+      has_expiring_query: hasExpiringQuery,
+      http_status: response.status,
+      content_type: contentType,
+      expected_kind: expectedKind,
+      sanitized_url: sanitizeUrl(publicUrl),
+      error: ok
+        ? null
+        : "URL media non pubblico, non diretto, non HTTPS o con query temporanea.",
+    };
+  } catch (error) {
+    return {
+      checked: true,
+      ok: false,
+      url_is_https: urlIsHttps,
+      accessible_without_login: false,
+      is_direct_media: false,
+      has_expiring_query: hasExpiringQuery,
+      http_status: null,
+      content_type: null,
+      expected_kind: expectedKind,
+      sanitized_url: sanitizeUrl(publicUrl),
+      error: error instanceof Error ? error.message : "Errore verifica URL media.",
+    };
+  }
+}
+
 function parseMetaErrorBody(body: string): ParsedMetaError {
   try {
     const parsed = JSON.parse(body) as {
       error?: {
         message?: unknown;
+        type?: unknown;
         code?: unknown;
+        error_subcode?: unknown;
+        error_data?: unknown;
         is_transient?: unknown;
         fbtrace_id?: unknown;
       };
@@ -379,7 +635,12 @@ function parseMetaErrorBody(body: string): ParsedMetaError {
 
     return {
       message: typeof error?.message === "string" ? error.message : null,
+      type: typeof error?.type === "string" ? error.type : null,
       code: typeof error?.code === "number" ? error.code : null,
+      subcode:
+        typeof error?.error_subcode === "number" ? error.error_subcode : null,
+      errorData:
+        typeof error?.error_data === "undefined" ? null : error.error_data,
       isTransient:
         typeof error?.is_transient === "boolean" ? error.is_transient : null,
       fbtraceId: typeof error?.fbtrace_id === "string" ? error.fbtrace_id : null,
@@ -387,7 +648,10 @@ function parseMetaErrorBody(body: string): ParsedMetaError {
   } catch {
     return {
       message: body || null,
+      type: null,
       code: null,
+      subcode: null,
+      errorData: null,
       isTransient: null,
       fbtraceId: null,
     };
@@ -405,20 +669,35 @@ function wait(ms: number) {
 }
 
 function formatMetaTemplateError(error: MetaTemplateSendError): string {
+  const lastError = [...error.attempts]
+    .reverse()
+    .find((attempt) => attempt.status === "error");
   const hadTransientRetry = error.attempts.some(
     (attempt) => attempt.is_transient === true || attempt.error_code === 2,
   );
+  const details = [
+    lastError?.error_message
+      ? `Dettaglio: ${lastError.error_message}`
+      : "Dettaglio non disponibile",
+    lastError?.error_type ? `type ${lastError.error_type}` : null,
+    lastError?.error_code != null ? `code ${lastError.error_code}` : null,
+    lastError?.error_subcode != null
+      ? `subcode ${lastError.error_subcode}`
+      : null,
+    lastError?.fbtrace_id ? `fbtrace ${lastError.fbtrace_id}` : null,
+  ].filter(Boolean);
 
   if (hadTransientRetry) {
-    return "Errore temporaneo Meta durante l’invio WhatsApp. Ho ritentato una volta dopo 3 secondi, ma l’invio non è riuscito. Riprova tra poco.";
+    return `Errore temporaneo Meta durante l’invio WhatsApp. Ho ritentato una volta dopo 3 secondi, ma l’invio non è riuscito. ${details.join(" - ")}`;
   }
 
-  return "Invio WhatsApp non riuscito. Meta non ha accettato il template richiesto.";
+  return `Meta ha rifiutato il template. ${details.join(" - ")}`;
 }
 
 async function sendMetaTemplateWithRetry(params: {
   templateName: string;
   payload: Record<string, unknown>;
+  diagnostics: MetaTemplateSendDiagnostics;
 }): Promise<MetaTemplateSendResult> {
   if (!WHATSAPP_ACCESS_TOKEN) {
     throw new Error("Missing WHATSAPP_ACCESS_TOKEN");
@@ -429,6 +708,15 @@ async function sendMetaTemplateWithRetry(params: {
   }
 
   const attempts: MetaTemplateSendAttempt[] = [];
+  const payloadSummary = summarizeMetaPayload(params.payload);
+
+  console.info(
+    "phonesia.whatsapp.template_send.before",
+    JSON.stringify({
+      ...params.diagnostics,
+      payload: payloadSummary,
+    }),
+  );
 
   for (const attempt of [1, 2] as const) {
     const response = await fetch(
@@ -450,10 +738,15 @@ async function sendMetaTemplateWithRetry(params: {
         template_name: params.templateName,
         status: "success",
         http_status: response.status,
+        error_message: null,
+        error_type: null,
         error_code: null,
+        error_subcode: null,
+        error_data: null,
         is_transient: null,
         fbtrace_id: null,
         message: null,
+        payload_summary: payloadSummary,
       });
 
       return {
@@ -470,11 +763,33 @@ async function sendMetaTemplateWithRetry(params: {
       template_name: params.templateName,
       status: "error",
       http_status: response.status,
+      error_message: metaError.message,
+      error_type: metaError.type,
       error_code: metaError.code,
+      error_subcode: metaError.subcode,
+      error_data: metaError.errorData,
       is_transient: metaError.isTransient,
       fbtrace_id: metaError.fbtraceId,
       message: metaError.message,
+      payload_summary: payloadSummary,
     });
+
+    console.error(
+      "phonesia.whatsapp.template_send.meta_error",
+      JSON.stringify({
+        templateName: params.templateName,
+        attempt,
+        http_status: response.status,
+        error_message: metaError.message,
+        error_type: metaError.type,
+        error_code: metaError.code,
+        error_subcode: metaError.subcode,
+        error_data: metaError.errorData,
+        is_transient: metaError.isTransient,
+        fbtrace_id: metaError.fbtraceId,
+        payload: payloadSummary,
+      }),
+    );
 
     if (attempt === 1 && shouldRetryMetaError(metaError)) {
       await wait(3000);
@@ -491,8 +806,10 @@ async function sendWhatsAppTemplate(params: {
   to: string;
   templateName: string;
   languageCode: string;
+  mode: string;
   headerParameter?: TemplateHeaderParameter | null;
   bodyParameters: TemplateBodyParameter[];
+  mediaPreflight?: MediaUrlPreflightResult | null;
 }) {
   const components: Array<Record<string, unknown>> = [];
 
@@ -538,19 +855,34 @@ async function sendWhatsAppTemplate(params: {
     })),
   });
 
+  const payload = {
+    messaging_product: "whatsapp",
+    to: params.to,
+    type: "template",
+    template: {
+      name: params.templateName,
+      language: {
+        code: params.languageCode,
+      },
+      components,
+    },
+  };
+
   return sendMetaTemplateWithRetry({
     templateName: params.templateName,
-    payload: {
-      messaging_product: "whatsapp",
-      to: params.to,
-      type: "template",
-      template: {
-        name: params.templateName,
-        language: {
-          code: params.languageCode,
-        },
-        components,
-      },
+    payload,
+    diagnostics: {
+      mode: params.mode,
+      templateName: params.templateName,
+      language: params.languageCode,
+      hasHeaderMedia: Boolean(params.headerParameter),
+      mediaUrl: params.headerParameter ? sanitizeUrl(params.headerParameter.link) : null,
+      mediaMime:
+        params.headerParameter?.mimeType ??
+        params.mediaPreflight?.content_type ??
+        null,
+      bodyParamsCount: getBodyParamsCount(payload),
+      mediaPreflight: params.mediaPreflight ?? null,
     },
   });
 }
@@ -893,6 +1225,34 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const mediaPreflight =
+      messageMode === "custom" && customTemplateConfig.headerKind
+        ? await inspectTemplateMediaUrl(attachmentPublicUrl, customTemplateConfig.headerKind)
+        : null;
+
+    if (mediaPreflight && !mediaPreflight.ok) {
+      console.warn(
+        "phonesia.whatsapp.template_media.preflight_failed",
+        JSON.stringify({
+          mode: `custom_${customTemplateConfig.mode}`,
+          templateName: customTemplateConfig.templateName,
+          language: WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_LANGUAGE,
+          mediaPreflight,
+        }),
+      );
+
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "attachment_non_accessibile_da_meta",
+          message:
+            "Allegato non accessibile da Meta. Verifica che il file sia pubblico, HTTPS e con content-type corretto.",
+          media_check: mediaPreflight,
+        },
+        { status: 400 },
+      );
+    }
+
     const supabase = getSupabaseAdmin();
     const batchId = crypto.randomUUID();
 
@@ -1071,10 +1431,12 @@ export async function POST(request: NextRequest) {
               to: metaRecipient,
               templateName,
               languageCode: templateLanguage,
+              mode: `custom_${customTemplateConfig.mode}`,
               headerParameter: customTemplateConfig.headerKind
                 ? {
                     kind: customTemplateConfig.headerKind,
                     link: attachmentPublicUrl,
+                    mimeType: attachmentMimeType || null,
                     ...(customTemplateConfig.headerKind === "document"
                       ? { fileName: attachmentFileName || null }
                       : {}),
@@ -1090,12 +1452,14 @@ export async function POST(request: NextRequest) {
                   text: customMessage,
                 },
               ],
+              mediaPreflight,
             });
           } else {
             metaSendResult = await sendWhatsAppTemplate({
               to: metaRecipient,
               templateName,
               languageCode: templateLanguage,
+              mode: "standard",
               bodyParameters: [
                 { text: nomeCompleto },
                 { text: offerText },

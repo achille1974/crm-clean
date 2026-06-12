@@ -58,6 +58,13 @@ type SendApiResponse = {
   message?: string;
   error?: string;
   detail?: string;
+  meta_error?: {
+    message?: string | null;
+    type?: string | null;
+    code?: number | null;
+    error_subcode?: number | null;
+    fbtrace_id?: string | null;
+  } | null;
   sentOpportunities?: SentOpportunity[];
 };
 
@@ -155,6 +162,28 @@ function getCustomMessageTemplateName(mode: CustomMessageMode): string {
   if (mode === "image") return "phonesia_messaggio_personalizzato_media_v1";
   if (mode === "document") return "phonesia_messaggio_personalizzato_documento_v1";
   return "phonesia_messaggio_personalizzato_v1";
+}
+
+function formatSendApiError(data: SendApiResponse): string {
+  const metaError = data.meta_error;
+
+  if (metaError?.message) {
+    const details = [
+      `Dettaglio: ${metaError.message}`,
+      metaError.type ? `type ${metaError.type}` : null,
+      metaError.code != null ? `code ${metaError.code}` : null,
+      metaError.error_subcode != null ? `subcode ${metaError.error_subcode}` : null,
+      metaError.fbtrace_id ? `fbtrace ${metaError.fbtrace_id}` : null,
+    ].filter(Boolean);
+
+    return `Meta ha rifiutato il template. ${details.join(" - ")}`;
+  }
+
+  return (
+    data.message ||
+    data.detail ||
+    "Invio non riuscito. Controlla consenso marketing e WhatsApp attivo."
+  );
 }
 
 function mergeSentOpportunities(
@@ -677,10 +706,7 @@ export default function ClienteOpportunityPanel({
       if (!response.ok || !data.ok) {
         setSendState({
           type: "error",
-          message:
-            data.message ||
-            data.detail ||
-            "Invio non riuscito. Controlla consenso marketing e WhatsApp attivo.",
+          message: formatSendApiError(data),
         });
         return;
       }

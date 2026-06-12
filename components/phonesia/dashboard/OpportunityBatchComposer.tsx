@@ -52,6 +52,13 @@ type SendResponse =
       error: string;
       message?: string;
       detail?: string;
+      meta_error?: {
+        message?: string | null;
+        type?: string | null;
+        code?: number | null;
+        error_subcode?: number | null;
+        fbtrace_id?: string | null;
+      } | null;
     };
 
 type MediaUploadResponse = {
@@ -127,6 +134,24 @@ function isAllowedDocumentFile(file: File): boolean {
   }
 
   return /\.pdf$/i.test(file.name);
+}
+
+function formatSendResponseError(data: Extract<SendResponse, { ok: false }>): string {
+  const metaError = data.meta_error;
+
+  if (metaError?.message) {
+    const details = [
+      `Dettaglio: ${metaError.message}`,
+      metaError.type ? `type ${metaError.type}` : null,
+      metaError.code != null ? `code ${metaError.code}` : null,
+      metaError.error_subcode != null ? `subcode ${metaError.error_subcode}` : null,
+      metaError.fbtrace_id ? `fbtrace ${metaError.fbtrace_id}` : null,
+    ].filter(Boolean);
+
+    return `Meta ha rifiutato il template. ${details.join(" - ")}`;
+  }
+
+  return data.message || data.detail || data.error || "Invio batch non riuscito.";
 }
 
 function getSupabaseBrowserClient() {
@@ -476,8 +501,9 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
             : {
                 ok: false,
                 error: data.error || "Invio batch non riuscito.",
-                message: data.message,
+                message: formatSendResponseError(data),
                 detail: data.detail,
+                meta_error: data.meta_error,
               },
         );
         setIsSending(false);
