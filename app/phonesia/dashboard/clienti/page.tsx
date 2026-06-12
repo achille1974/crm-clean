@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@supabase/supabase-js";
+import ClientiSelectionForm from "@/components/phonesia/dashboard/ClientiSelectionForm";
 
 export const dynamic = "force-dynamic";
 
@@ -346,29 +347,7 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
           </form>
         </section>
 
-        <form
-          action="/phonesia/dashboard/opportunita/invio"
-          method="get"
-          className="space-y-4"
-        >
-          <section className="rounded-3xl border border-slate-200 bg-white px-5 py-5 shadow-sm md:px-6">
-            <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-              <div>
-                <h2 className="text-xl font-black text-slate-950">Selezione clienti</h2>
-                <p className="mt-1 text-sm text-slate-600">
-                  Seleziona uno o più clienti e poi apri la pagina di composizione opportunità.
-                </p>
-              </div>
-
-              <button
-                type="submit"
-                className="inline-flex h-[50px] items-center justify-center rounded-2xl bg-orange-500 px-5 text-sm font-semibold text-white transition hover:bg-orange-600"
-              >
-                Crea invio opportunità
-              </button>
-            </div>
-          </section>
-
+        <ClientiSelectionForm visibleClientCount={rows.length}>
           <section className="rounded-3xl border border-slate-200 bg-white shadow-sm">
             <div className="max-h-[70vh] overflow-auto rounded-3xl">
               <table className="min-w-[1580px] w-full text-sm">
@@ -467,7 +446,7 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
               </table>
             </div>
           </section>
-        </form>
+        </ClientiSelectionForm>
       </div>
     </main>
   );
