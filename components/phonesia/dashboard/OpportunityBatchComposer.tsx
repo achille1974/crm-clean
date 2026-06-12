@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, type ReactNode } from "react";
+import { createClient } from "@supabase/supabase-js";
 
 const SERVICE_COLUMNS = [
   "MOBILE",
@@ -28,6 +29,8 @@ type Props = {
   recipients: Recipient[];
 };
 
+type CustomMessageMode = "text" | "image" | "document";
+
 type SendResultRow = {
   clienteId: number;
   nome: string;
@@ -50,6 +53,26 @@ type SendResponse =
       message?: string;
       detail?: string;
     };
+
+type MediaUploadResponse = {
+  ok: boolean;
+  bucket?: string;
+  path?: string;
+  token?: string;
+  signedUrl?: string;
+  publicUrl?: string;
+  error?: string;
+  detail?: string;
+};
+
+type UploadedAttachment = {
+  publicUrl: string;
+  fileName: string;
+  mimeType: string;
+};
+
+const MAX_IMAGE_ATTACHMENT_SIZE_BYTES = 5 * 1024 * 1024;
+const MAX_DOCUMENT_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024;
 
 function serviceLabel(service: ServiceFamily): string {
   switch (service) {
@@ -90,11 +113,206 @@ function buildStandardText(service: ServiceFamily) {
   return `Ciao {{1}}, abbiamo un'offerta dedicata per te su ${serviceLabel(service)}.\n\nContattaci qui: {{3}}\nOppure vieni in negozio: {{4}}\n\n— PHONESIA`;
 }
 
+function isAllowedImageFile(file: File): boolean {
+  if (file.type && file.type.startsWith("image/")) {
+    return true;
+  }
+
+  return /\.(jpg|jpeg|png|webp)$/i.test(file.name);
+}
+
+function isAllowedDocumentFile(file: File): boolean {
+  if (file.type) {
+    return file.type === "application/pdf";
+  }
+
+  return /\.pdf$/i.test(file.name);
+}
+
+function getSupabaseBrowserClient() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    return null;
+  }
+
+  return createClient(supabaseUrl, supabaseAnonKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  });
+}
+
+async function uploadFileWithSignedUrl(
+  media: MediaUploadResponse,
+  file: File,
+): Promise<void> {
+  if (media.signedUrl) {
+    const signedResponse = await fetch(media.signedUrl, {
+      method: "PUT",
+      headers: {
+        "Content-Type": file.type || "application/octet-stream",
+      },
+      body: file,
+    });
+
+    if (signedResponse.ok) {
+      return;
+    }
+
+    const signedPostResponse = await fetch(media.signedUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": file.type || "application/octet-stream",
+      },
+      body: file,
+    });
+
+    if (signedPostResponse.ok) {
+      return;
+    }
+
+    const errorText = await signedPostResponse.text().catch(() => "");
+    throw new Error(
+      `Upload allegato non riuscito: ${signedPostResponse.status} ${errorText}`,
+    );
+  }
+
+  if (!media.bucket || !media.path || !media.token) {
+    throw new Error("Dati upload allegato incompleti.");
+  }
+
+  const supabase = getSupabaseBrowserClient();
+
+  if (supabase) {
+    const { error } = await supabase.storage
+      .from(media.bucket)
+      .uploadToSignedUrl(media.path, media.token, file);
+
+    if (!error) {
+      return;
+    }
+
+    throw new Error(`Upload allegato non riuscito: ${error.message}`);
+  }
+
+  if (!media.publicUrl) {
+    throw new Error("Configurazione upload allegato incompleta.");
+  }
+
+  const publicUrl = new URL(media.publicUrl);
+  const encodedPath = media.path
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+
+  const uploadUrl =
+    `${publicUrl.origin}/storage/v1/object/upload/sign/` +
+    `${encodeURIComponent(media.bucket)}/${encodedPath}` +
+    `?token=${encodeURIComponent(media.token)}`;
+
+  const uploadResponse = await fetch(uploadUrl, {
+    method: "PUT",
+    headers: {
+      "Content-Type": file.type || "application/octet-stream",
+    },
+    body: file,
+  });
+
+  if (uploadResponse.ok) {
+    return;
+  }
+
+  const uploadPostResponse = await fetch(uploadUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": file.type || "application/octet-stream",
+    },
+    body: file,
+  });
+
+  if (uploadPostResponse.ok) {
+    return;
+  }
+
+  const errorText = await uploadPostResponse.text().catch(() => "");
+  throw new Error(
+    `Upload allegato non riuscito: ${uploadPostResponse.status} ${errorText}`,
+  );
+}
+
+async function uploadCustomAttachment(
+  file: File,
+  mode: CustomMessageMode,
+): Promise<UploadedAttachment> {
+  if (mode === "image") {
+    if (!isAllowedImageFile(file)) {
+      throw new Error("Carica un allegato compatibile con il template selezionato.");
+    }
+
+    if (file.size > MAX_IMAGE_ATTACHMENT_SIZE_BYTES) {
+      throw new Error("L’immagine non può superare 5 MB.");
+    }
+  }
+
+  if (mode === "document") {
+    if (!isAllowedDocumentFile(file)) {
+      throw new Error("Carica un allegato compatibile con il template selezionato.");
+    }
+
+    if (file.size > MAX_DOCUMENT_ATTACHMENT_SIZE_BYTES) {
+      throw new Error("Il documento non può superare 10 MB.");
+    }
+  }
+
+  const fallbackContentType =
+    mode === "document" ? "application/pdf" : "image/jpeg";
+
+  const mediaResponse = await fetch("/api/phonesia/media", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      fileName: file.name,
+      contentType: file.type || fallbackContentType,
+    }),
+  });
+
+  const media = (await mediaResponse.json().catch(() => null)) as
+    | MediaUploadResponse
+    | null;
+
+  if (!mediaResponse.ok || !media?.ok) {
+    throw new Error(
+      media?.detail ||
+        media?.error ||
+        "Impossibile preparare il caricamento dell’allegato.",
+    );
+  }
+
+  if (!media.publicUrl) {
+    throw new Error("URL pubblico allegato mancante.");
+  }
+
+  await uploadFileWithSignedUrl(media, file);
+
+  return {
+    publicUrl: media.publicUrl,
+    fileName: file.name,
+    mimeType: file.type || fallbackContentType,
+  };
+}
+
 export default function OpportunityBatchComposer({ recipients }: Props) {
   const [messageMode, setMessageMode] = useState<"standard" | "custom">("standard");
   const [standardService, setStandardService] = useState<ServiceFamily>("SMARTPHONE");
+  const [customMessageMode, setCustomMessageMode] = useState<CustomMessageMode>("text");
   const [customMessage, setCustomMessage] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [attachmentInputKey, setAttachmentInputKey] = useState(0);
   const [isSending, setIsSending] = useState(false);
   const [sendResponse, setSendResponse] = useState<SendResponse | null>(null);
 
@@ -125,8 +343,75 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
     recipients.length > 0 &&
     eligibleRecipients.length > 0 &&
     !isSending &&
-    !selectedFile &&
-    (messageMode === "standard" || trimmedCustomMessage.length > 0);
+    (messageMode === "standard" ||
+      (trimmedCustomMessage.length > 0 &&
+        (customMessageMode === "text" || selectedFile !== null)));
+
+  function clearAttachment() {
+    setSelectedFile(null);
+    setAttachmentInputKey((value) => value + 1);
+  }
+
+  function changeCustomMessageMode(mode: CustomMessageMode) {
+    setCustomMessageMode(mode);
+    clearAttachment();
+    setSendResponse(null);
+  }
+
+  function handleAttachmentChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0] ?? null;
+
+    setSendResponse(null);
+
+    if (!file) {
+      setSelectedFile(null);
+      return;
+    }
+
+    if (customMessageMode === "image" && !isAllowedImageFile(file)) {
+      clearAttachment();
+      setSendResponse({
+        ok: false,
+        error: "Carica un allegato compatibile con il template selezionato.",
+      });
+      return;
+    }
+
+    if (
+      customMessageMode === "image" &&
+      file.size > MAX_IMAGE_ATTACHMENT_SIZE_BYTES
+    ) {
+      clearAttachment();
+      setSendResponse({
+        ok: false,
+        error: "L’immagine non può superare 5 MB.",
+      });
+      return;
+    }
+
+    if (customMessageMode === "document" && !isAllowedDocumentFile(file)) {
+      clearAttachment();
+      setSendResponse({
+        ok: false,
+        error: "Carica un allegato compatibile con il template selezionato.",
+      });
+      return;
+    }
+
+    if (
+      customMessageMode === "document" &&
+      file.size > MAX_DOCUMENT_ATTACHMENT_SIZE_BYTES
+    ) {
+      clearAttachment();
+      setSendResponse({
+        ok: false,
+        error: "Il documento non può superare 10 MB.",
+      });
+      return;
+    }
+
+    setSelectedFile(file);
+  }
 
   async function handleSendBatch() {
     if (messageMode === "custom" && !trimmedCustomMessage) {
@@ -137,10 +422,26 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
       return;
     }
 
+    if (
+      messageMode === "custom" &&
+      customMessageMode !== "text" &&
+      !selectedFile
+    ) {
+      setSendResponse({
+        ok: false,
+        error: "Carica un allegato compatibile con il template selezionato.",
+      });
+      return;
+    }
+
     setIsSending(true);
     setSendResponse(null);
 
     try {
+      const uploadedAttachment =
+        messageMode === "custom" && customMessageMode !== "text" && selectedFile
+          ? await uploadCustomAttachment(selectedFile, customMessageMode)
+          : null;
       const formData = new FormData();
 
       for (const recipient of recipients) {
@@ -152,7 +453,13 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
       if (messageMode === "standard") {
         formData.append("standardService", standardService);
       } else {
+        formData.append("customMessageMode", customMessageMode);
         formData.append("customMessage", trimmedCustomMessage);
+        if (uploadedAttachment) {
+          formData.append("attachmentPublicUrl", uploadedAttachment.publicUrl);
+          formData.append("attachmentFileName", uploadedAttachment.fileName);
+          formData.append("attachmentMimeType", uploadedAttachment.mimeType);
+        }
       }
 
       const response = await fetch("/api/phonesia/opportunita/send-batch", {
@@ -263,7 +570,10 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
                     type="radio"
                     name="messageMode"
                     checked={messageMode === "standard"}
-                    onChange={() => setMessageMode("standard")}
+                    onChange={() => {
+                      setMessageMode("standard");
+                      clearAttachment();
+                    }}
                     className="mt-1 h-4 w-4 border-slate-300 text-orange-500 focus:ring-orange-500"
                   />
                   <div>
@@ -279,10 +589,7 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
                     type="radio"
                     name="messageMode"
                     checked={messageMode === "custom"}
-                    onChange={() => {
-                      setMessageMode("custom");
-                      setSelectedFile(null);
-                    }}
+                    onChange={() => setMessageMode("custom")}
                     className="mt-1 h-4 w-4 border-slate-300 text-orange-500 focus:ring-orange-500"
                   />
                   <div>
@@ -315,6 +622,66 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
               </section>
             ) : (
               <section className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                <div className="mb-3 text-sm font-semibold text-slate-900">
+                  Template messaggio personalizzato
+                </div>
+
+                <div className="mb-4 grid gap-3">
+                  <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                    <input
+                      type="radio"
+                      name="customMessageMode"
+                      checked={customMessageMode === "text"}
+                      onChange={() => changeCustomMessageMode("text")}
+                      className="mt-1 h-4 w-4 border-slate-300 text-orange-500 focus:ring-orange-500"
+                    />
+                    <div>
+                      <div className="font-semibold text-slate-950">
+                        Messaggio personalizzato solo testo
+                      </div>
+                      <div className="mt-1 text-sm text-slate-600">
+                        Usa il template senza header media.
+                      </div>
+                    </div>
+                  </label>
+
+                  <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                    <input
+                      type="radio"
+                      name="customMessageMode"
+                      checked={customMessageMode === "image"}
+                      onChange={() => changeCustomMessageMode("image")}
+                      className="mt-1 h-4 w-4 border-slate-300 text-orange-500 focus:ring-orange-500"
+                    />
+                    <div>
+                      <div className="font-semibold text-slate-950">
+                        Messaggio personalizzato con immagine
+                      </div>
+                      <div className="mt-1 text-sm text-slate-600">
+                        Usa il template con intestazione immagine.
+                      </div>
+                    </div>
+                  </label>
+
+                  <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                    <input
+                      type="radio"
+                      name="customMessageMode"
+                      checked={customMessageMode === "document"}
+                      onChange={() => changeCustomMessageMode("document")}
+                      className="mt-1 h-4 w-4 border-slate-300 text-orange-500 focus:ring-orange-500"
+                    />
+                    <div>
+                      <div className="font-semibold text-slate-950">
+                        Messaggio personalizzato con documento/PDF
+                      </div>
+                      <div className="mt-1 text-sm text-slate-600">
+                        Usa il template con intestazione documento.
+                      </div>
+                    </div>
+                  </label>
+                </div>
+
                 <label className="mb-2 block text-sm font-semibold text-slate-900">
                   Messaggio personalizzato
                 </label>
@@ -333,32 +700,41 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
                     Inserisci un messaggio personalizzato.
                   </p>
                 ) : null}
+                {customMessageMode !== "text" ? (
+                  <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-4">
+                    <label className="mb-2 block text-sm font-semibold text-slate-900">
+                      {customMessageMode === "image"
+                        ? "Immagine da allegare"
+                        : "Documento/PDF da allegare"}
+                    </label>
+                    <input
+                      key={attachmentInputKey}
+                      type="file"
+                      accept={
+                        customMessageMode === "image"
+                          ? "image/png,image/jpeg,image/webp,image/*"
+                          : "application/pdf,.pdf"
+                      }
+                      onChange={handleAttachmentChange}
+                      disabled={isSending}
+                      className="block w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 file:mr-4 file:rounded-xl file:border-0 file:bg-orange-50 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-orange-700 hover:file:bg-orange-100 disabled:cursor-not-allowed disabled:opacity-60"
+                    />
+                    <p className="mt-2 text-xs text-slate-500">
+                      Gli allegati vengono inviati solo come header del template Meta selezionato.
+                    </p>
+                    {selectedFile ? (
+                      <div className="mt-3 rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-900">
+                        <div className="font-semibold">{selectedFile.name}</div>
+                      </div>
+                    ) : (
+                      <p className="mt-2 text-xs font-semibold text-rose-700">
+                        Carica un allegato compatibile con il template selezionato.
+                      </p>
+                    )}
+                  </div>
+                ) : null}
               </section>
             )}
-
-            <section className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-              <label className="mb-2 block text-sm font-semibold text-slate-900">
-                Locandina da allegare
-              </label>
-
-              <input
-                type="file"
-                accept="image/*,.pdf"
-                onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
-                disabled={messageMode === "custom"}
-                className="block w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900"
-              />
-
-              <p className="mt-2 text-sm text-slate-500">
-                L’invio batch con allegati non è supportato. Per messaggi personalizzati viene usato il template senza allegati.
-              </p>
-
-              {selectedFile ? (
-                <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
-                  File selezionato: {selectedFile.name}. Rimuovilo per poter inviare il batch.
-                </div>
-              ) : null}
-            </section>
           </div>
 
           <div className="space-y-5">
@@ -384,7 +760,11 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
                     •{" "}
                     {messageMode === "standard"
                       ? "template opportunità standard Meta approvato"
-                      : "template messaggio personalizzato Meta approvato"}
+                      : customMessageMode === "image"
+                        ? "template messaggio personalizzato con immagine"
+                        : customMessageMode === "document"
+                          ? "template messaggio personalizzato con documento"
+                          : "template messaggio personalizzato solo testo"}
                   </li>
                   {messageMode === "standard" ? (
                     <>
@@ -392,7 +772,12 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
                       <li>• link Google Maps del negozio</li>
                     </>
                   ) : (
-                    <li>• nome cliente e messaggio scritto dall’operatore</li>
+                    <>
+                      <li>• nome cliente e messaggio scritto dall’operatore</li>
+                      {customMessageMode !== "text" ? (
+                        <li>• allegato inviato come header del template</li>
+                      ) : null}
+                    </>
                   )}
                 </ul>
               </div>

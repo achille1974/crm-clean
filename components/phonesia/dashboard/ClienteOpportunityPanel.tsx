@@ -51,6 +51,7 @@ type OpportunityRecommendation = {
 };
 
 type MessageMode = "standard" | "custom";
+type CustomMessageMode = "text" | "image" | "document";
 
 type SendApiResponse = {
   ok: boolean;
@@ -95,6 +96,7 @@ const FALLBACK_ORDER: ServiceFamily[] = [
 ];
 
 const MAX_ATTACHMENT_SIZE_BYTES = 5 * 1024 * 1024;
+const MAX_DOCUMENT_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024;
 
 function normalizeText(value?: string | null): string {
   return String(value ?? "").trim();
@@ -133,6 +135,26 @@ function isAllowedImageFile(file: File): boolean {
   }
 
   return /\.(jpg|jpeg|png|webp)$/i.test(file.name);
+}
+
+function isAllowedDocumentFile(file: File): boolean {
+  if (file.type) {
+    return file.type === "application/pdf";
+  }
+
+  return /\.pdf$/i.test(file.name);
+}
+
+function getCustomMessageModeLabel(mode: CustomMessageMode): string {
+  if (mode === "image") return "Messaggio personalizzato con immagine";
+  if (mode === "document") return "Messaggio personalizzato con documento/PDF";
+  return "Messaggio personalizzato solo testo";
+}
+
+function getCustomMessageTemplateName(mode: CustomMessageMode): string {
+  if (mode === "image") return "phonesia_messaggio_personalizzato_media_v1";
+  if (mode === "document") return "phonesia_messaggio_personalizzato_documento_v1";
+  return "phonesia_messaggio_personalizzato_v1";
 }
 
 function mergeSentOpportunities(
@@ -267,14 +289,31 @@ async function uploadFileWithSignedUrl(
   );
 }
 
-async function uploadOpportunityAttachment(file: File): Promise<UploadedAttachment> {
-  if (!isAllowedImageFile(file)) {
-    throw new Error("La locandina deve essere un’immagine JPG, PNG o WEBP.");
+async function uploadOpportunityAttachment(
+  file: File,
+  kind: "image" | "document" = "image",
+): Promise<UploadedAttachment> {
+  if (kind === "image") {
+    if (!isAllowedImageFile(file)) {
+      throw new Error("La locandina deve essere un’immagine JPG, PNG o WEBP.");
+    }
+
+    if (file.size > MAX_ATTACHMENT_SIZE_BYTES) {
+      throw new Error("La locandina non può superare 5 MB.");
+    }
   }
 
-  if (file.size > MAX_ATTACHMENT_SIZE_BYTES) {
-    throw new Error("La locandina non può superare 5 MB.");
+  if (kind === "document") {
+    if (!isAllowedDocumentFile(file)) {
+      throw new Error("Carica un allegato compatibile con il template selezionato.");
+    }
+
+    if (file.size > MAX_DOCUMENT_ATTACHMENT_SIZE_BYTES) {
+      throw new Error("Il documento non può superare 10 MB.");
+    }
   }
+
+  const fallbackContentType = kind === "document" ? "application/pdf" : "image/jpeg";
 
   const mediaResponse = await fetch("/api/phonesia/media", {
     method: "POST",
@@ -283,7 +322,7 @@ async function uploadOpportunityAttachment(file: File): Promise<UploadedAttachme
     },
     body: JSON.stringify({
       fileName: file.name,
-      contentType: file.type || "image/jpeg",
+      contentType: file.type || fallbackContentType,
     }),
   });
 
@@ -308,7 +347,7 @@ async function uploadOpportunityAttachment(file: File): Promise<UploadedAttachme
   return {
     publicUrl: media.publicUrl,
     fileName: file.name,
-    mimeType: file.type || "image/jpeg",
+    mimeType: file.type || fallbackContentType,
   };
 }
 
@@ -438,6 +477,7 @@ export default function ClienteOpportunityPanel({
   sentOpportunities,
 }: Props) {
   const [messageMode, setMessageMode] = useState<MessageMode>("standard");
+  const [customMessageMode, setCustomMessageMode] = useState<CustomMessageMode>("text");
   const [selectedServices, setSelectedServices] = useState<ServiceFamily[]>([]);
   const [customMessage, setCustomMessage] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -482,7 +522,8 @@ export default function ClienteOpportunityPanel({
   const canAttemptSend =
     messageMode === "standard"
       ? selectedServices.length > 0
-      : trimmedCustomMessage.length > 0;
+      : trimmedCustomMessage.length > 0 &&
+        (customMessageMode === "text" || attachmentFile !== null);
   const canReallySend = canAttemptSend && whatsappActive && marketingConsented && !isSending;
 
   function changeMessageMode(mode: MessageMode) {
@@ -492,6 +533,12 @@ export default function ClienteOpportunityPanel({
     if (mode === "custom") {
       clearAttachment();
     }
+  }
+
+  function changeCustomMessageMode(mode: CustomMessageMode) {
+    setSendState({ type: "idle", message: "" });
+    setCustomMessageMode(mode);
+    clearAttachment();
   }
 
   function toggleService(service: ServiceFamily) {
@@ -513,6 +560,10 @@ export default function ClienteOpportunityPanel({
 
   function handleAttachmentChange(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0] ?? null;
+    const attachmentKind =
+      messageMode === "custom" && customMessageMode === "document"
+        ? "document"
+        : "image";
 
     setSendState({ type: "idle", message: "" });
 
@@ -521,22 +572,43 @@ export default function ClienteOpportunityPanel({
       return;
     }
 
-    if (!isAllowedImageFile(file)) {
+    if (attachmentKind === "image" && !isAllowedImageFile(file)) {
       setAttachmentFile(null);
       setAttachmentInputKey((value) => value + 1);
       setSendState({
         type: "error",
-        message: "La locandina deve essere un’immagine JPG, PNG o WEBP.",
+        message:
+          messageMode === "standard"
+            ? "La locandina deve essere un’immagine JPG, PNG o WEBP."
+            : "Carica un allegato compatibile con il template selezionato.",
       });
       return;
     }
 
-    if (file.size > MAX_ATTACHMENT_SIZE_BYTES) {
+    if (attachmentKind === "document" && !isAllowedDocumentFile(file)) {
       setAttachmentFile(null);
       setAttachmentInputKey((value) => value + 1);
       setSendState({
         type: "error",
-        message: "La locandina non può superare 5 MB.",
+        message: "Carica un allegato compatibile con il template selezionato.",
+      });
+      return;
+    }
+
+    const maxSize =
+      attachmentKind === "document"
+        ? MAX_DOCUMENT_ATTACHMENT_SIZE_BYTES
+        : MAX_ATTACHMENT_SIZE_BYTES;
+
+    if (file.size > maxSize) {
+      setAttachmentFile(null);
+      setAttachmentInputKey((value) => value + 1);
+      setSendState({
+          type: "error",
+          message:
+          attachmentKind === "document"
+            ? "Il documento non può superare 10 MB."
+            : "La locandina non può superare 5 MB.",
       });
       return;
     }
@@ -554,13 +626,34 @@ export default function ClienteOpportunityPanel({
       return;
     }
 
+    if (
+      messageMode === "custom" &&
+      customMessageMode !== "text" &&
+      !attachmentFile
+    ) {
+      setSendState({
+        type: "error",
+        message: "Carica un allegato compatibile con il template selezionato.",
+      });
+      setConfirmOpen(false);
+      return;
+    }
+
     setIsSending(true);
     setSendState({ type: "idle", message: "" });
 
     try {
-      const uploadedAttachment = messageMode === "standard" && attachmentFile
-        ? await uploadOpportunityAttachment(attachmentFile)
-        : null;
+      const uploadedAttachment =
+        attachmentFile &&
+        (messageMode === "standard" ||
+          (messageMode === "custom" && customMessageMode !== "text"))
+          ? await uploadOpportunityAttachment(
+              attachmentFile,
+              messageMode === "custom" && customMessageMode === "document"
+                ? "document"
+                : "image",
+            )
+          : null;
 
       const response = await fetch("/api/phonesia/opportunita/send", {
         method: "POST",
@@ -570,6 +663,7 @@ export default function ClienteOpportunityPanel({
         body: JSON.stringify({
           clienteId,
           messageMode,
+          customMessageMode: messageMode === "custom" ? customMessageMode : null,
           services: messageMode === "standard" ? selectedServices : [],
           customMessage: messageMode === "custom" ? trimmedCustomMessage : null,
           attachmentPublicUrl: uploadedAttachment?.publicUrl ?? null,
@@ -800,7 +894,42 @@ export default function ClienteOpportunityPanel({
               )}
             </div>
           ) : (
-            <div className="mt-3">
+            <div className="mt-3 space-y-4">
+              <div className="grid gap-3 md:grid-cols-3">
+                {(["text", "image", "document"] as const).map((mode) => (
+                  <label
+                    key={mode}
+                    className={[
+                      "flex items-start gap-3 rounded-2xl border bg-white px-4 py-3 transition",
+                      customMessageMode === mode
+                        ? "border-orange-300 bg-orange-50"
+                        : "border-slate-200 hover:border-orange-200",
+                    ].join(" ")}
+                  >
+                    <input
+                      type="radio"
+                      name="singleCustomMessageMode"
+                      checked={customMessageMode === mode}
+                      onChange={() => changeCustomMessageMode(mode)}
+                      disabled={isSending}
+                      className="mt-1 h-4 w-4 border-slate-300 text-orange-500 focus:ring-orange-500 disabled:cursor-not-allowed disabled:opacity-60"
+                    />
+                    <div>
+                      <div className="text-sm font-semibold text-slate-950">
+                        {getCustomMessageModeLabel(mode)}
+                      </div>
+                      <div className="mt-1 text-xs text-slate-600">
+                        {mode === "text"
+                          ? "Template senza allegati."
+                          : mode === "image"
+                            ? "Template con intestazione immagine."
+                            : "Template con intestazione documento."}
+                      </div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+
               <textarea
                 value={customMessage}
                 onChange={(event) => {
@@ -819,6 +948,65 @@ export default function ClienteOpportunityPanel({
                   Inserisci un messaggio personalizzato.
                 </p>
               ) : null}
+
+              {customMessageMode !== "text" ? (
+                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
+                  <div className="text-sm font-semibold text-slate-900">
+                    {customMessageMode === "image"
+                      ? "Immagine da allegare"
+                      : "Documento/PDF da allegare"}
+                  </div>
+
+                  <p className="mt-1 text-xs leading-relaxed text-slate-500">
+                    {customMessageMode === "image"
+                      ? "Obbligatoria per questo template. Formati accettati: JPG, PNG o WEBP. Dimensione massima: 5 MB."
+                      : "Obbligatorio per questo template. Formato accettato: PDF. Dimensione massima: 10 MB."}
+                  </p>
+
+                  <input
+                    key={attachmentInputKey}
+                    type="file"
+                    accept={
+                      customMessageMode === "image"
+                        ? "image/png,image/jpeg,image/webp,image/*"
+                        : "application/pdf,.pdf"
+                    }
+                    onChange={handleAttachmentChange}
+                    disabled={isSending}
+                    className="mt-3 block w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 file:mr-4 file:rounded-xl file:border-0 file:bg-orange-50 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-orange-700 hover:file:bg-orange-100 disabled:cursor-not-allowed disabled:opacity-60"
+                  />
+
+                  {attachmentFile ? (
+                    <div className="mt-3 flex flex-col gap-3 rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-900 md:flex-row md:items-center md:justify-between">
+                      <div>
+                        <div className="font-semibold">{attachmentFile.name}</div>
+                        <div className="mt-0.5 text-xs text-orange-800">
+                          {attachmentFile.type ||
+                            (customMessageMode === "image" ? "immagine" : "documento")}{" "}
+                          • {formatFileSize(attachmentFile.size)}
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={clearAttachment}
+                        disabled={isSending}
+                        className="inline-flex items-center justify-center rounded-xl border border-orange-200 bg-white px-3 py-2 text-xs font-semibold text-orange-700 transition hover:bg-orange-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        Rimuovi allegato
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-xs font-semibold text-rose-700">
+                      Carica un allegato compatibile con il template selezionato.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500">
+                  Gli allegati richiedono un template Meta con intestazione immagine o documento.
+                </p>
+              )}
             </div>
           )}
 
@@ -1036,7 +1224,7 @@ export default function ClienteOpportunityPanel({
                   <strong className="text-slate-950">
                     {messageMode === "standard"
                       ? "opportunità standard"
-                      : "messaggio personalizzato"}
+                      : getCustomMessageModeLabel(customMessageMode)}
                   </strong>
                 </li>
                 {messageMode === "standard" ? (
@@ -1044,6 +1232,13 @@ export default function ClienteOpportunityPanel({
                     • Locandina:{" "}
                     <strong className={attachmentFile ? "text-emerald-700" : "text-slate-700"}>
                       {attachmentFile ? attachmentFile.name : "nessuna"}
+                    </strong>
+                  </li>
+                ) : customMessageMode !== "text" ? (
+                  <li>
+                    • Allegato template:{" "}
+                    <strong className={attachmentFile ? "text-emerald-700" : "text-rose-700"}>
+                      {attachmentFile ? attachmentFile.name : "mancante"}
                     </strong>
                   </li>
                 ) : null}
@@ -1055,7 +1250,11 @@ export default function ClienteOpportunityPanel({
                 </div>
                 <div className="text-sm text-slate-700">
                   {messageMode === "custom"
-                    ? "Verrà usato il template WhatsApp dedicato con nome cliente e messaggio personalizzato."
+                    ? customMessageMode === "text"
+                      ? `Verrà usato il template WhatsApp ${getCustomMessageTemplateName(customMessageMode)} con nome cliente e messaggio personalizzato.`
+                      : `Verrà caricato l’allegato e poi inviato il template WhatsApp ${getCustomMessageTemplateName(customMessageMode)} con header ${
+                          customMessageMode === "image" ? "immagine" : "documento"
+                        }.`
                     : attachmentFile
                       ? "Verrà caricato il file e poi inviato il template WhatsApp con locandina."
                       : "Verrà usato il template marketing approvato di WhatsApp con i dati dinamici del cliente e del negozio."}
@@ -1085,7 +1284,7 @@ export default function ClienteOpportunityPanel({
                 ].join(" ")}
               >
                 {isSending
-                  ? messageMode === "standard" && attachmentFile
+                  ? attachmentFile
                     ? "Caricamento e invio..."
                     : "Invio in corso..."
                   : messageMode === "standard"

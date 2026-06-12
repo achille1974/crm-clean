@@ -36,6 +36,10 @@ const WHATSAPP_TEMPLATE_OPPORTUNITA_MEDIA_LANGUAGE =
 
 const WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_NAME = "phonesia_messaggio_personalizzato_v1";
 const WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_LANGUAGE = "it";
+const WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_IMAGE_NAME =
+  "phonesia_messaggio_personalizzato_media_v1";
+const WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_DOCUMENT_NAME =
+  "phonesia_messaggio_personalizzato_documento_v1";
 
 const OPPORTUNITA_HEADER_IMAGE_URL =
   "https://crm-clean.vercel.app/phonesia/welcome-header.jpg";
@@ -89,7 +93,70 @@ type AlreadySentRow = {
   opportunita_code: string | null;
 };
 
-type SendMode = "standard" | "standard_media" | "custom_message";
+type SendMode =
+  | "standard"
+  | "standard_media"
+  | "custom_message"
+  | "custom_message_image"
+  | "custom_message_document";
+
+type CustomMessageMode = "text" | "image" | "document";
+
+type CustomTemplateConfig = {
+  mode: CustomMessageMode;
+  sendMode: SendMode;
+  templateName: string;
+  headerKind: "image" | "document" | null;
+};
+
+type MetaTemplateSendAttempt = {
+  attempt: 1 | 2;
+  template_name: string;
+  status: "success" | "error";
+  http_status: number | null;
+  error_code: number | null;
+  is_transient: boolean | null;
+  fbtrace_id: string | null;
+  message: string | null;
+};
+
+type MetaTemplateSendResult = {
+  response: unknown;
+  attempts: MetaTemplateSendAttempt[];
+};
+
+type ParsedMetaError = {
+  message: string | null;
+  code: number | null;
+  isTransient: boolean | null;
+  fbtraceId: string | null;
+};
+
+class MetaTemplateSendError extends Error {
+  attempts: MetaTemplateSendAttempt[];
+  templateName: string;
+
+  constructor(templateName: string, attempts: MetaTemplateSendAttempt[]) {
+    const lastAttempt = attempts[attempts.length - 1] ?? null;
+    const hadTransientRetry = attempts.some(
+      (attempt) => attempt.is_transient === true || attempt.error_code === 2,
+    );
+    const transientText =
+      hadTransientRetry
+        ? "Errore transitorio Meta. Ho ritentato una volta dopo 3 secondi, ma il secondo tentativo non è riuscito."
+        : "Meta non ha accettato il template WhatsApp.";
+
+    super(
+      `${transientText} Template: ${templateName}.` +
+        (lastAttempt?.error_code != null ? ` Codice: ${lastAttempt.error_code}.` : "") +
+        (lastAttempt?.fbtrace_id ? ` fbtrace_id: ${lastAttempt.fbtrace_id}.` : ""),
+    );
+
+    this.name = "MetaTemplateSendError";
+    this.templateName = templateName;
+    this.attempts = attempts;
+  }
+}
 
 const STORE_CONTACTS: Record<
   number,
@@ -185,8 +252,59 @@ function isAllowedImageAttachment(params: {
   return /\.(jpg|jpeg|png|webp)(\?|#|$)/i.test(source);
 }
 
+function isAllowedDocumentAttachment(params: {
+  publicUrl: string;
+  fileName: string | null;
+  mimeType: string | null;
+}) {
+  const mimeType = normalizeText(params.mimeType).toLowerCase();
+
+  if (mimeType) {
+    return mimeType === "application/pdf";
+  }
+
+  const source = `${params.fileName ?? ""} ${params.publicUrl}`.toLowerCase();
+
+  return /\.pdf(\?|#|$)/i.test(source);
+}
+
 function isValidService(value: string): value is ServiceFamily {
   return SERVICE_COLUMNS.includes(value as ServiceFamily);
+}
+
+function isValidCustomMessageMode(value: string): value is CustomMessageMode {
+  return ["text", "image", "document"].includes(value);
+}
+
+function resolveCustomTemplateConfig(mode: CustomMessageMode): CustomTemplateConfig {
+  if (mode === "image") {
+    return {
+      mode,
+      sendMode: "custom_message_image",
+      templateName: WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_IMAGE_NAME,
+      headerKind: "image",
+    };
+  }
+
+  if (mode === "document") {
+    return {
+      mode,
+      sendMode: "custom_message_document",
+      templateName: WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_DOCUMENT_NAME,
+      headerKind: "document",
+    };
+  }
+
+  return {
+    mode: "text",
+    sendMode: "custom_message",
+    templateName: WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_NAME,
+    headerKind: null,
+  };
+}
+
+function isCustomSendMode(sendMode: SendMode): boolean {
+  return sendMode.startsWith("custom_message");
 }
 
 function serviceLabel(service: ServiceFamily): string {
@@ -278,6 +396,116 @@ async function sendWhatsAppOpportunityTemplate(params: {
   servizio: string;
   indirizzoNegozio: string;
 }) {
+  return sendMetaTemplateWithRetry({
+    templateName: params.templateName,
+    payload: {
+      messaging_product: "whatsapp",
+      to: params.to,
+      type: "template",
+      template: {
+        name: params.templateName,
+        language: {
+          code: params.languageCode,
+        },
+        components: [
+          {
+            type: "header",
+            parameters: [
+              {
+                type: "image",
+                image: {
+                  link: params.headerImageUrl,
+                },
+              },
+            ],
+          },
+          {
+            type: "body",
+            parameters: [
+              {
+                type: "text",
+                parameter_name: "nome_cliente",
+                text: params.nomeCliente,
+              },
+              {
+                type: "text",
+                parameter_name: "servizio",
+                text: params.servizio,
+              },
+            ],
+          },
+          {
+            type: "button",
+            sub_type: "url",
+            index: "1",
+            parameters: [
+              {
+                type: "text",
+                text: params.indirizzoNegozio,
+              },
+            ],
+          },
+        ],
+      },
+    },
+  });
+}
+
+function parseMetaErrorBody(body: string): ParsedMetaError {
+  try {
+    const parsed = JSON.parse(body) as {
+      error?: {
+        message?: unknown;
+        code?: unknown;
+        is_transient?: unknown;
+        fbtrace_id?: unknown;
+      };
+    };
+    const error = parsed.error;
+
+    return {
+      message: typeof error?.message === "string" ? error.message : null,
+      code: typeof error?.code === "number" ? error.code : null,
+      isTransient:
+        typeof error?.is_transient === "boolean" ? error.is_transient : null,
+      fbtraceId: typeof error?.fbtrace_id === "string" ? error.fbtrace_id : null,
+    };
+  } catch {
+    return {
+      message: body || null,
+      code: null,
+      isTransient: null,
+      fbtraceId: null,
+    };
+  }
+}
+
+function shouldRetryMetaError(error: ParsedMetaError): boolean {
+  return error.isTransient === true || error.code === 2;
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function formatMetaTemplateError(error: MetaTemplateSendError): string {
+  const hadTransientRetry = error.attempts.some(
+    (attempt) => attempt.is_transient === true || attempt.error_code === 2,
+  );
+
+  if (hadTransientRetry) {
+    return "Errore temporaneo Meta durante l’invio WhatsApp. Ho ritentato una volta dopo 3 secondi, ma l’invio non è riuscito. Riprova tra poco.";
+  }
+
+  return "Invio WhatsApp non riuscito. Meta non ha accettato il template richiesto.";
+}
+
+async function sendMetaTemplateWithRetry(params: {
+  templateName: string;
+  payload: Record<string, unknown>;
+}): Promise<MetaTemplateSendResult> {
   if (!WHATSAPP_ACCESS_TOKEN) {
     throw new Error("Missing WHATSAPP_ACCESS_TOKEN");
   }
@@ -286,74 +514,63 @@ async function sendWhatsAppOpportunityTemplate(params: {
     throw new Error("Missing WHATSAPP_PHONE_NUMBER_ID");
   }
 
-  const response = await fetch(
-    `https://graph.facebook.com/${GRAPH_API_VERSION}/${WHATSAPP_PHONE_NUMBER_ID}/messages`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        messaging_product: "whatsapp",
-        to: params.to,
-        type: "template",
-        template: {
-          name: params.templateName,
-          language: {
-            code: params.languageCode,
-          },
-          components: [
-            {
-              type: "header",
-              parameters: [
-                {
-                  type: "image",
-                  image: {
-                    link: params.headerImageUrl,
-                  },
-                },
-              ],
-            },
-            {
-              type: "body",
-              parameters: [
-                {
-                  type: "text",
-                  parameter_name: "nome_cliente",
-                  text: params.nomeCliente,
-                },
-                {
-                  type: "text",
-                  parameter_name: "servizio",
-                  text: params.servizio,
-                },
-              ],
-            },
-            {
-              type: "button",
-              sub_type: "url",
-              index: "1",
-              parameters: [
-                {
-                  type: "text",
-                  text: params.indirizzoNegozio,
-                },
-              ],
-            },
-          ],
-        },
-      }),
-      cache: "no-store",
-    },
-  );
+  const attempts: MetaTemplateSendAttempt[] = [];
 
-  if (!response.ok) {
+  for (const attempt of [1, 2] as const) {
+    const response = await fetch(
+      `https://graph.facebook.com/${GRAPH_API_VERSION}/${WHATSAPP_PHONE_NUMBER_ID}/messages`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(params.payload),
+        cache: "no-store",
+      },
+    );
+
+    if (response.ok) {
+      attempts.push({
+        attempt,
+        template_name: params.templateName,
+        status: "success",
+        http_status: response.status,
+        error_code: null,
+        is_transient: null,
+        fbtrace_id: null,
+        message: null,
+      });
+
+      return {
+        response: await response.json().catch(() => null),
+        attempts,
+      };
+    }
+
     const body = await response.text();
-    throw new Error(`Meta template opportunità failed: ${response.status} ${body}`);
+    const metaError = parseMetaErrorBody(body);
+
+    attempts.push({
+      attempt,
+      template_name: params.templateName,
+      status: "error",
+      http_status: response.status,
+      error_code: metaError.code,
+      is_transient: metaError.isTransient,
+      fbtrace_id: metaError.fbtraceId,
+      message: metaError.message,
+    });
+
+    if (attempt === 1 && shouldRetryMetaError(metaError)) {
+      await wait(3000);
+      continue;
+    }
+
+    throw new MetaTemplateSendError(params.templateName, attempts);
   }
 
-  return response.json();
+  throw new MetaTemplateSendError(params.templateName, attempts);
 }
 
 async function sendWhatsAppCustomMessageTemplate(params: {
@@ -362,61 +579,76 @@ async function sendWhatsAppCustomMessageTemplate(params: {
   languageCode: string;
   nomeCliente: string;
   messaggio: string;
+  headerMedia: {
+    kind: "image" | "document";
+    link: string;
+    fileName: string | null;
+  } | null;
 }) {
-  if (!WHATSAPP_ACCESS_TOKEN) {
-    throw new Error("Missing WHATSAPP_ACCESS_TOKEN");
-  }
+  const components: Array<Record<string, unknown>> = [];
 
-  if (!WHATSAPP_PHONE_NUMBER_ID) {
-    throw new Error("Missing WHATSAPP_PHONE_NUMBER_ID");
-  }
-
-  const response = await fetch(
-    `https://graph.facebook.com/${GRAPH_API_VERSION}/${WHATSAPP_PHONE_NUMBER_ID}/messages`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        messaging_product: "whatsapp",
-        to: params.to,
-        type: "template",
-        template: {
-          name: params.templateName,
-          language: {
-            code: params.languageCode,
+  if (params.headerMedia?.kind === "image") {
+    components.push({
+      type: "header",
+      parameters: [
+        {
+          type: "image",
+          image: {
+            link: params.headerMedia.link,
           },
-          components: [
-            {
-              type: "body",
-              parameters: [
-                {
-                  type: "text",
-                  parameter_name: "nome_cliente",
-                  text: params.nomeCliente,
-                },
-                {
-                  type: "text",
-                  parameter_name: "messaggio",
-                  text: params.messaggio,
-                },
-              ],
-            },
-          ],
         },
-      }),
-      cache: "no-store",
-    },
-  );
-
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Meta template messaggio personalizzato failed: ${response.status} ${body}`);
+      ],
+    });
   }
 
-  return response.json();
+  if (params.headerMedia?.kind === "document") {
+    components.push({
+      type: "header",
+      parameters: [
+        {
+          type: "document",
+          document: {
+            link: params.headerMedia.link,
+            ...(params.headerMedia.fileName
+              ? { filename: params.headerMedia.fileName }
+              : {}),
+          },
+        },
+      ],
+    });
+  }
+
+  components.push({
+    type: "body",
+    parameters: [
+      {
+        type: "text",
+        parameter_name: "nome_cliente",
+        text: params.nomeCliente,
+      },
+      {
+        type: "text",
+        parameter_name: "messaggio",
+        text: params.messaggio,
+      },
+    ],
+  });
+
+  return sendMetaTemplateWithRetry({
+    templateName: params.templateName,
+    payload: {
+      messaging_product: "whatsapp",
+      to: params.to,
+      type: "template",
+      template: {
+        name: params.templateName,
+        language: {
+          code: params.languageCode,
+        },
+        components,
+      },
+    },
+  });
 }
 
 async function logOpportunitySend(
@@ -430,6 +662,7 @@ async function logOpportunitySend(
     sendMode: SendMode;
     customMessage?: string | null;
     selectedClientCount?: number;
+    metaSendAttempts?: MetaTemplateSendAttempt[];
     attachmentPublicUrl: string | null;
     attachmentFileName: string | null;
   },
@@ -439,7 +672,7 @@ async function logOpportunitySend(
       cliente_id: params.clienteId,
       canale: "whatsapp",
       messaggio_utente:
-        params.sendMode === "custom_message"
+        isCustomSendMode(params.sendMode)
           ? "[dashboard] invio messaggio personalizzato"
           : params.attachmentPublicUrl
             ? `[dashboard] invio opportunità con locandina: ${params.services.join(", ")}`
@@ -460,6 +693,16 @@ async function logOpportunitySend(
         messaggio_personalizzato: params.customMessage ?? null,
         selected_client_count: params.selectedClientCount ?? 1,
         numero_clienti_selezionati: params.selectedClientCount ?? 1,
+        meta_send_attempts: params.metaSendAttempts ?? [],
+        meta_error_code:
+          params.metaSendAttempts?.find((attempt) => attempt.status === "error")
+            ?.error_code ?? null,
+        meta_is_transient:
+          params.metaSendAttempts?.find((attempt) => attempt.status === "error")
+            ?.is_transient ?? null,
+        meta_fbtrace_id:
+          params.metaSendAttempts?.find((attempt) => attempt.status === "error")
+            ?.fbtrace_id ?? null,
         attachment_public_url: params.attachmentPublicUrl,
         attachment_file_name: params.attachmentFileName,
       },
@@ -479,6 +722,7 @@ async function saveSentOpportunities(
     mapsUrl: string;
     sendMode: SendMode;
     templateName: string;
+    metaSendAttempts?: MetaTemplateSendAttempt[];
     attachmentPublicUrl: string | null;
     attachmentFileName: string | null;
   },
@@ -500,6 +744,16 @@ async function saveSentOpportunities(
       template_usato: params.templateName,
       tipo_invio: params.sendMode,
       send_mode: params.sendMode,
+      meta_send_attempts: params.metaSendAttempts ?? [],
+      meta_error_code:
+        params.metaSendAttempts?.find((attempt) => attempt.status === "error")
+          ?.error_code ?? null,
+      meta_is_transient:
+        params.metaSendAttempts?.find((attempt) => attempt.status === "error")
+          ?.is_transient ?? null,
+      meta_fbtrace_id:
+        params.metaSendAttempts?.find((attempt) => attempt.status === "error")
+          ?.fbtrace_id ?? null,
       attachment_public_url: params.attachmentPublicUrl,
       attachment_file_name: params.attachmentFileName,
     },
@@ -539,30 +793,53 @@ async function saveCustomMessageOpportunity(
     text: string;
     negozioContatto: string;
     mapsUrl: string;
+    sendMode: SendMode;
     templateName: string;
     selectedClientCount: number;
+    attachmentPublicUrl: string | null;
+    attachmentFileName: string | null;
+    metaSendAttempts: MetaTemplateSendAttempt[];
   },
 ) {
+  const codePrefix =
+    params.sendMode === "custom_message_image"
+      ? "CUSTOM_MESSAGE_IMAGE"
+      : params.sendMode === "custom_message_document"
+        ? "CUSTOM_MESSAGE_DOCUMENT"
+        : "CUSTOM_MESSAGE";
+
   const row: OpportunityInsertRow = {
     cliente_id: params.clienteId,
-    opportunita_code: `CUSTOM_MESSAGE:${crypto.randomUUID()}`,
+    opportunita_code: `${codePrefix}:${crypto.randomUUID()}`,
     opportunita_label: "Messaggio personalizzato",
-    send_mode: "custom_message",
+    send_mode: params.sendMode,
     batch_id: null,
     messaggio: params.text,
-    attachment_public_url: null,
-    attachment_file_name: null,
+    attachment_public_url: params.attachmentPublicUrl,
+    attachment_file_name: params.attachmentFileName,
     negozio_contatto: params.negozioContatto,
     metadata: {
       maps_url: params.mapsUrl,
       template_name: params.templateName,
       template_usato: params.templateName,
-      tipo_invio: "custom_message",
-      send_mode: "custom_message",
+      tipo_invio: params.sendMode,
+      send_mode: params.sendMode,
       custom_message: params.text,
       messaggio_personalizzato: params.text,
+      attachment_public_url: params.attachmentPublicUrl,
+      attachment_file_name: params.attachmentFileName,
       selected_client_count: params.selectedClientCount,
       numero_clienti_selezionati: params.selectedClientCount,
+      meta_send_attempts: params.metaSendAttempts,
+      meta_error_code:
+        params.metaSendAttempts.find((attempt) => attempt.status === "error")
+          ?.error_code ?? null,
+      meta_is_transient:
+        params.metaSendAttempts.find((attempt) => attempt.status === "error")
+          ?.is_transient ?? null,
+      meta_fbtrace_id:
+        params.metaSendAttempts.find((attempt) => attempt.status === "error")
+          ?.fbtrace_id ?? null,
     },
   };
 
@@ -596,11 +873,63 @@ async function saveCustomMessageOpportunity(
   ];
 }
 
+async function logMetaTemplateFailure(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  params: {
+    clienteId: number;
+    templateName: string;
+    sendMode: SendMode;
+    responseText: string;
+    negozioContatto: string;
+    customMessage: string | null;
+    selectedClientCount: number;
+    attempts: MetaTemplateSendAttempt[];
+  },
+) {
+  const lastError = [...params.attempts]
+    .reverse()
+    .find((attempt) => attempt.status === "error");
+
+  try {
+    await supabase.from("phonesia_conversazioni").insert({
+      cliente_id: params.clienteId,
+      canale: "whatsapp",
+      messaggio_utente:
+        isCustomSendMode(params.sendMode)
+          ? "[dashboard] errore invio messaggio personalizzato"
+          : "[dashboard] errore invio opportunità",
+      intent: "dashboard_opportunita_send",
+      tool_usato: "api_phonesia_opportunita_send",
+      risposta_agente: params.responseText,
+      stato: "errore",
+      handoff_richiesto: false,
+      metadata: {
+        template_name: params.templateName,
+        template_usato: params.templateName,
+        tipo_invio: params.sendMode,
+        send_mode: params.sendMode,
+        custom_message: params.customMessage,
+        messaggio_personalizzato: params.customMessage,
+        selected_client_count: params.selectedClientCount,
+        numero_clienti_selezionati: params.selectedClientCount,
+        meta_send_attempts: params.attempts,
+        meta_error_code: lastError?.error_code ?? null,
+        meta_is_transient: lastError?.is_transient ?? null,
+        meta_fbtrace_id: lastError?.fbtrace_id ?? null,
+        meta_failed_attempt: lastError?.attempt ?? null,
+      },
+    });
+  } catch (error) {
+    console.error("Errore log fallimento Meta template:", error);
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as {
       clienteId?: number;
       messageMode?: string;
+      customMessageMode?: string | null;
       services?: string[];
       customMessage?: string | null;
       attachmentPublicUrl?: string | null;
@@ -611,6 +940,11 @@ export async function POST(request: NextRequest) {
     const clienteId = Number(body.clienteId);
     const messageMode =
       normalizeText(body.messageMode).toLowerCase() === "custom" ? "custom" : "standard";
+    const customMessageModeRaw = normalizeText(body.customMessageMode).toLowerCase();
+    const customMessageMode = isValidCustomMessageMode(customMessageModeRaw)
+      ? customMessageModeRaw
+      : "text";
+    const customTemplateConfig = resolveCustomTemplateConfig(customMessageMode);
     const customMessage = normalizeText(body.customMessage);
     const rawServices = Array.isArray(body.services) ? body.services : [];
     const services = [
@@ -665,18 +999,75 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (messageMode === "custom" && attachmentPublicUrl) {
+    if (messageMode === "custom" && customMessageMode === "text" && attachmentPublicUrl) {
       return NextResponse.json(
         {
           ok: false,
           error: "attachment_custom_non_supportato",
-          message: "Il messaggio personalizzato usa il template dedicato senza locandina.",
+          message:
+            "Gli allegati richiedono un template Meta con intestazione immagine o documento.",
         },
         { status: 400 },
       );
     }
 
     if (
+      messageMode === "custom" &&
+      customTemplateConfig.headerKind &&
+      !attachmentPublicUrl
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "attachment_custom_mancante",
+          message: "Carica un allegato compatibile con il template selezionato.",
+        },
+        { status: 400 },
+      );
+    }
+
+    if (
+      messageMode === "custom" &&
+      customTemplateConfig.headerKind === "image" &&
+      attachmentPublicUrl &&
+      !isAllowedImageAttachment({
+        publicUrl: attachmentPublicUrl,
+        fileName: attachmentFileName,
+        mimeType: attachmentMimeType,
+      })
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "attachment_custom_non_compatibile",
+          message: "Carica un allegato compatibile con il template selezionato.",
+        },
+        { status: 400 },
+      );
+    }
+
+    if (
+      messageMode === "custom" &&
+      customTemplateConfig.headerKind === "document" &&
+      attachmentPublicUrl &&
+      !isAllowedDocumentAttachment({
+        publicUrl: attachmentPublicUrl,
+        fileName: attachmentFileName,
+        mimeType: attachmentMimeType,
+      })
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "attachment_custom_non_compatibile",
+          message: "Carica un allegato compatibile con il template selezionato.",
+        },
+        { status: 400 },
+      );
+    }
+
+    if (
+      messageMode === "standard" &&
       attachmentPublicUrl &&
       !isAllowedImageAttachment({
         publicUrl: attachmentPublicUrl,
@@ -847,21 +1238,65 @@ export async function POST(request: NextRequest) {
     }
 
     if (messageMode === "custom") {
-      await sendWhatsAppCustomMessageTemplate({
-        to: metaRecipient,
-        templateName: WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_NAME,
-        languageCode: WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_LANGUAGE,
-        nomeCliente: nomeClienteTemplate,
-        messaggio: customMessage,
-      });
+      let metaSendResult: MetaTemplateSendResult;
+
+      try {
+        metaSendResult = await sendWhatsAppCustomMessageTemplate({
+          to: metaRecipient,
+          templateName: customTemplateConfig.templateName,
+          languageCode: WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_LANGUAGE,
+          nomeCliente: nomeClienteTemplate,
+          messaggio: customMessage,
+          headerMedia: customTemplateConfig.headerKind
+            ? {
+                kind: customTemplateConfig.headerKind,
+                link: attachmentPublicUrl!,
+                fileName: attachmentFileName,
+              }
+            : null,
+        });
+      } catch (error) {
+        if (error instanceof MetaTemplateSendError) {
+          const message = formatMetaTemplateError(error);
+
+          await logMetaTemplateFailure(supabase, {
+            clienteId,
+            templateName: customTemplateConfig.templateName,
+            sendMode: customTemplateConfig.sendMode,
+            responseText: message,
+            negozioContatto: contactStore.label,
+            customMessage,
+            selectedClientCount: 1,
+            attempts: error.attempts,
+          });
+
+          return NextResponse.json(
+            {
+              ok: false,
+              error: "meta_template_send_failed",
+              message,
+              detail: error.message,
+              template_name: error.templateName,
+              meta_attempts: error.attempts,
+            },
+            { status: 502 },
+          );
+        }
+
+        throw error;
+      }
 
       const sentOpportunities = await saveCustomMessageOpportunity(supabase, {
         clienteId,
         text: customMessage,
         negozioContatto: contactStore.label,
         mapsUrl: contactStore.mapsUrl,
-        templateName: WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_NAME,
+        sendMode: customTemplateConfig.sendMode,
+        templateName: customTemplateConfig.templateName,
         selectedClientCount: 1,
+        attachmentPublicUrl,
+        attachmentFileName,
+        metaSendAttempts: metaSendResult.attempts,
       });
 
       await logOpportunitySend(supabase, {
@@ -869,12 +1304,13 @@ export async function POST(request: NextRequest) {
         services: [],
         responseText: customMessage,
         negozioContatto: contactStore.label,
-        templateName: WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_NAME,
-        sendMode: "custom_message",
+        templateName: customTemplateConfig.templateName,
+        sendMode: customTemplateConfig.sendMode,
         customMessage,
         selectedClientCount: 1,
-        attachmentPublicUrl: null,
-        attachmentFileName: null,
+        metaSendAttempts: metaSendResult.attempts,
+        attachmentPublicUrl,
+        attachmentFileName,
       });
 
       return NextResponse.json({
@@ -882,8 +1318,10 @@ export async function POST(request: NextRequest) {
         message: "Messaggio personalizzato inviato correttamente.",
         negozio_contatto: contactStore.label,
         services: [],
-        template_name: WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_NAME,
-        send_mode: "custom_message",
+        template_name: customTemplateConfig.templateName,
+        send_mode: customTemplateConfig.sendMode,
+        attachment_public_url: attachmentPublicUrl,
+        attachment_file_name: attachmentFileName,
         sentOpportunities,
       });
     }
@@ -900,15 +1338,48 @@ export async function POST(request: NextRequest) {
     const headerImageUrl = attachmentPublicUrl || OPPORTUNITA_HEADER_IMAGE_URL;
     const sendMode = hasAttachment ? "standard_media" : "standard";
 
-    await sendWhatsAppOpportunityTemplate({
-      to: metaRecipient,
-      templateName,
-      languageCode: templateLanguage,
-      headerImageUrl,
-      nomeCliente,
-      servizio: offerText,
-      indirizzoNegozio: contactStore.mapsQuery,
-    });
+    let metaSendResult: MetaTemplateSendResult;
+
+    try {
+      metaSendResult = await sendWhatsAppOpportunityTemplate({
+        to: metaRecipient,
+        templateName,
+        languageCode: templateLanguage,
+        headerImageUrl,
+        nomeCliente,
+        servizio: offerText,
+        indirizzoNegozio: contactStore.mapsQuery,
+      });
+    } catch (error) {
+      if (error instanceof MetaTemplateSendError) {
+        const message = formatMetaTemplateError(error);
+
+        await logMetaTemplateFailure(supabase, {
+          clienteId,
+          templateName,
+          sendMode,
+          responseText: message,
+          negozioContatto: contactStore.label,
+          customMessage: null,
+          selectedClientCount: 1,
+          attempts: error.attempts,
+        });
+
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "meta_template_send_failed",
+            message,
+            detail: error.message,
+            template_name: error.templateName,
+            meta_attempts: error.attempts,
+          },
+          { status: 502 },
+        );
+      }
+
+      throw error;
+    }
 
     const text = hasAttachment
       ? `Ciao ${nomeCliente}, abbiamo una proposta dedicata per te su ${offerText}.\n\n` +
@@ -928,6 +1399,7 @@ export async function POST(request: NextRequest) {
       mapsUrl: contactStore.mapsUrl,
       sendMode,
       templateName,
+      metaSendAttempts: metaSendResult.attempts,
       attachmentPublicUrl,
       attachmentFileName,
     });
@@ -939,6 +1411,7 @@ export async function POST(request: NextRequest) {
       negozioContatto: contactStore.label,
       templateName,
       sendMode,
+      metaSendAttempts: metaSendResult.attempts,
       attachmentPublicUrl,
       attachmentFileName,
     });
