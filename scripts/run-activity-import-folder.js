@@ -5,13 +5,14 @@ const { spawn } = require("child_process");
 const { createClient } = require("@supabase/supabase-js");
 
 const ROOT_DIR = path.resolve(__dirname, "..");
-const INBOX_DIR = "/Users/Shared/PHONESIA_IMPORT/inbox";
+const DEFAULT_INBOX_DIR = "/Users/Shared/PHONESIA_IMPORT/inbox";
 const ERROR_DIR = "/Users/Shared/PHONESIA_IMPORT/error";
 const LOGS_DIR = "/Users/Shared/PHONESIA_IMPORT/logs";
 const IMPORT_SCRIPT = path.join(ROOT_DIR, "scripts/import-phonesia-activity-xlsx.js");
 const MATCH_SCRIPT = path.join(ROOT_DIR, "scripts/match-phonesia-activity-customers.js");
 const BATCH_TABLE = "phonesia_activity_import_batches";
 const HASH_COLUMN = "source_file_hash";
+const FILE_STABLE_MIN_AGE_MS = 10 * 60 * 1000;
 
 function parseArgs(argv) {
   const args = {
@@ -50,8 +51,10 @@ function printHelp() {
       "",
       "Senza --commit esegue solo simulazione e non sposta/elimina file.",
       "Con --commit importa, esegue il matching clienti e pulisce la inbox.",
+      "Inbox da PHONESIA_IMPORT_INBOX_DIR; fallback: /Users/Shared/PHONESIA_IMPORT/inbox.",
+      "Importa solo file .xlsx non modificati negli ultimi 10 minuti.",
       "--silent-no-file non invia alert se la inbox e vuota e termina con exit code 0.",
-      "--final-monday-check invia alert se la inbox e vuota e termina con exit code 1.",
+      "--final-monday-check invia alert se alle 22 manca un file importabile e termina con exit code 1.",
     ].join("\n")
   );
 }
@@ -88,6 +91,26 @@ function loadEnv() {
     ...loadEnvFile(path.join(ROOT_DIR, ".env.production.local")),
     ...loadEnvFile(path.join(ROOT_DIR, ".env.local")),
     ...process.env,
+  };
+}
+
+function resolveInboxDir(env) {
+  const configuredInboxDir = String(env.PHONESIA_IMPORT_INBOX_DIR || "").trim();
+
+  if (configuredInboxDir) {
+    return {
+      dir: configuredInboxDir,
+      source: "PHONESIA_IMPORT_INBOX_DIR",
+      fallback_used: false,
+      fallback_dir: DEFAULT_INBOX_DIR,
+    };
+  }
+
+  return {
+    dir: DEFAULT_INBOX_DIR,
+    source: "fallback",
+    fallback_used: true,
+    fallback_dir: DEFAULT_INBOX_DIR,
   };
 }
 
@@ -144,26 +167,73 @@ function sha256File(filePath) {
   return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
 }
 
-function getExcelFiles() {
-  ensureDirectory(INBOX_DIR);
+function getExcelFiles(inboxDir, checkedAtMs) {
+  ensureDirectory(inboxDir);
 
   return fs
-    .readdirSync(INBOX_DIR, { withFileTypes: true })
+    .readdirSync(inboxDir, { withFileTypes: true })
     .filter((entry) => entry.isFile())
     .filter((entry) => entry.name.toLowerCase().endsWith(".xlsx"))
     .filter((entry) => !entry.name.startsWith("~$"))
     .map((entry) => {
-      const filePath = path.join(INBOX_DIR, entry.name);
+      const filePath = path.join(inboxDir, entry.name);
       const stat = fs.statSync(filePath);
+      const ageMs = checkedAtMs - stat.mtimeMs;
+      const stableAfterMs = stat.mtimeMs + FILE_STABLE_MIN_AGE_MS;
+      const isStable = ageMs >= FILE_STABLE_MIN_AGE_MS;
+
       return {
         file_name: entry.name,
         file_path: filePath,
         size_bytes: stat.size,
         modified_at: stat.mtime.toISOString(),
         modified_ms: stat.mtimeMs,
+        age_seconds: Math.max(0, Math.floor(ageMs / 1000)),
+        stable_after: new Date(stableAfterMs).toISOString(),
+        stable_in_seconds: isStable
+          ? 0
+          : Math.max(0, Math.ceil((FILE_STABLE_MIN_AGE_MS - ageMs) / 1000)),
+        is_stable: isStable,
       };
     })
     .sort((a, b) => a.modified_ms - b.modified_ms || a.file_name.localeCompare(b.file_name));
+}
+
+function logFileInfo(file) {
+  const { modified_ms: _modifiedMs, ...item } = file;
+  return item;
+}
+
+function makeFileNotStableResult(file) {
+  return {
+    ...logFileInfo(file),
+    status: "file_not_stable_yet",
+    source_file_hash: null,
+    batch_id: null,
+    duplicate: null,
+    phases: {},
+    actions: [],
+    moved_to_error: null,
+    failed_phase: null,
+    error: null,
+    skipped_reason: `File modificato da meno di 10 minuti; importabile dopo ${file.stable_after}.`,
+  };
+}
+
+function buildUnstableFilesMessage(files) {
+  const details = files
+    .map(
+      (file) =>
+        `- ${file.file_name}: modificato ${file.modified_at}, importabile dopo ${file.stable_after}`
+    )
+    .join("\n");
+
+  return [
+    "Uno o piu file .xlsx sono presenti nella inbox ma non sono ancora stabili.",
+    "Il runner importa solo file non modificati negli ultimi 10 minuti.",
+    "",
+    details,
+  ].join("\n");
 }
 
 async function findExistingBatchByHash(supabase, fileHash) {
@@ -662,6 +732,8 @@ async function processFile({ file, args, supabase }) {
 async function main() {
   const startedAt = nowIso();
   const args = parseArgs(process.argv.slice(2));
+  const env = loadEnv();
+  const inbox = resolveInboxDir(env);
 
   if (args.help) {
     printHelp();
@@ -670,8 +742,8 @@ async function main() {
 
   ensureDirectory(ERROR_DIR);
   ensureDirectory(LOGS_DIR);
+  console.log(`Inbox import attivita negozi: ${inbox.dir} (${inbox.source})`);
 
-  const env = loadEnv();
   const log = {
     runner: "phonesia_activity_import_folder",
     started_at: startedAt,
@@ -684,10 +756,15 @@ async function main() {
       : args.silentNoFile
         ? "silent_no_file"
         : "normal",
-    inbox_dir: INBOX_DIR,
+    inbox_dir: inbox.dir,
+    inbox_source: inbox.source,
+    inbox_fallback_used: inbox.fallback_used,
+    inbox_fallback_dir: inbox.fallback_dir,
     error_dir: ERROR_DIR,
     logs_dir: LOGS_DIR,
     log_path: createLogPath(startedAt),
+    file_stability_min_age_minutes: FILE_STABLE_MIN_AGE_MS / 60 / 1000,
+    file_stability_checked_at: null,
     alert_email_configured: false,
     email_system: {
       project_email_system_found: true,
@@ -704,14 +781,21 @@ async function main() {
   };
 
   try {
-    const files = getExcelFiles();
-    log.files_found = files.map(({ modified_ms: _modifiedMs, ...item }) => item);
+    const checkedAtMs = Date.now();
+    const files = getExcelFiles(inbox.dir, checkedAtMs);
+    const stableFiles = files.filter((file) => file.is_stable);
+    const unstableFiles = files.filter((file) => !file.is_stable);
+    const unstableResults = unstableFiles.map(makeFileNotStableResult);
+
+    log.file_stability_checked_at = new Date(checkedAtMs).toISOString();
+    log.files_found = files.map(logFileInfo);
+    log.results.push(...unstableResults);
 
     if (files.length === 0) {
       if (args.silentNoFile) {
         log.status = "no_file_silent";
         log.outcome = "no_file_silent";
-        log.no_file_reason = `Nessun file .xlsx trovato in ${INBOX_DIR}. Controllo intermedio silenzioso.`;
+        log.no_file_reason = `Nessun file .xlsx trovato in ${inbox.dir}. Controllo intermedio silenzioso.`;
         await writeLogAndMaybeAlert({ log, env, event: null });
         process.exitCode = 0;
         return;
@@ -724,7 +808,7 @@ async function main() {
         outcome: "NESSUN FILE",
         fileResult: null,
         failedPhase: "no_file",
-        error: `Nessun file .xlsx trovato in ${INBOX_DIR}. I file temporanei Excel ~$*.xlsx sono ignorati.`,
+        error: `Nessun file .xlsx trovato in ${inbox.dir}. I file temporanei Excel ~$*.xlsx sono ignorati.`,
         logPath: log.log_path,
         recommendedAction:
           "Copiare il file Excel ufficiale nella inbox e rilanciare il runner.",
@@ -735,10 +819,48 @@ async function main() {
       return;
     }
 
+    if (stableFiles.length === 0) {
+      log.status = args.finalMondayCheck ? "file_not_stable_final_alert" : "file_not_stable_yet";
+      log.outcome = log.status;
+      log.no_import_reason = "Nessun file .xlsx stabile trovato: file presenti ma modificati da meno di 10 minuti.";
+
+      const event = args.finalMondayCheck
+        ? makeFailureEvent({
+            outcome: "FILE NON IMPORTABILE",
+            fileResult: unstableResults[0] || null,
+            failedPhase: "file_not_stable_yet",
+            error: buildUnstableFilesMessage(unstableFiles),
+            logPath: log.log_path,
+            recommendedAction:
+              "Attendere la fine della sincronizzazione Google Drive o della scrittura Excel, poi rilanciare il runner.",
+            subject: "PHONESIA IMPORT - File non importabile alle 22",
+          })
+        : null;
+
+      await writeLogAndMaybeAlert({ log, env, event });
+      process.exitCode = args.finalMondayCheck ? 1 : 0;
+      return;
+    }
+
     const supabase = createSupabase(env);
     let hadFailure = false;
 
-    for (const file of files) {
+    if (args.finalMondayCheck && unstableFiles.length > 0) {
+      hadFailure = true;
+      const event = makeFailureEvent({
+        outcome: "FILE NON IMPORTABILE",
+        fileResult: unstableResults[0] || null,
+        failedPhase: "file_not_stable_yet",
+        error: buildUnstableFilesMessage(unstableFiles),
+        logPath: log.log_path,
+        recommendedAction:
+          "Attendere la fine della sincronizzazione Google Drive o della scrittura Excel, poi rilanciare il runner.",
+        subject: "PHONESIA IMPORT - File non importabile alle 22",
+      });
+      await writeLogAndMaybeAlert({ log, env, event });
+    }
+
+    for (const file of stableFiles) {
       const { result, failure } = await processFile({ file, args, supabase });
       log.results.push(result);
       log.status = failure ? "error" : "running";
