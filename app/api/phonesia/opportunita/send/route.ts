@@ -21,7 +21,7 @@ const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
 
 const WHATSAPP_TEMPLATE_OPPORTUNITA_NAME =
   process.env.WHATSAPP_TEMPLATE_OPPORTUNITA_NAME ||
-  "phonesia_opportunita_marketing_v1";
+  "phonesia_opportunita_marketing_v2";
 
 const WHATSAPP_TEMPLATE_OPPORTUNITA_LANGUAGE =
   process.env.WHATSAPP_TEMPLATE_OPPORTUNITA_LANGUAGE || "it";
@@ -33,6 +33,9 @@ const WHATSAPP_TEMPLATE_OPPORTUNITA_MEDIA_NAME =
 const WHATSAPP_TEMPLATE_OPPORTUNITA_MEDIA_LANGUAGE =
   process.env.WHATSAPP_TEMPLATE_OPPORTUNITA_MEDIA_LANGUAGE ||
   WHATSAPP_TEMPLATE_OPPORTUNITA_LANGUAGE;
+
+const WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_NAME = "phonesia_messaggio_personalizzato_v1";
+const WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_LANGUAGE = "it";
 
 const OPPORTUNITA_HEADER_IMAGE_URL =
   "https://crm-clean.vercel.app/phonesia/welcome-header.jpg";
@@ -85,6 +88,8 @@ type OpportunitySentRow = {
 type AlreadySentRow = {
   opportunita_code: string | null;
 };
+
+type SendMode = "standard" | "standard_media" | "custom_message";
 
 const STORE_CONTACTS: Record<
   number,
@@ -351,6 +356,69 @@ async function sendWhatsAppOpportunityTemplate(params: {
   return response.json();
 }
 
+async function sendWhatsAppCustomMessageTemplate(params: {
+  to: string;
+  templateName: string;
+  languageCode: string;
+  nomeCliente: string;
+  messaggio: string;
+}) {
+  if (!WHATSAPP_ACCESS_TOKEN) {
+    throw new Error("Missing WHATSAPP_ACCESS_TOKEN");
+  }
+
+  if (!WHATSAPP_PHONE_NUMBER_ID) {
+    throw new Error("Missing WHATSAPP_PHONE_NUMBER_ID");
+  }
+
+  const response = await fetch(
+    `https://graph.facebook.com/${GRAPH_API_VERSION}/${WHATSAPP_PHONE_NUMBER_ID}/messages`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to: params.to,
+        type: "template",
+        template: {
+          name: params.templateName,
+          language: {
+            code: params.languageCode,
+          },
+          components: [
+            {
+              type: "body",
+              parameters: [
+                {
+                  type: "text",
+                  parameter_name: "nome_cliente",
+                  text: params.nomeCliente,
+                },
+                {
+                  type: "text",
+                  parameter_name: "messaggio",
+                  text: params.messaggio,
+                },
+              ],
+            },
+          ],
+        },
+      }),
+      cache: "no-store",
+    },
+  );
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Meta template messaggio personalizzato failed: ${response.status} ${body}`);
+  }
+
+  return response.json();
+}
+
 async function logOpportunitySend(
   supabase: ReturnType<typeof getSupabaseAdmin>,
   params: {
@@ -359,7 +427,9 @@ async function logOpportunitySend(
     responseText: string;
     negozioContatto: string;
     templateName: string;
-    sendMode: string;
+    sendMode: SendMode;
+    customMessage?: string | null;
+    selectedClientCount?: number;
     attachmentPublicUrl: string | null;
     attachmentFileName: string | null;
   },
@@ -368,9 +438,12 @@ async function logOpportunitySend(
     await supabase.from("phonesia_conversazioni").insert({
       cliente_id: params.clienteId,
       canale: "whatsapp",
-      messaggio_utente: params.attachmentPublicUrl
-        ? `[dashboard] invio opportunità con locandina: ${params.services.join(", ")}`
-        : `[dashboard] invio opportunità: ${params.services.join(", ")}`,
+      messaggio_utente:
+        params.sendMode === "custom_message"
+          ? "[dashboard] invio messaggio personalizzato"
+          : params.attachmentPublicUrl
+            ? `[dashboard] invio opportunità con locandina: ${params.services.join(", ")}`
+            : `[dashboard] invio opportunità: ${params.services.join(", ")}`,
       intent: "dashboard_opportunita_send",
       tool_usato: "api_phonesia_opportunita_send",
       risposta_agente: params.responseText,
@@ -380,7 +453,13 @@ async function logOpportunitySend(
         servizi: params.services,
         negozio_contatto: params.negozioContatto,
         template_name: params.templateName,
+        template_usato: params.templateName,
+        tipo_invio: params.sendMode,
         send_mode: params.sendMode,
+        custom_message: params.customMessage ?? null,
+        messaggio_personalizzato: params.customMessage ?? null,
+        selected_client_count: params.selectedClientCount ?? 1,
+        numero_clienti_selezionati: params.selectedClientCount ?? 1,
         attachment_public_url: params.attachmentPublicUrl,
         attachment_file_name: params.attachmentFileName,
       },
@@ -398,7 +477,7 @@ async function saveSentOpportunities(
     text: string;
     negozioContatto: string;
     mapsUrl: string;
-    sendMode: string;
+    sendMode: SendMode;
     templateName: string;
     attachmentPublicUrl: string | null;
     attachmentFileName: string | null;
@@ -418,6 +497,8 @@ async function saveSentOpportunities(
       services: params.services,
       maps_url: params.mapsUrl,
       template_name: params.templateName,
+      template_usato: params.templateName,
+      tipo_invio: params.sendMode,
       send_mode: params.sendMode,
       attachment_public_url: params.attachmentPublicUrl,
       attachment_file_name: params.attachmentFileName,
@@ -451,17 +532,86 @@ async function saveSentOpportunities(
   }));
 }
 
+async function saveCustomMessageOpportunity(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  params: {
+    clienteId: number;
+    text: string;
+    negozioContatto: string;
+    mapsUrl: string;
+    templateName: string;
+    selectedClientCount: number;
+  },
+) {
+  const row: OpportunityInsertRow = {
+    cliente_id: params.clienteId,
+    opportunita_code: `CUSTOM_MESSAGE:${crypto.randomUUID()}`,
+    opportunita_label: "Messaggio personalizzato",
+    send_mode: "custom_message",
+    batch_id: null,
+    messaggio: params.text,
+    attachment_public_url: null,
+    attachment_file_name: null,
+    negozio_contatto: params.negozioContatto,
+    metadata: {
+      maps_url: params.mapsUrl,
+      template_name: params.templateName,
+      template_usato: params.templateName,
+      tipo_invio: "custom_message",
+      send_mode: "custom_message",
+      custom_message: params.text,
+      messaggio_personalizzato: params.text,
+      selected_client_count: params.selectedClientCount,
+      numero_clienti_selezionati: params.selectedClientCount,
+    },
+  };
+
+  const { data, error } = await supabase
+    .from("phonesia_opportunita_inviate")
+    .insert(row)
+    .select(
+      "id, opportunita_code, opportunita_label, send_mode, batch_id, messaggio, attachment_public_url, attachment_file_name, negozio_contatto, inviato_at",
+    )
+    .single();
+
+  if (error) {
+    throw new Error(`Errore salvataggio messaggio personalizzato: ${error.message}`);
+  }
+
+  const sent = data as OpportunitySentRow;
+
+  return [
+    {
+      id: Number(sent.id),
+      opportunityCode: normalizeText(sent.opportunita_code),
+      opportunityLabel: normalizeText(sent.opportunita_label),
+      sendMode: normalizeText(sent.send_mode),
+      batchId: normalizeText(sent.batch_id),
+      message: normalizeText(sent.messaggio),
+      attachmentPublicUrl: normalizeText(sent.attachment_public_url),
+      attachmentFileName: normalizeText(sent.attachment_file_name),
+      negozioContatto: normalizeText(sent.negozio_contatto),
+      sentAt: normalizeText(sent.inviato_at),
+    },
+  ];
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as {
       clienteId?: number;
+      messageMode?: string;
       services?: string[];
+      customMessage?: string | null;
       attachmentPublicUrl?: string | null;
       attachmentFileName?: string | null;
       attachmentMimeType?: string | null;
     };
 
     const clienteId = Number(body.clienteId);
+    const messageMode =
+      normalizeText(body.messageMode).toLowerCase() === "custom" ? "custom" : "standard";
+    const customMessage = normalizeText(body.customMessage);
     const rawServices = Array.isArray(body.services) ? body.services : [];
     const services = [
       ...new Set(
@@ -486,9 +636,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (services.length === 0) {
+    if (messageMode === "standard" && services.length === 0) {
       return NextResponse.json(
         { ok: false, error: "nessun_servizio_selezionato" },
+        { status: 400 },
+      );
+    }
+
+    if (messageMode === "custom" && !customMessage) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Inserisci un messaggio personalizzato.",
+          message: "Inserisci un messaggio personalizzato.",
+        },
         { status: 400 },
       );
     }
@@ -499,6 +660,17 @@ export async function POST(request: NextRequest) {
           ok: false,
           error: "attachment_url_non_valido",
           message: "Il link della locandina non è valido.",
+        },
+        { status: 400 },
+      );
+    }
+
+    if (messageMode === "custom" && attachmentPublicUrl) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "attachment_custom_non_supportato",
+          message: "Il messaggio personalizzato usa il template dedicato senza locandina.",
         },
         { status: 400 },
       );
@@ -552,11 +724,13 @@ export async function POST(request: NextRequest) {
         .eq("cliente_id", clienteId)
         .order("data_stipula", { ascending: false })
         .order("created_at", { ascending: false }),
-      supabase
-        .from("phonesia_opportunita_inviate")
-        .select("opportunita_code")
-        .eq("cliente_id", clienteId)
-        .in("opportunita_code", services),
+      messageMode === "standard"
+        ? supabase
+            .from("phonesia_opportunita_inviate")
+            .select("opportunita_code")
+            .eq("cliente_id", clienteId)
+            .in("opportunita_code", services)
+        : Promise.resolve({ data: [], error: null } as { data: AlreadySentRow[]; error: null }),
     ]);
 
     if (clienteError) {
@@ -629,11 +803,12 @@ export async function POST(request: NextRequest) {
         .filter(Boolean),
     );
 
-    const servicesToSend = services.filter(
-      (service) => !alreadySentCodes.has(service),
-    );
+    const servicesToSend =
+      messageMode === "standard"
+        ? services.filter((service) => !alreadySentCodes.has(service))
+        : [];
 
-    if (servicesToSend.length === 0) {
+    if (messageMode === "standard" && servicesToSend.length === 0) {
       return NextResponse.json(
         {
           ok: false,
@@ -654,6 +829,7 @@ export async function POST(request: NextRequest) {
     const nomeCliente =
       normalizeText([cliente.nome, cliente.cognome].filter(Boolean).join(" ")) ||
       "cliente";
+    const nomeClienteTemplate = normalizeText(cliente.nome) || "cliente";
 
     const offerText = buildOfferText(servicesToSend);
 
@@ -668,6 +844,48 @@ export async function POST(request: NextRequest) {
         },
         { status: 409 },
       );
+    }
+
+    if (messageMode === "custom") {
+      await sendWhatsAppCustomMessageTemplate({
+        to: metaRecipient,
+        templateName: WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_NAME,
+        languageCode: WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_LANGUAGE,
+        nomeCliente: nomeClienteTemplate,
+        messaggio: customMessage,
+      });
+
+      const sentOpportunities = await saveCustomMessageOpportunity(supabase, {
+        clienteId,
+        text: customMessage,
+        negozioContatto: contactStore.label,
+        mapsUrl: contactStore.mapsUrl,
+        templateName: WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_NAME,
+        selectedClientCount: 1,
+      });
+
+      await logOpportunitySend(supabase, {
+        clienteId,
+        services: [],
+        responseText: customMessage,
+        negozioContatto: contactStore.label,
+        templateName: WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_NAME,
+        sendMode: "custom_message",
+        customMessage,
+        selectedClientCount: 1,
+        attachmentPublicUrl: null,
+        attachmentFileName: null,
+      });
+
+      return NextResponse.json({
+        ok: true,
+        message: "Messaggio personalizzato inviato correttamente.",
+        negozio_contatto: contactStore.label,
+        services: [],
+        template_name: WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_NAME,
+        send_mode: "custom_message",
+        sentOpportunities,
+      });
     }
 
     const hasAttachment = Boolean(attachmentPublicUrl);

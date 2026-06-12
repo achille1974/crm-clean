@@ -50,6 +50,8 @@ type OpportunityRecommendation = {
   priority: "Alta" | "Media" | "Bassa";
 };
 
+type MessageMode = "standard" | "custom";
+
 type SendApiResponse = {
   ok: boolean;
   message?: string;
@@ -435,7 +437,9 @@ export default function ClienteOpportunityPanel({
   contactStoreLabel,
   sentOpportunities,
 }: Props) {
+  const [messageMode, setMessageMode] = useState<MessageMode>("standard");
   const [selectedServices, setSelectedServices] = useState<ServiceFamily[]>([]);
+  const [customMessage, setCustomMessage] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [sendState, setSendState] = useState<SendState>({
@@ -473,9 +477,22 @@ export default function ClienteOpportunityPanel({
 
   const sentServicesCount = latestSentByService.size;
   const lastSent = history[0] ?? null;
+  const trimmedCustomMessage = customMessage.trim();
 
-  const canAttemptSend = selectedServices.length > 0;
+  const canAttemptSend =
+    messageMode === "standard"
+      ? selectedServices.length > 0
+      : trimmedCustomMessage.length > 0;
   const canReallySend = canAttemptSend && whatsappActive && marketingConsented && !isSending;
+
+  function changeMessageMode(mode: MessageMode) {
+    setSendState({ type: "idle", message: "" });
+    setMessageMode(mode);
+
+    if (mode === "custom") {
+      clearAttachment();
+    }
+  }
 
   function toggleService(service: ServiceFamily) {
     if (latestSentByService.has(service)) return;
@@ -528,11 +545,20 @@ export default function ClienteOpportunityPanel({
   }
 
   async function handleConfirmSend() {
+    if (messageMode === "custom" && !trimmedCustomMessage) {
+      setSendState({
+        type: "error",
+        message: "Inserisci un messaggio personalizzato.",
+      });
+      setConfirmOpen(false);
+      return;
+    }
+
     setIsSending(true);
     setSendState({ type: "idle", message: "" });
 
     try {
-      const uploadedAttachment = attachmentFile
+      const uploadedAttachment = messageMode === "standard" && attachmentFile
         ? await uploadOpportunityAttachment(attachmentFile)
         : null;
 
@@ -543,7 +569,9 @@ export default function ClienteOpportunityPanel({
         },
         body: JSON.stringify({
           clienteId,
-          services: selectedServices,
+          messageMode,
+          services: messageMode === "standard" ? selectedServices : [],
+          customMessage: messageMode === "custom" ? trimmedCustomMessage : null,
           attachmentPublicUrl: uploadedAttachment?.publicUrl ?? null,
           attachmentFileName: uploadedAttachment?.fileName ?? null,
           attachmentMimeType: uploadedAttachment?.mimeType ?? null,
@@ -576,6 +604,7 @@ export default function ClienteOpportunityPanel({
         message: data.message || "Messaggio inviato correttamente.",
       });
       setSelectedServices([]);
+      setCustomMessage("");
       clearAttachment();
       setConfirmOpen(false);
     } catch (error) {
@@ -595,9 +624,9 @@ export default function ClienteOpportunityPanel({
     <>
       <section className="rounded-3xl border border-slate-200 bg-white px-5 py-5 shadow-sm md:px-6">
         <div className="mb-4">
-          <h2 className="text-xl font-black text-slate-950">Servizi da proporre</h2>
+          <h2 className="text-xl font-black text-slate-950">Messaggio da inviare</h2>
           <p className="mt-1 text-sm text-slate-600">
-            I suggerimenti sono ordinati per priorità commerciale in base ai servizi già attivi.
+            Scegli se inviare un’opportunità standard o un messaggio personalizzato tramite template Meta approvato.
           </p>
         </div>
 
@@ -638,97 +667,163 @@ export default function ClienteOpportunityPanel({
           />
         </div>
 
-        {recommendations.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
-            Questo cliente ha già tutti i servizi presenti nella matrice.
+        <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+          <div className="text-sm font-semibold text-slate-900">Tipo messaggio</div>
+
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
+            <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+              <input
+                type="radio"
+                name="singleMessageMode"
+                checked={messageMode === "standard"}
+                onChange={() => changeMessageMode("standard")}
+                className="mt-1 h-4 w-4 border-slate-300 text-orange-500 focus:ring-orange-500"
+              />
+              <div>
+                <div className="font-semibold text-slate-950">
+                  Template opportunità standard
+                </div>
+                <div className="mt-1 text-sm text-slate-600">
+                  Usa il template opportunità approvato con servizi e negozio.
+                </div>
+              </div>
+            </label>
+
+            <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+              <input
+                type="radio"
+                name="singleMessageMode"
+                checked={messageMode === "custom"}
+                onChange={() => changeMessageMode("custom")}
+                className="mt-1 h-4 w-4 border-slate-300 text-orange-500 focus:ring-orange-500"
+              />
+              <div>
+                <div className="font-semibold text-slate-950">Messaggio personalizzato</div>
+                <div className="mt-1 text-sm text-slate-600">
+                  Usa il template dedicato con nome cliente e testo scritto dall’operatore.
+                </div>
+              </div>
+            </label>
           </div>
-        ) : (
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            {recommendations.map((item) => {
-              const isSelected = selectedServices.includes(item.service);
-              const alreadySent = latestSentByService.get(item.service) ?? null;
+        </div>
 
-              return (
-                <label
-                  key={item.service}
-                  className={[
-                    "flex items-start gap-3 rounded-2xl border p-4 transition",
-                    alreadySent
-                      ? "cursor-not-allowed border-emerald-200 bg-emerald-50/60"
-                      : isSelected
-                        ? "cursor-pointer border-orange-300 bg-orange-50"
-                        : "cursor-pointer border-slate-200 bg-white hover:border-orange-200 hover:bg-orange-50/40",
-                  ].join(" ")}
-                >
-                  <input
-                    type="checkbox"
-                    checked={isSelected}
-                    disabled={Boolean(alreadySent)}
-                    onChange={() => toggleService(item.service)}
-                    className="mt-1 h-4 w-4 rounded border-slate-300 text-orange-500 focus:ring-orange-500 disabled:cursor-not-allowed disabled:opacity-60"
-                  />
+        {messageMode === "standard" ? (
+          recommendations.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+              Questo cliente ha già tutti i servizi presenti nella matrice.
+            </div>
+          ) : (
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              {recommendations.map((item) => {
+                const isSelected = selectedServices.includes(item.service);
+                const alreadySent = latestSentByService.get(item.service) ?? null;
 
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <div className="font-semibold text-slate-950">{item.service}</div>
+                return (
+                  <label
+                    key={item.service}
+                    className={[
+                      "flex items-start gap-3 rounded-2xl border p-4 transition",
+                      alreadySent
+                        ? "cursor-not-allowed border-emerald-200 bg-emerald-50/60"
+                        : isSelected
+                          ? "cursor-pointer border-orange-300 bg-orange-50"
+                          : "cursor-pointer border-slate-200 bg-white hover:border-orange-200 hover:bg-orange-50/40",
+                    ].join(" ")}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      disabled={Boolean(alreadySent)}
+                      onChange={() => toggleService(item.service)}
+                      className="mt-1 h-4 w-4 rounded border-slate-300 text-orange-500 focus:ring-orange-500 disabled:cursor-not-allowed disabled:opacity-60"
+                    />
 
-                      <span
-                        className={[
-                          "inline-flex rounded-full border px-2.5 py-0.5 text-[11px] font-semibold",
-                          item.priority === "Alta"
-                            ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                            : item.priority === "Media"
-                              ? "border-amber-200 bg-amber-50 text-amber-700"
-                              : "border-slate-200 bg-slate-50 text-slate-600",
-                        ].join(" ")}
-                      >
-                        Priorità {item.priority}
-                      </span>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="font-semibold text-slate-950">{item.service}</div>
+
+                        <span
+                          className={[
+                            "inline-flex rounded-full border px-2.5 py-0.5 text-[11px] font-semibold",
+                            item.priority === "Alta"
+                              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                              : item.priority === "Media"
+                                ? "border-amber-200 bg-amber-50 text-amber-700"
+                                : "border-slate-200 bg-slate-50 text-slate-600",
+                          ].join(" ")}
+                        >
+                          Priorità {item.priority}
+                        </span>
+
+                        {alreadySent && (
+                          <span className="inline-flex rounded-full border border-sky-200 bg-sky-50 px-2.5 py-0.5 text-[11px] font-semibold text-sky-700">
+                            Inviata
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="mt-1 text-sm text-slate-600">
+                        {item.reason}
+                      </div>
 
                       {alreadySent && (
-                        <span className="inline-flex rounded-full border border-sky-200 bg-sky-50 px-2.5 py-0.5 text-[11px] font-semibold text-sky-700">
-                          Inviata
-                        </span>
+                        <div className="mt-2 text-xs font-medium text-sky-700">
+                          Già inviata il {formatDateTime(alreadySent.sentAt)}
+                        </div>
                       )}
                     </div>
-
-                    <div className="mt-1 text-sm text-slate-600">
-                      {item.reason}
-                    </div>
-
-                    {alreadySent && (
-                      <div className="mt-2 text-xs font-medium text-sky-700">
-                        Già inviata il {formatDateTime(alreadySent.sentAt)}
-                      </div>
-                    )}
-                  </div>
-                </label>
-              );
-            })}
-          </div>
-        )}
+                  </label>
+                );
+              })}
+            </div>
+          )
+        ) : null}
 
         <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
           <div className="text-sm font-semibold text-slate-900">
-            Servizi selezionati
+            {messageMode === "standard" ? "Servizi selezionati" : "Messaggio personalizzato"}
           </div>
 
-          <div className="mt-3 flex flex-wrap gap-2">
-            {selectedServices.length > 0 ? (
-              selectedServices.map((service) => (
-                <span
-                  key={service}
-                  className="inline-flex rounded-full border border-orange-200 bg-white px-3 py-1 text-xs font-semibold text-orange-700"
-                >
-                  {service}
-                </span>
-              ))
-            ) : (
-              <span className="text-xs text-slate-500">Nessun servizio selezionato.</span>
-            )}
-          </div>
+          {messageMode === "standard" ? (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {selectedServices.length > 0 ? (
+                selectedServices.map((service) => (
+                  <span
+                    key={service}
+                    className="inline-flex rounded-full border border-orange-200 bg-white px-3 py-1 text-xs font-semibold text-orange-700"
+                  >
+                    {service}
+                  </span>
+                ))
+              ) : (
+                <span className="text-xs text-slate-500">Nessun servizio selezionato.</span>
+              )}
+            </div>
+          ) : (
+            <div className="mt-3">
+              <textarea
+                value={customMessage}
+                onChange={(event) => {
+                  setSendState({ type: "idle", message: "" });
+                  setCustomMessage(event.target.value);
+                }}
+                rows={6}
+                placeholder="Scrivi il messaggio che verrà inserito nel template approvato."
+                className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-orange-500"
+              />
+              <p className="mt-2 text-xs text-slate-500">
+                Il testo viene inviato dentro il template Meta approvato, non come messaggio libero.
+              </p>
+              {!trimmedCustomMessage ? (
+                <p className="mt-2 text-xs font-semibold text-rose-700">
+                  Inserisci un messaggio personalizzato.
+                </p>
+              ) : null}
+            </div>
+          )}
 
-          <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-4">
+          {messageMode === "standard" ? (
+            <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-4">
             <div className="text-sm font-semibold text-slate-900">
               Locandina da allegare
             </div>
@@ -766,7 +861,8 @@ export default function ClienteOpportunityPanel({
                 </button>
               </div>
             )}
-          </div>
+            </div>
+          ) : null}
 
           {sendState.type !== "idle" && (
             <div
@@ -793,7 +889,7 @@ export default function ClienteOpportunityPanel({
                   : "cursor-not-allowed bg-orange-300",
               ].join(" ")}
             >
-              Invia messaggio
+              {messageMode === "standard" ? "Invia messaggio" : "Invia messaggio personalizzato"}
             </button>
 
             <p className="mt-2 text-xs text-slate-500">
@@ -897,17 +993,26 @@ export default function ClienteOpportunityPanel({
             </p>
 
             <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-              <div className="font-semibold text-slate-900">Servizi selezionati</div>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {selectedServices.map((service) => (
-                  <span
-                    key={service}
-                    className="inline-flex rounded-full border border-orange-200 bg-white px-3 py-1 text-xs font-semibold text-orange-700"
-                  >
-                    {service}
-                  </span>
-                ))}
+              <div className="font-semibold text-slate-900">
+                {messageMode === "standard" ? "Servizi selezionati" : "Messaggio personalizzato"}
               </div>
+
+              {messageMode === "standard" ? (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {selectedServices.map((service) => (
+                    <span
+                      key={service}
+                      className="inline-flex rounded-full border border-orange-200 bg-white px-3 py-1 text-xs font-semibold text-orange-700"
+                    >
+                      {service}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <div className="mt-2 whitespace-pre-wrap rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-700">
+                  {trimmedCustomMessage}
+                </div>
+              )}
 
               <ul className="mt-4 space-y-1.5">
                 <li>
@@ -927,11 +1032,21 @@ export default function ClienteOpportunityPanel({
                   <strong className="text-slate-950">{contactStoreLabel}</strong>
                 </li>
                 <li>
-                  • Locandina:{" "}
-                  <strong className={attachmentFile ? "text-emerald-700" : "text-slate-700"}>
-                    {attachmentFile ? attachmentFile.name : "nessuna"}
+                  • Template:{" "}
+                  <strong className="text-slate-950">
+                    {messageMode === "standard"
+                      ? "opportunità standard"
+                      : "messaggio personalizzato"}
                   </strong>
                 </li>
+                {messageMode === "standard" ? (
+                  <li>
+                    • Locandina:{" "}
+                    <strong className={attachmentFile ? "text-emerald-700" : "text-slate-700"}>
+                      {attachmentFile ? attachmentFile.name : "nessuna"}
+                    </strong>
+                  </li>
+                ) : null}
               </ul>
 
               <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-3">
@@ -939,9 +1054,11 @@ export default function ClienteOpportunityPanel({
                   Nota invio
                 </div>
                 <div className="text-sm text-slate-700">
-                  {attachmentFile
-                    ? "Verrà caricato il file e poi inviato il template WhatsApp con locandina."
-                    : "Verrà usato il template marketing approvato di WhatsApp con i dati dinamici del cliente e del negozio."}
+                  {messageMode === "custom"
+                    ? "Verrà usato il template WhatsApp dedicato con nome cliente e messaggio personalizzato."
+                    : attachmentFile
+                      ? "Verrà caricato il file e poi inviato il template WhatsApp con locandina."
+                      : "Verrà usato il template marketing approvato di WhatsApp con i dati dinamici del cliente e del negozio."}
                 </div>
               </div>
             </div>
@@ -968,10 +1085,12 @@ export default function ClienteOpportunityPanel({
                 ].join(" ")}
               >
                 {isSending
-                  ? attachmentFile
+                  ? messageMode === "standard" && attachmentFile
                     ? "Caricamento e invio..."
                     : "Invio in corso..."
-                  : "Conferma e invia"}
+                  : messageMode === "standard"
+                    ? "Conferma e invia"
+                    : "Conferma e invia messaggio"}
               </button>
             </div>
           </div>
@@ -1023,4 +1142,3 @@ function SummaryCard({
     </div>
   );
 }
-

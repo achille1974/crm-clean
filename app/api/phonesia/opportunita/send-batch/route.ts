@@ -19,9 +19,11 @@ const GRAPH_API_VERSION = process.env.WHATSAPP_GRAPH_API_VERSION || "v23.0";
 const WHATSAPP_ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN;
 const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
 const WHATSAPP_TEMPLATE_OPPORTUNITA_NAME =
-  process.env.WHATSAPP_TEMPLATE_OPPORTUNITA_NAME || "phonesia_opportunita_marketing";
+  process.env.WHATSAPP_TEMPLATE_OPPORTUNITA_NAME || "phonesia_opportunita_marketing_v2";
 const WHATSAPP_TEMPLATE_OPPORTUNITA_LANGUAGE =
   process.env.WHATSAPP_TEMPLATE_OPPORTUNITA_LANGUAGE || "it";
+const WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_NAME = "phonesia_messaggio_personalizzato_v1";
+const WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_LANGUAGE = "it";
 
 type ServiceFamily = (typeof SERVICE_COLUMNS)[number];
 
@@ -57,6 +59,13 @@ type MarketingRow = {
 type AlreadySentRow = {
   cliente_id: number | null;
   opportunita_code: string | null;
+};
+
+type SendMode = "standard" | "custom_message";
+
+type TemplateBodyParameter = {
+  parameterName?: string;
+  text: string;
 };
 
 type OpportunityInsertRow = {
@@ -216,7 +225,7 @@ async function sendWhatsAppTemplate(params: {
   to: string;
   templateName: string;
   languageCode: string;
-  bodyValues: string[];
+  bodyParameters: TemplateBodyParameter[];
 }) {
   if (!WHATSAPP_ACCESS_TOKEN) {
     throw new Error("Missing WHATSAPP_ACCESS_TOKEN");
@@ -246,9 +255,12 @@ async function sendWhatsAppTemplate(params: {
           components: [
             {
               type: "body",
-              parameters: params.bodyValues.map((value) => ({
+              parameters: params.bodyParameters.map((parameter) => ({
                 type: "text",
-                text: value,
+                ...(parameter.parameterName
+                  ? { parameter_name: parameter.parameterName }
+                  : {}),
+                text: parameter.text,
               })),
             },
           ],
@@ -273,8 +285,11 @@ async function logOpportunitySend(
     responseText: string;
     negozioContatto: string;
     batchId: string;
-    messageMode: "standard" | "custom";
+    sendMode: SendMode;
     standardService: ServiceFamily | null;
+    templateName: string;
+    customMessage: string | null;
+    selectedClientCount: number;
     attachmentPublicUrl: string | null;
     attachmentFileName: string | null;
   },
@@ -283,7 +298,10 @@ async function logOpportunitySend(
     await supabase.from("phonesia_conversazioni").insert({
       cliente_id: params.clienteId,
       canale: "whatsapp",
-      messaggio_utente: `[dashboard] invio opportunità batch (${params.messageMode})`,
+      messaggio_utente:
+        params.sendMode === "custom_message"
+          ? "[dashboard] invio messaggio personalizzato batch"
+          : "[dashboard] invio opportunità batch (standard)",
       intent: "dashboard_opportunita_send_batch",
       tool_usato: "api_phonesia_opportunita_send_batch",
       risposta_agente: params.responseText,
@@ -292,8 +310,16 @@ async function logOpportunitySend(
       metadata: {
         batch_id: params.batchId,
         negozio_contatto: params.negozioContatto,
-        message_mode: params.messageMode,
+        template_name: params.templateName,
+        template_usato: params.templateName,
+        tipo_invio: params.sendMode,
+        send_mode: params.sendMode,
+        message_mode: params.sendMode,
         standard_service: params.standardService,
+        custom_message: params.customMessage,
+        messaggio_personalizzato: params.customMessage,
+        selected_client_count: params.selectedClientCount,
+        numero_clienti_selezionati: params.selectedClientCount,
         attachment_public_url: params.attachmentPublicUrl,
         attachment_file_name: params.attachmentFileName,
       },
@@ -308,9 +334,12 @@ async function saveOpportunitySentRow(
   params: {
     clienteId: number;
     batchId: string;
-    messageMode: "standard" | "custom";
+    sendMode: SendMode;
     standardService: ServiceFamily | null;
     messageText: string;
+    templateName: string;
+    customMessage: string | null;
+    selectedClientCount: number;
     attachmentPublicUrl: string | null;
     attachmentFileName: string | null;
     negozioContatto: string;
@@ -319,12 +348,12 @@ async function saveOpportunitySentRow(
   },
 ) {
   const opportunityCode =
-    params.messageMode === "standard" && params.standardService
+    params.sendMode === "standard" && params.standardService
       ? params.standardService
-      : `CUSTOM:${params.batchId}`;
+      : `CUSTOM_MESSAGE:${params.batchId}`;
 
   const opportunityLabel =
-    params.messageMode === "standard" && params.standardService
+    params.sendMode === "standard" && params.standardService
       ? serviceHistoryLabel(params.standardService)
       : "Messaggio personalizzato";
 
@@ -332,14 +361,22 @@ async function saveOpportunitySentRow(
     cliente_id: params.clienteId,
     opportunita_code: opportunityCode,
     opportunita_label: opportunityLabel,
-    send_mode: params.messageMode,
+    send_mode: params.sendMode,
     batch_id: params.batchId,
     messaggio: params.messageText,
     attachment_public_url: params.attachmentPublicUrl,
     attachment_file_name: params.attachmentFileName,
     negozio_contatto: params.negozioContatto,
     metadata: {
+      template_name: params.templateName,
+      template_usato: params.templateName,
+      tipo_invio: params.sendMode,
+      send_mode: params.sendMode,
       standard_service: params.standardService,
+      custom_message: params.customMessage,
+      messaggio_personalizzato: params.customMessage,
+      selected_client_count: params.selectedClientCount,
+      numero_clienti_selezionati: params.selectedClientCount,
       whatsapp_url: params.whatsappUrl,
       maps_url: params.mapsUrl,
     },
@@ -369,6 +406,7 @@ export async function POST(request: NextRequest) {
 
     const messageModeRaw = normalizeText(String(formData.get("messageMode") ?? "")).toLowerCase();
     const messageMode = messageModeRaw === "custom" ? "custom" : "standard";
+    const sendMode: SendMode = messageMode === "custom" ? "custom_message" : "standard";
 
     const standardServiceRaw = normalizeText(
       String(formData.get("standardService") ?? ""),
@@ -397,20 +435,12 @@ export async function POST(request: NextRequest) {
 
     if (messageMode === "custom" && !customMessage) {
       return NextResponse.json(
-        { ok: false, error: "messaggio_personalizzato_vuoto" },
-        { status: 400 },
-      );
-    }
-
-    if (messageMode === "custom") {
-      return NextResponse.json(
         {
           ok: false,
-          error: "custom_batch_non_supportato",
-          message:
-            "L'invio batch personalizzato non è ancora supportato con Meta Cloud API senza template dedicato.",
+          error: "Inserisci un messaggio personalizzato.",
+          message: "Inserisci un messaggio personalizzato.",
         },
-        { status: 409 },
+        { status: 400 },
       );
     }
 
@@ -452,7 +482,7 @@ export async function POST(request: NextRequest) {
         .in("cliente_id", clienteIds)
         .order("data_stipula", { ascending: false })
         .order("created_at", { ascending: false }),
-      standardService
+      messageMode === "standard" && standardService
         ? supabase
             .from("phonesia_opportunita_inviate")
             .select("cliente_id, opportunita_code")
@@ -556,7 +586,7 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      if (standardService && alreadySentIds.has(cliente.id)) {
+      if (sendMode === "standard" && standardService && alreadySentIds.has(cliente.id)) {
         results.push({
           clienteId: cliente.id,
           nome: nomeCompleto,
@@ -586,28 +616,64 @@ export async function POST(request: NextRequest) {
           continue;
         }
 
-        const offerText = buildOfferText(standardService!);
+        const offerText = sendMode === "standard" ? buildOfferText(standardService!) : "";
         const whatsappUrl = buildWhatsappUrl(contactStore.whatsappBase);
+        const templateName =
+          sendMode === "custom_message"
+            ? WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_NAME
+            : WHATSAPP_TEMPLATE_OPPORTUNITA_NAME;
+        const templateLanguage =
+          sendMode === "custom_message"
+            ? WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_LANGUAGE
+            : WHATSAPP_TEMPLATE_OPPORTUNITA_LANGUAGE;
 
-        await sendWhatsAppTemplate({
-          to: metaRecipient,
-          templateName: WHATSAPP_TEMPLATE_OPPORTUNITA_NAME,
-          languageCode: WHATSAPP_TEMPLATE_OPPORTUNITA_LANGUAGE,
-          bodyValues: [nomeCompleto, offerText, whatsappUrl, contactStore.mapsUrl],
-        });
+        if (sendMode === "custom_message") {
+          await sendWhatsAppTemplate({
+            to: metaRecipient,
+            templateName,
+            languageCode: templateLanguage,
+            bodyParameters: [
+              {
+                parameterName: "nome_cliente",
+                text: normalizeText(cliente.nome) || "cliente",
+              },
+              {
+                parameterName: "messaggio",
+                text: customMessage,
+              },
+            ],
+          });
+        } else {
+          await sendWhatsAppTemplate({
+            to: metaRecipient,
+            templateName,
+            languageCode: templateLanguage,
+            bodyParameters: [
+              { text: nomeCompleto },
+              { text: offerText },
+              { text: whatsappUrl },
+              { text: contactStore.mapsUrl },
+            ],
+          });
+        }
 
         const text =
-          `Ciao ${nomeCompleto}, abbiamo un'offerta dedicata per te su ${offerText}.\n\n` +
-          `Contattaci qui: ${whatsappUrl}\n` +
-          `Oppure vieni in negozio: ${contactStore.mapsUrl}\n\n` +
-          "— PHONESIA";
+          sendMode === "custom_message"
+            ? customMessage
+            : `Ciao ${nomeCompleto}, abbiamo un'offerta dedicata per te su ${offerText}.\n\n` +
+              `Contattaci qui: ${whatsappUrl}\n` +
+              `Oppure vieni in negozio: ${contactStore.mapsUrl}\n\n` +
+              "— PHONESIA";
 
         await saveOpportunitySentRow(supabase, {
           clienteId: cliente.id,
           batchId,
-          messageMode,
-          standardService,
+          sendMode,
+          standardService: sendMode === "standard" ? standardService : null,
           messageText: text,
+          templateName,
+          customMessage: sendMode === "custom_message" ? customMessage : null,
+          selectedClientCount: clienteIds.length,
           attachmentPublicUrl: null,
           attachmentFileName: null,
           negozioContatto: contactStore.label,
@@ -620,8 +686,11 @@ export async function POST(request: NextRequest) {
           responseText: text,
           negozioContatto: contactStore.label,
           batchId,
-          messageMode,
-          standardService,
+          sendMode,
+          standardService: sendMode === "standard" ? standardService : null,
+          templateName,
+          customMessage: sendMode === "custom_message" ? customMessage : null,
+          selectedClientCount: clienteIds.length,
           attachmentPublicUrl: null,
           attachmentFileName: null,
         });

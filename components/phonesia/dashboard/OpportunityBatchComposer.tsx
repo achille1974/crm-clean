@@ -47,6 +47,7 @@ type SendResponse =
   | {
       ok: false;
       error: string;
+      message?: string;
       detail?: string;
     };
 
@@ -113,19 +114,29 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
     [recipients],
   );
 
+  const trimmedCustomMessage = customMessage.trim();
+
   const previewText =
     messageMode === "standard"
       ? buildStandardText(standardService)
-      : customMessage.trim() || "Nessun messaggio personalizzato inserito.";
+      : trimmedCustomMessage || "Nessun messaggio personalizzato inserito.";
 
   const canSend =
     recipients.length > 0 &&
     eligibleRecipients.length > 0 &&
     !isSending &&
-    messageMode === "standard" &&
-    !selectedFile;
+    !selectedFile &&
+    (messageMode === "standard" || trimmedCustomMessage.length > 0);
 
   async function handleSendBatch() {
+    if (messageMode === "custom" && !trimmedCustomMessage) {
+      setSendResponse({
+        ok: false,
+        error: "Inserisci un messaggio personalizzato.",
+      });
+      return;
+    }
+
     setIsSending(true);
     setSendResponse(null);
 
@@ -141,7 +152,7 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
       if (messageMode === "standard") {
         formData.append("standardService", standardService);
       } else {
-        formData.append("customMessage", customMessage.trim());
+        formData.append("customMessage", trimmedCustomMessage);
       }
 
       const response = await fetch("/api/phonesia/opportunita/send-batch", {
@@ -158,6 +169,7 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
             : {
                 ok: false,
                 error: data.error || "Invio batch non riuscito.",
+                message: data.message,
                 detail: data.detail,
               },
         );
@@ -236,7 +248,7 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
         <div className="mb-4">
           <h2 className="text-xl font-black text-slate-950">Composizione opportunità</h2>
           <p className="mt-1 text-sm text-slate-600">
-            Con la configurazione attuale Meta puoi inviare in batch solo opportunità standard basate su template approvato.
+            Scegli il template Meta approvato da usare per i clienti idonei selezionati.
           </p>
         </div>
 
@@ -255,25 +267,28 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
                     className="mt-1 h-4 w-4 border-slate-300 text-orange-500 focus:ring-orange-500"
                   />
                   <div>
-                    <div className="font-semibold text-slate-950">Messaggio standard</div>
+                    <div className="font-semibold text-slate-950">Template opportunità standard</div>
                     <div className="mt-1 text-sm text-slate-600">
                       Usa il template approvato Meta in base al tipo di opportunità.
                     </div>
                   </div>
                 </label>
 
-                <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 opacity-60">
+                <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
                   <input
                     type="radio"
                     name="messageMode"
                     checked={messageMode === "custom"}
-                    onChange={() => setMessageMode("custom")}
+                    onChange={() => {
+                      setMessageMode("custom");
+                      setSelectedFile(null);
+                    }}
                     className="mt-1 h-4 w-4 border-slate-300 text-orange-500 focus:ring-orange-500"
                   />
                   <div>
                     <div className="font-semibold text-slate-950">Messaggio personalizzato</div>
                     <div className="mt-1 text-sm text-slate-600">
-                      Temporaneamente non disponibile in batch con Meta Cloud API senza template dedicato.
+                      Usa il template Meta dedicato con nome cliente e testo scritto dall’operatore.
                     </div>
                   </div>
                 </label>
@@ -299,22 +314,25 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
                 </select>
               </section>
             ) : (
-              <section className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4">
-                <div className="text-sm font-semibold text-amber-900">
-                  Messaggio personalizzato non disponibile
-                </div>
-                <p className="mt-2 text-sm text-amber-800">
-                  Per usare messaggi personalizzati in batch serve un template Meta dedicato.
-                </p>
-
+              <section className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                <label className="mb-2 block text-sm font-semibold text-slate-900">
+                  Messaggio personalizzato
+                </label>
                 <textarea
                   value={customMessage}
                   onChange={(event) => setCustomMessage(event.target.value)}
                   rows={7}
-                  placeholder="Non disponibile con il template attuale"
-                  disabled
-                  className="mt-3 w-full rounded-2xl border border-amber-200 bg-white px-4 py-3 text-sm text-slate-500 outline-none"
+                  placeholder="Scrivi il messaggio che verrà inserito nel template approvato."
+                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-orange-500"
                 />
+                <p className="mt-2 text-xs text-slate-500">
+                  Verrà inviato tramite template WhatsApp approvato, non come messaggio libero.
+                </p>
+                {!trimmedCustomMessage ? (
+                  <p className="mt-2 text-xs font-semibold text-rose-700">
+                    Inserisci un messaggio personalizzato.
+                  </p>
+                ) : null}
               </section>
             )}
 
@@ -327,11 +345,12 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
                 type="file"
                 accept="image/*,.pdf"
                 onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
+                disabled={messageMode === "custom"}
                 className="block w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900"
               />
 
               <p className="mt-2 text-sm text-slate-500">
-                Con il template attuale l’invio batch con allegati non è ancora supportato.
+                L’invio batch con allegati non è supportato. Per messaggi personalizzati viene usato il template senza allegati.
               </p>
 
               {selectedFile ? (
@@ -361,9 +380,20 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
               <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-700">
                 Verrà inviato:
                 <ul className="mt-2 space-y-1.5">
-                  <li>• template marketing Meta approvato</li>
-                  <li>• link contatto del negozio</li>
-                  <li>• link Google Maps del negozio</li>
+                  <li>
+                    •{" "}
+                    {messageMode === "standard"
+                      ? "template opportunità standard Meta approvato"
+                      : "template messaggio personalizzato Meta approvato"}
+                  </li>
+                  {messageMode === "standard" ? (
+                    <>
+                      <li>• link contatto del negozio</li>
+                      <li>• link Google Maps del negozio</li>
+                    </>
+                  ) : (
+                    <li>• nome cliente e messaggio scritto dall’operatore</li>
+                  )}
                 </ul>
               </div>
 
@@ -379,7 +409,11 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
                       : "cursor-not-allowed bg-orange-300",
                   ].join(" ")}
                 >
-                  {isSending ? "Invio in corso..." : "Invia opportunità ai clienti selezionati"}
+                  {isSending
+                    ? "Invio in corso..."
+                    : messageMode === "standard"
+                      ? "Invia opportunità ai clienti selezionati"
+                      : "Invia messaggio personalizzato"}
                 </button>
 
                 <p className="text-xs text-slate-500">
@@ -434,6 +468,9 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
           ) : (
             <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-4 text-sm text-rose-800">
               <strong>{sendResponse.error}</strong>
+              {!sendResponse.ok && sendResponse.message ? (
+                <div className="mt-1">{sendResponse.message}</div>
+              ) : null}
               {sendResponse.detail ? <div className="mt-1">{sendResponse.detail}</div> : null}
             </div>
           )}
