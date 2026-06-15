@@ -159,9 +159,9 @@ function getCustomMessageModeLabel(mode: CustomMessageMode): string {
 }
 
 function getCustomMessageTemplateName(mode: CustomMessageMode): string {
-  if (mode === "image") return "phonesia_messaggio_personalizzato_media_v1";
-  if (mode === "document") return "phonesia_messaggio_personalizzato_documento_v1";
-  return "phonesia_messaggio_personalizzato_v1";
+  if (mode === "image") return "ph_msg_img_v1";
+  if (mode === "document") return "ph_msg_doc_v1";
+  return "ph_msg_txt_v1";
 }
 
 function formatSendApiError(data: SendApiResponse): string {
@@ -633,8 +633,8 @@ export default function ClienteOpportunityPanel({
       setAttachmentFile(null);
       setAttachmentInputKey((value) => value + 1);
       setSendState({
-          type: "error",
-          message:
+        type: "error",
+        message:
           attachmentKind === "document"
             ? "Il documento non può superare 10 MB."
             : "La locandina non può superare 5 MB.",

@@ -746,7 +746,9 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
                       className="block w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 file:mr-4 file:rounded-xl file:border-0 file:bg-orange-50 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-orange-700 hover:file:bg-orange-100 disabled:cursor-not-allowed disabled:opacity-60"
                     />
                     <p className="mt-2 text-xs text-slate-500">
-                      Gli allegati vengono inviati solo come header del template Meta selezionato.
+                      {customMessageMode === "image"
+                        ? "Obbligatoria per questo template. Formati accettati: JPG, PNG o WEBP. Dimensione massima: 5 MB."
+                        : "Obbligatorio per questo template. Formato accettato: PDF. Dimensione massima: 10 MB."}
                     </p>
                     {selectedFile ? (
                       <div className="mt-3 rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-900">
@@ -789,7 +791,7 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
                       : customMessageMode === "image"
                         ? "template messaggio personalizzato con immagine"
                         : customMessageMode === "document"
-                          ? "template messaggio personalizzato con documento"
+                          ? "template messaggio personalizzato con documento/PDF"
                           : "template messaggio personalizzato solo testo"}
                   </li>
                   {messageMode === "standard" ? (

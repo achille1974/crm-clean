@@ -22,12 +22,10 @@ const WHATSAPP_TEMPLATE_OPPORTUNITA_NAME =
   process.env.WHATSAPP_TEMPLATE_OPPORTUNITA_NAME || "phonesia_opportunita_marketing_v2";
 const WHATSAPP_TEMPLATE_OPPORTUNITA_LANGUAGE =
   process.env.WHATSAPP_TEMPLATE_OPPORTUNITA_LANGUAGE || "it";
-const WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_NAME = "phonesia_messaggio_personalizzato_v1";
+const WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_NAME = "ph_msg_txt_v1";
 const WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_LANGUAGE = "it";
-const WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_IMAGE_NAME =
-  "phonesia_messaggio_personalizzato_media_v1";
-const WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_DOCUMENT_NAME =
-  "phonesia_messaggio_personalizzato_documento_v1";
+const WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_IMAGE_NAME = "ph_msg_img_v1";
+const WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_DOCUMENT_NAME = "ph_msg_doc_v1";
 const CUSTOM_MESSAGE_BODY_PARAMETER_NAMES = ["nome_cliente", "messaggio"] as const;
 
 type ServiceFamily = (typeof SERVICE_COLUMNS)[number];
@@ -1492,14 +1490,14 @@ export async function POST(request: NextRequest) {
               languageCode: templateLanguage,
               mode: `custom_${customTemplateConfig.mode}`,
               headerParameter: customTemplateConfig.headerKind
-                ? {
+                ? ({
                     kind: customTemplateConfig.headerKind,
                     link: attachmentPublicUrl,
                     mimeType: attachmentMimeType || null,
                     ...(customTemplateConfig.headerKind === "document"
                       ? { fileName: attachmentFileName || null }
                       : {}),
-                  } as TemplateHeaderParameter
+                  } as TemplateHeaderParameter)
                 : null,
               bodyParameters: [
                 {
