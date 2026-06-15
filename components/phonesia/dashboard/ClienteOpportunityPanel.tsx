@@ -161,7 +161,7 @@ function getCustomMessageModeLabel(mode: CustomMessageMode): string {
 function getCustomMessageTemplateName(mode: CustomMessageMode): string {
   if (mode === "image") return "ph_msg_img_v1";
   if (mode === "document") return "ph_msg_doc_v1";
-  return "ph_msg_txt_v1";
+  return "ph_msg_txt2_v1";
 }
 
 function formatSendApiError(data: SendApiResponse): string {
