@@ -10,8 +10,8 @@ const WHATSAPP_WEBHOOK_VERIFY_TOKEN = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
 const PHONESIA_AGENT_SHARED_SECRET = process.env.PHONESIA_AGENT_SHARED_SECRET;
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || "https://crm-clean.vercel.app";
 
-const WHATSAPP_STORE_HANDOFF_TEMPLATE_NAME =
-  process.env.WHATSAPP_STORE_HANDOFF_TEMPLATE_NAME ||
+const WHATSAPP_STORE_HANDOFF_TEMPLATE_NAME = "ph_notif_negozio_reply_v1";
+const WHATSAPP_STORE_HANDOFF_FALLBACK_TEMPLATE_NAME =
   "phonesia_notifica_negozio_v1";
 
 const WHATSAPP_STORE_HANDOFF_TEMPLATE_LANGUAGE =
@@ -243,6 +243,31 @@ function truncateText(value: string, maxLength: number) {
   return `${text.slice(0, maxLength - 1)}…`;
 }
 
+function getStoreReplyName(negozioNome: string) {
+  return negozioNome.replace(/^PHONESIA\s*/i, "").trim() || negozioNome;
+}
+
+function buildStoreReplyText(negozioNome: string) {
+  return `Ciao, sono Marco di PHONESIA ${getStoreReplyName(
+    negozioNome,
+  )}. Ho letto il tuo messaggio, dimmi pure come posso aiutarti.`;
+}
+
+function buildStoreReplyWhatsappUrl(params: {
+  telefonoCliente: string;
+  negozioNome: string;
+}): string | null {
+  const telefonoCliente = normalizePhoneForMeta(params.telefonoCliente);
+
+  if (!telefonoCliente) {
+    return null;
+  }
+
+  const text = encodeURIComponent(buildStoreReplyText(params.negozioNome));
+
+  return `https://wa.me/${telefonoCliente}?text=${text}`;
+}
+
 function buildStoreHandoffRequestText(
   bodyOriginal: string,
   agentResponse: AgentResponse | null,
@@ -437,11 +462,13 @@ async function sendWhatsAppText(params: {
 
 async function sendStoreHandoffTemplate(params: {
   to: string;
+  templateName: string;
   negozioNome: string;
   clienteNome: string;
   telefonoCliente: string;
   richiestaCliente: string;
   tipoRichiesta: string;
+  replyWhatsappUrl: string;
   linkSchedaCliente: string;
 }) {
   if (!WHATSAPP_ACCESS_TOKEN) {
@@ -458,6 +485,78 @@ async function sendStoreHandoffTemplate(params: {
     throw new Error(`Invalid WhatsApp recipient: ${params.to}`);
   }
 
+  const bodyParameters =
+    params.templateName === WHATSAPP_STORE_HANDOFF_FALLBACK_TEMPLATE_NAME
+      ? [
+          {
+            type: "text",
+            parameter_name: "negozio_nome",
+            text: truncateText(params.negozioNome, 120),
+          },
+          {
+            type: "text",
+            parameter_name: "cliente_nome",
+            text: truncateText(params.clienteNome, 120),
+          },
+          {
+            type: "text",
+            parameter_name: "telefono_cliente",
+            text: truncateText(params.telefonoCliente, 60),
+          },
+          {
+            type: "text",
+            parameter_name: "richiesta_cliente",
+            text: truncateText(params.richiestaCliente, 500),
+          },
+          {
+            type: "text",
+            parameter_name: "tipo_richiesta",
+            text: truncateText(params.tipoRichiesta, 80),
+          },
+          {
+            type: "text",
+            parameter_name: "link_scheda_cliente",
+            text: truncateText(params.linkSchedaCliente, 500),
+          },
+        ]
+      : [
+          {
+            type: "text",
+            parameter_name: "negozio_nome",
+            text: truncateText(params.negozioNome, 120),
+          },
+          {
+            type: "text",
+            parameter_name: "cliente_nome",
+            text: truncateText(params.clienteNome, 120),
+          },
+          {
+            type: "text",
+            parameter_name: "telefono_cliente",
+            text: truncateText(params.telefonoCliente, 60),
+          },
+          {
+            type: "text",
+            parameter_name: "richiesta_cliente",
+            text: truncateText(params.richiestaCliente, 500),
+          },
+          {
+            type: "text",
+            parameter_name: "tipo_richiesta",
+            text: truncateText(params.tipoRichiesta, 80),
+          },
+          {
+            type: "text",
+            parameter_name: "reply_whatsapp_url",
+            text: truncateText(params.replyWhatsappUrl, 500),
+          },
+          {
+            type: "text",
+            parameter_name: "link_scheda_cliente",
+            text: truncateText(params.linkSchedaCliente, 500),
+          },
+        ];
+
   const response = await fetch(
     `https://graph.facebook.com/${GRAPH_API_VERSION}/${WHATSAPP_PHONE_NUMBER_ID}/messages`,
     {
@@ -471,45 +570,14 @@ async function sendStoreHandoffTemplate(params: {
         to,
         type: "template",
         template: {
-          name: WHATSAPP_STORE_HANDOFF_TEMPLATE_NAME,
+          name: params.templateName,
           language: {
             code: WHATSAPP_STORE_HANDOFF_TEMPLATE_LANGUAGE,
           },
           components: [
             {
               type: "body",
-              parameters: [
-                {
-                  type: "text",
-                  parameter_name: "negozio_nome",
-                  text: truncateText(params.negozioNome, 120),
-                },
-                {
-                  type: "text",
-                  parameter_name: "cliente_nome",
-                  text: truncateText(params.clienteNome, 120),
-                },
-                {
-                  type: "text",
-                  parameter_name: "telefono_cliente",
-                  text: truncateText(params.telefonoCliente, 60),
-                },
-                {
-                  type: "text",
-                  parameter_name: "richiesta_cliente",
-                  text: truncateText(params.richiestaCliente, 500),
-                },
-                {
-                  type: "text",
-                  parameter_name: "tipo_richiesta",
-                  text: truncateText(params.tipoRichiesta, 80),
-                },
-                {
-                  type: "text",
-                  parameter_name: "link_scheda_cliente",
-                  text: truncateText(params.linkSchedaCliente, 500),
-                },
-              ],
+              parameters: bodyParameters,
             },
           ],
         },
@@ -520,7 +588,9 @@ async function sendStoreHandoffTemplate(params: {
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`Meta handoff template failed: ${response.status} ${errorText}`);
+    throw new Error(
+      `Meta handoff template ${params.templateName} failed: ${response.status} ${errorText}`,
+    );
   }
 
   return response.json();
@@ -660,6 +730,11 @@ async function updateLatestConversationHandoff(
     handoffStorePhone: string | null;
     handoffTemplate?: string | null;
     handoffError?: string | null;
+    storeReplyWhatsappUrl?: string | null;
+    storePhoneNotified?: string | null;
+    storeNotificationTemplate?: string | null;
+    storeNotificationStatus?: HandoffStatus | null;
+    storeNotificationError?: string | null;
   },
 ) {
   if (!params.clienteId) return;
@@ -692,6 +767,14 @@ async function updateLatestConversationHandoff(
       handoff_store_phone: params.handoffStorePhone,
       handoff_template: params.handoffTemplate ?? null,
       handoff_error: params.handoffError ?? null,
+      store_reply_whatsapp_url: params.storeReplyWhatsappUrl ?? null,
+      store_phone_notified: params.storePhoneNotified ?? params.handoffStorePhone,
+      store_notification_template:
+        params.storeNotificationTemplate ?? params.handoffTemplate ?? null,
+      store_notification_status:
+        params.storeNotificationStatus ?? params.handoffStatus,
+      store_notification_error:
+        params.storeNotificationError ?? params.handoffError ?? null,
       handoff_updated_at: new Date().toISOString(),
     };
 
@@ -715,6 +798,7 @@ async function hasRecentStoreHandoff(params: {
   supabase: ReturnType<typeof getSupabaseAdmin>;
   clienteId: number;
   intent: string | null | undefined;
+  customerMessage: string;
   minutes: number;
 }): Promise<boolean> {
   if (!params.intent) return false;
@@ -728,6 +812,7 @@ async function hasRecentStoreHandoff(params: {
     .eq("canale", "whatsapp")
     .eq("handoff_richiesto", true)
     .eq("intent", params.intent)
+    .eq("messaggio_utente", params.customerMessage)
     .gte("created_at", cutoff)
     .order("created_at", { ascending: false })
     .limit(10);
@@ -766,6 +851,11 @@ async function notifyStoreIfNeeded(params: {
       handoffStoreLabel: null,
       handoffStorePhone: null,
       handoffTemplate: null,
+      storeReplyWhatsappUrl: null,
+      storePhoneNotified: null,
+      storeNotificationTemplate: null,
+      storeNotificationStatus: "not_required",
+      storeNotificationError: null,
     });
     return;
   }
@@ -782,6 +872,11 @@ async function notifyStoreIfNeeded(params: {
       handoffStorePhone: null,
       handoffTemplate: WHATSAPP_STORE_HANDOFF_TEMPLATE_NAME,
       handoffError: "Cliente non identificato: notifica negozio non inviata.",
+      storeReplyWhatsappUrl: null,
+      storePhoneNotified: null,
+      storeNotificationTemplate: WHATSAPP_STORE_HANDOFF_TEMPLATE_NAME,
+      storeNotificationStatus: "skipped_no_customer",
+      storeNotificationError: "Cliente non identificato: notifica negozio non inviata.",
     });
     return;
   }
@@ -800,6 +895,11 @@ async function notifyStoreIfNeeded(params: {
       handoffStorePhone: store.phone,
       handoffTemplate: WHATSAPP_STORE_HANDOFF_TEMPLATE_NAME,
       handoffError: "Numero negozio non valido.",
+      storeReplyWhatsappUrl: null,
+      storePhoneNotified: store.phone,
+      storeNotificationTemplate: WHATSAPP_STORE_HANDOFF_TEMPLATE_NAME,
+      storeNotificationStatus: "failed_template",
+      storeNotificationError: "Numero negozio non valido.",
     });
     return;
   }
@@ -808,8 +908,23 @@ async function notifyStoreIfNeeded(params: {
     supabase: params.supabase,
     clienteId,
     intent: agentResponse.intent,
+    customerMessage: params.bodyOriginal,
     minutes: 15,
   });
+
+  const clienteNome = getFullName(params.cliente, agentResponse);
+  const telefonoCliente =
+    agentResponse.matched_customer?.telefono ||
+    params.cliente?.telefono ||
+    `+${params.telefono}`;
+  const telefonoClienteMeta = normalizePhoneForMeta(telefonoCliente);
+  const replyWhatsappUrl = telefonoClienteMeta
+    ? buildStoreReplyWhatsappUrl({
+        telefonoCliente: telefonoClienteMeta,
+        negozioNome: store.label,
+      })
+    : null;
+  const linkSchedaCliente = `${BASE_URL}/phonesia/dashboard/clienti/${clienteId}`;
 
   if (hasDuplicateHandoff) {
     await updateLatestConversationHandoff(params.supabase, {
@@ -822,28 +937,71 @@ async function notifyStoreIfNeeded(params: {
       handoffTemplate: WHATSAPP_STORE_HANDOFF_TEMPLATE_NAME,
       handoffError:
         "Notifica negozio non inviata: richiesta simile già notificata negli ultimi 15 minuti.",
+      storeReplyWhatsappUrl: replyWhatsappUrl,
+      storePhoneNotified: storePhone,
+      storeNotificationTemplate: WHATSAPP_STORE_HANDOFF_TEMPLATE_NAME,
+      storeNotificationStatus: "skipped_duplicate",
+      storeNotificationError:
+        "Notifica negozio non inviata: richiesta simile già notificata negli ultimi 15 minuti.",
     });
     return;
   }
 
-  const clienteNome = getFullName(params.cliente, agentResponse);
-  const telefonoCliente =
-    agentResponse.matched_customer?.telefono ||
-    params.cliente?.telefono ||
-    `+${params.telefono}`;
-
-  const linkSchedaCliente = `${BASE_URL}/phonesia/dashboard/clienti/${clienteId}`;
+  if (!replyWhatsappUrl) {
+    await updateLatestConversationHandoff(params.supabase, {
+      clienteId,
+      customerMessage: params.bodyOriginal,
+      handoffRequired: true,
+      handoffStatus: "failed_template",
+      handoffStoreLabel: store.label,
+      handoffStorePhone: storePhone,
+      handoffTemplate: WHATSAPP_STORE_HANDOFF_TEMPLATE_NAME,
+      handoffError: "Numero cliente non valido per link WhatsApp.",
+      storeReplyWhatsappUrl: null,
+      storePhoneNotified: storePhone,
+      storeNotificationTemplate: WHATSAPP_STORE_HANDOFF_TEMPLATE_NAME,
+      storeNotificationStatus: "failed_template",
+      storeNotificationError: "Numero cliente non valido per link WhatsApp.",
+    });
+    return;
+  }
 
   try {
-    await sendStoreHandoffTemplate({
-      to: storePhone,
-      negozioNome: store.label,
-      clienteNome,
-      telefonoCliente,
-      richiestaCliente: buildStoreHandoffRequestText(params.bodyOriginal, agentResponse),
-      tipoRichiesta: buildStoreHandoffRequestType(agentResponse),
-      linkSchedaCliente,
-    });
+    let sentTemplate = WHATSAPP_STORE_HANDOFF_TEMPLATE_NAME;
+    let storeNotificationError: string | null = null;
+
+    try {
+      await sendStoreHandoffTemplate({
+        to: storePhone,
+        templateName: WHATSAPP_STORE_HANDOFF_TEMPLATE_NAME,
+        negozioNome: store.label,
+        clienteNome,
+        telefonoCliente,
+        richiestaCliente: buildStoreHandoffRequestText(params.bodyOriginal, agentResponse),
+        tipoRichiesta: buildStoreHandoffRequestType(agentResponse),
+        replyWhatsappUrl,
+        linkSchedaCliente,
+      });
+    } catch (primaryError) {
+      storeNotificationError =
+        primaryError instanceof Error ? primaryError.message : "Errore template primario.";
+
+      console.error("Errore invio template handoff WhatsApp negozio primario:", primaryError);
+
+      await sendStoreHandoffTemplate({
+        to: storePhone,
+        templateName: WHATSAPP_STORE_HANDOFF_FALLBACK_TEMPLATE_NAME,
+        negozioNome: store.label,
+        clienteNome,
+        telefonoCliente,
+        richiestaCliente: buildStoreHandoffRequestText(params.bodyOriginal, agentResponse),
+        tipoRichiesta: buildStoreHandoffRequestType(agentResponse),
+        replyWhatsappUrl,
+        linkSchedaCliente,
+      });
+
+      sentTemplate = WHATSAPP_STORE_HANDOFF_FALLBACK_TEMPLATE_NAME;
+    }
 
     await updateLatestConversationHandoff(params.supabase, {
       clienteId,
@@ -852,14 +1010,21 @@ async function notifyStoreIfNeeded(params: {
       handoffStatus: "sent_template",
       handoffStoreLabel: store.label,
       handoffStorePhone: storePhone,
-      handoffTemplate: WHATSAPP_STORE_HANDOFF_TEMPLATE_NAME,
+      handoffTemplate: sentTemplate,
+      handoffError: storeNotificationError,
+      storeReplyWhatsappUrl: replyWhatsappUrl,
+      storePhoneNotified: storePhone,
+      storeNotificationTemplate: sentTemplate,
+      storeNotificationStatus: "sent_template",
+      storeNotificationError,
     });
 
     console.log("WA STORE HANDOFF TEMPLATE SENT:", {
       clienteId,
       storeLabel: store.label,
       storePhone,
-      template: WHATSAPP_STORE_HANDOFF_TEMPLATE_NAME,
+      template: sentTemplate,
+      replyWhatsappUrl,
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Errore sconosciuto";
@@ -873,6 +1038,11 @@ async function notifyStoreIfNeeded(params: {
       handoffStorePhone: storePhone,
       handoffTemplate: WHATSAPP_STORE_HANDOFF_TEMPLATE_NAME,
       handoffError: errorMessage,
+      storeReplyWhatsappUrl: replyWhatsappUrl,
+      storePhoneNotified: storePhone,
+      storeNotificationTemplate: WHATSAPP_STORE_HANDOFF_TEMPLATE_NAME,
+      storeNotificationStatus: "failed_template",
+      storeNotificationError: errorMessage,
     });
 
     console.error("Errore invio template handoff WhatsApp negozio:", error);
