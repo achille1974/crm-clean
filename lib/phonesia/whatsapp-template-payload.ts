@@ -44,6 +44,28 @@ export function buildCustomTemplatePayload(params: {
           }
         : null);
   const components: Array<Record<string, unknown>> = [];
+  const nomeCliente = String(params.nomeCliente ?? "").trim() || "cliente";
+  const messaggio = String(params.messaggio ?? "").trim();
+
+  if (!messaggio) {
+    throw new Error("Messaggio template custom vuoto.");
+  }
+
+  if (params.mode === "text" && headerMedia) {
+    throw new Error("Il template custom solo testo non deve avere header media.");
+  }
+
+  if (params.mode === "image" && headerMedia?.kind !== "image") {
+    throw new Error("Il template custom immagine richiede header image.");
+  }
+
+  if (params.mode === "document" && headerMedia?.kind !== "document") {
+    throw new Error("Il template custom documento richiede header document.");
+  }
+
+  if (headerMedia && !String(headerMedia.link ?? "").trim()) {
+    throw new Error("URL media template custom mancante.");
+  }
 
   if (headerMedia?.kind === "image") {
     components.push({
@@ -80,12 +102,12 @@ export function buildCustomTemplatePayload(params: {
       {
         type: "text",
         parameter_name: CUSTOM_MESSAGE_BODY_PARAMETER_NAMES[0],
-        text: params.nomeCliente,
+        text: nomeCliente,
       },
       {
         type: "text",
         parameter_name: CUSTOM_MESSAGE_BODY_PARAMETER_NAMES[1],
-        text: params.messaggio,
+        text: messaggio,
       },
     ],
   });

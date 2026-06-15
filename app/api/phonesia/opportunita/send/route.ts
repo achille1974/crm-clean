@@ -990,26 +990,20 @@ async function sendWhatsAppCustomMessageTemplate(params: {
   to: string;
   templateName: string;
   languageCode: string;
+  mode: CustomMessageMode;
   nomeCliente: string;
   messaggio: string;
   headerMedia: CustomTemplateHeaderMedia | null;
   mediaPreflight?: MediaUrlPreflightResult | null;
+  payload?: Record<string, unknown>;
 }) {
-  const payload = buildCustomTemplatePayload({
-    to: params.to,
-    mode: params.headerMedia?.kind ?? "text",
-    templateName: params.templateName,
-    language: params.languageCode,
-    nomeCliente: params.nomeCliente,
-    messaggio: params.messaggio,
-    headerMedia: params.headerMedia,
-  });
+  const payload = params.payload ?? buildCustomMessageTemplatePayload(params);
 
   return sendMetaTemplateWithRetry({
     templateName: params.templateName,
     payload,
     diagnostics: {
-      mode: params.headerMedia ? `custom_${params.headerMedia.kind}` : "custom_text",
+      mode: `custom_${params.mode}`,
       templateName: params.templateName,
       language: params.languageCode,
       hasHeaderMedia: Boolean(params.headerMedia),
@@ -1023,6 +1017,26 @@ async function sendWhatsAppCustomMessageTemplate(params: {
       bodyParameterNames: [...CUSTOM_MESSAGE_BODY_PARAMETER_NAMES],
       mediaPreflight: params.mediaPreflight ?? null,
     },
+  });
+}
+
+function buildCustomMessageTemplatePayload(params: {
+  to: string;
+  templateName: string;
+  languageCode: string;
+  mode: CustomMessageMode;
+  nomeCliente: string;
+  messaggio: string;
+  headerMedia: CustomTemplateHeaderMedia | null;
+}) {
+  return buildCustomTemplatePayload({
+    to: params.to,
+    mode: params.mode,
+    templateName: params.templateName,
+    language: params.languageCode,
+    nomeCliente: params.nomeCliente,
+    messaggio: params.messaggio,
+    headerMedia: params.headerMedia,
   });
 }
 
@@ -1310,6 +1324,7 @@ export async function POST(request: NextRequest) {
       attachmentPublicUrl?: string | null;
       attachmentFileName?: string | null;
       attachmentMimeType?: string | null;
+      debugPayloadOnly?: boolean | string | null;
     };
 
     const clienteId = Number(body.clienteId);
@@ -1337,6 +1352,10 @@ export async function POST(request: NextRequest) {
 
     const attachmentFileName = normalizeText(body.attachmentFileName) || null;
     const attachmentMimeType = normalizeText(body.attachmentMimeType) || null;
+    const debugPayloadOnly =
+      body.debugPayloadOnly === true ||
+      (typeof body.debugPayloadOnly === "string" &&
+        normalizeText(body.debugPayloadOnly).toLowerCase() === "true");
 
     if (!Number.isFinite(clienteId)) {
       return NextResponse.json(
@@ -1659,16 +1678,56 @@ export async function POST(request: NextRequest) {
                 mimeType: attachmentMimeType,
               }
             : null;
+      const customPayload = buildCustomMessageTemplatePayload({
+        to: metaRecipient,
+        templateName: customTemplateConfig.templateName,
+        languageCode: WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_LANGUAGE,
+        mode: customTemplateConfig.mode,
+        nomeCliente: nomeClienteTemplate,
+        messaggio: customMessage,
+        headerMedia: customHeaderMedia,
+      });
+
+      if (debugPayloadOnly) {
+        const payloadSummary = summarizeMetaPayload(customPayload);
+
+        console.info(
+          "phonesia.whatsapp.template_send.debug_payload",
+          JSON.stringify({
+            mode: `custom_${customTemplateConfig.mode}`,
+            templateName: customTemplateConfig.templateName,
+            language: WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_LANGUAGE,
+            parameter_format: getBodyParameterFormat(customPayload),
+            body_parameter_names: getBodyParameterNames(customPayload),
+            payload: payloadSummary,
+            mediaPreflight,
+          }),
+        );
+
+        return NextResponse.json({
+          ok: true,
+          dry_run: true,
+          message: "Payload template WhatsApp generato senza invio.",
+          template_name: customTemplateConfig.templateName,
+          language: WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_LANGUAGE,
+          parameter_format: getBodyParameterFormat(customPayload),
+          body_parameter_names: getBodyParameterNames(customPayload),
+          payload: payloadSummary,
+          media_check: mediaPreflight,
+        });
+      }
 
       try {
         metaSendResult = await sendWhatsAppCustomMessageTemplate({
           to: metaRecipient,
           templateName: customTemplateConfig.templateName,
           languageCode: WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_LANGUAGE,
+          mode: customTemplateConfig.mode,
           nomeCliente: nomeClienteTemplate,
           messaggio: customMessage,
           headerMedia: customHeaderMedia,
           mediaPreflight,
+          payload: customPayload,
         });
       } catch (error) {
         if (error instanceof MetaTemplateSendError) {
