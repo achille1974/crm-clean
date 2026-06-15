@@ -1,0 +1,105 @@
+export const CUSTOM_MESSAGE_BODY_PARAMETER_NAMES = [
+  "nome_cliente",
+  "messaggio",
+] as const;
+
+export type CustomTemplateMode = "text" | "image" | "document";
+
+export type CustomTemplateHeaderMedia =
+  | {
+      kind: "image";
+      link: string;
+      mimeType?: string | null;
+    }
+  | {
+      kind: "document";
+      link: string;
+      fileName: string | null;
+      mimeType?: string | null;
+    };
+
+export function buildCustomTemplatePayload(params: {
+  to: string;
+  mode: CustomTemplateMode;
+  templateName: string;
+  language: string;
+  nomeCliente: string;
+  messaggio: string;
+  mediaUrl?: string | null;
+  mediaFilename?: string | null;
+  headerMedia?: CustomTemplateHeaderMedia | null;
+}): Record<string, unknown> {
+  const headerMedia =
+    params.headerMedia ??
+    (params.mode === "image" && params.mediaUrl
+      ? {
+          kind: "image" as const,
+          link: params.mediaUrl,
+        }
+      : params.mode === "document" && params.mediaUrl
+        ? {
+            kind: "document" as const,
+            link: params.mediaUrl,
+            fileName: params.mediaFilename ?? null,
+          }
+        : null);
+  const components: Array<Record<string, unknown>> = [];
+
+  if (headerMedia?.kind === "image") {
+    components.push({
+      type: "header",
+      parameters: [
+        {
+          type: "image",
+          image: {
+            link: headerMedia.link,
+          },
+        },
+      ],
+    });
+  }
+
+  if (headerMedia?.kind === "document") {
+    components.push({
+      type: "header",
+      parameters: [
+        {
+          type: "document",
+          document: {
+            link: headerMedia.link,
+            ...(headerMedia.fileName ? { filename: headerMedia.fileName } : {}),
+          },
+        },
+      ],
+    });
+  }
+
+  components.push({
+    type: "body",
+    parameters: [
+      {
+        type: "text",
+        parameter_name: CUSTOM_MESSAGE_BODY_PARAMETER_NAMES[0],
+        text: params.nomeCliente,
+      },
+      {
+        type: "text",
+        parameter_name: CUSTOM_MESSAGE_BODY_PARAMETER_NAMES[1],
+        text: params.messaggio,
+      },
+    ],
+  });
+
+  return {
+    messaging_product: "whatsapp",
+    to: params.to,
+    type: "template",
+    template: {
+      name: params.templateName,
+      language: {
+        code: params.language,
+      },
+      components,
+    },
+  };
+}

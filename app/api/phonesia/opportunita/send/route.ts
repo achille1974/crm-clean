@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import {
+  buildCustomTemplatePayload,
+  CUSTOM_MESSAGE_BODY_PARAMETER_NAMES,
+  type CustomTemplateHeaderMedia,
+} from "@/lib/phonesia/whatsapp-template-payload";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -38,7 +43,6 @@ const WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_NAME = "ph_msg_txt2_v1";
 const WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_LANGUAGE = "it";
 const WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_IMAGE_NAME = "ph_msg_img_v1";
 const WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_DOCUMENT_NAME = "ph_msg_doc_v1";
-const CUSTOM_MESSAGE_BODY_PARAMETER_NAMES = ["nome_cliente", "messaggio"] as const;
 
 const OPPORTUNITA_HEADER_IMAGE_URL =
   "https://crm-clean.vercel.app/phonesia/welcome-header.jpg";
@@ -988,75 +992,18 @@ async function sendWhatsAppCustomMessageTemplate(params: {
   languageCode: string;
   nomeCliente: string;
   messaggio: string;
-  headerMedia: {
-    kind: "image" | "document";
-    link: string;
-    fileName: string | null;
-    mimeType: string | null;
-  } | null;
+  headerMedia: CustomTemplateHeaderMedia | null;
   mediaPreflight?: MediaUrlPreflightResult | null;
 }) {
-  const components: Array<Record<string, unknown>> = [];
-
-  if (params.headerMedia?.kind === "image") {
-    components.push({
-      type: "header",
-      parameters: [
-        {
-          type: "image",
-          image: {
-            link: params.headerMedia.link,
-          },
-        },
-      ],
-    });
-  }
-
-  if (params.headerMedia?.kind === "document") {
-    components.push({
-      type: "header",
-      parameters: [
-        {
-          type: "document",
-          document: {
-            link: params.headerMedia.link,
-            ...(params.headerMedia.fileName
-              ? { filename: params.headerMedia.fileName }
-              : {}),
-          },
-        },
-      ],
-    });
-  }
-
-  components.push({
-    type: "body",
-    parameters: [
-      {
-        type: "text",
-        parameter_name: CUSTOM_MESSAGE_BODY_PARAMETER_NAMES[0],
-        text: params.nomeCliente,
-      },
-      {
-        type: "text",
-        parameter_name: CUSTOM_MESSAGE_BODY_PARAMETER_NAMES[1],
-        text: params.messaggio,
-      },
-    ],
-  });
-
-  const payload = {
-    messaging_product: "whatsapp",
+  const payload = buildCustomTemplatePayload({
     to: params.to,
-    type: "template",
-    template: {
-      name: params.templateName,
-      language: {
-        code: params.languageCode,
-      },
-      components,
-    },
-  };
+    mode: params.headerMedia?.kind ?? "text",
+    templateName: params.templateName,
+    language: params.languageCode,
+    nomeCliente: params.nomeCliente,
+    messaggio: params.messaggio,
+    headerMedia: params.headerMedia,
+  });
 
   return sendMetaTemplateWithRetry({
     templateName: params.templateName,
@@ -1697,6 +1644,22 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      const customHeaderMedia: CustomTemplateHeaderMedia | null =
+        customTemplateConfig.headerKind === "image"
+          ? {
+              kind: "image",
+              link: attachmentPublicUrl!,
+              mimeType: attachmentMimeType,
+            }
+          : customTemplateConfig.headerKind === "document"
+            ? {
+                kind: "document",
+                link: attachmentPublicUrl!,
+                fileName: attachmentFileName,
+                mimeType: attachmentMimeType,
+              }
+            : null;
+
       try {
         metaSendResult = await sendWhatsAppCustomMessageTemplate({
           to: metaRecipient,
@@ -1704,14 +1667,7 @@ export async function POST(request: NextRequest) {
           languageCode: WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_LANGUAGE,
           nomeCliente: nomeClienteTemplate,
           messaggio: customMessage,
-          headerMedia: customTemplateConfig.headerKind
-            ? {
-                kind: customTemplateConfig.headerKind,
-                link: attachmentPublicUrl!,
-                fileName: attachmentFileName,
-                mimeType: attachmentMimeType,
-              }
-            : null,
+          headerMedia: customHeaderMedia,
           mediaPreflight,
         });
       } catch (error) {

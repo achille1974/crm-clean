@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import {
+  buildCustomTemplatePayload,
+  CUSTOM_MESSAGE_BODY_PARAMETER_NAMES,
+  type CustomTemplateHeaderMedia,
+} from "@/lib/phonesia/whatsapp-template-payload";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,7 +31,6 @@ const WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_NAME = "ph_msg_txt2_v1";
 const WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_LANGUAGE = "it";
 const WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_IMAGE_NAME = "ph_msg_img_v1";
 const WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_DOCUMENT_NAME = "ph_msg_doc_v1";
-const CUSTOM_MESSAGE_BODY_PARAMETER_NAMES = ["nome_cliente", "messaggio"] as const;
 const MAX_CUSTOM_MESSAGE_LENGTH = 320;
 
 type ServiceFamily = (typeof SERVICE_COLUMNS)[number];
@@ -92,19 +96,6 @@ type TemplateBodyParameter = {
   parameterName?: string;
   text: string;
 };
-
-type TemplateHeaderParameter =
-  | {
-      kind: "image";
-      link: string;
-      mimeType?: string | null;
-    }
-  | {
-      kind: "document";
-      link: string;
-      fileName: string | null;
-      mimeType?: string | null;
-    };
 
 type MetaTemplateSendAttempt = {
   attempt: 1 | 2;
@@ -654,7 +645,7 @@ function validateNamedBodyParameters(
 function validateCustomTemplateBeforeMeta(params: {
   config: CustomTemplateConfig;
   customMessage: string;
-  headerParameter: TemplateHeaderParameter | null;
+  headerParameter: CustomTemplateHeaderMedia | null;
   bodyParameters: TemplateBodyParameter[];
   mediaPreflight: MediaUrlPreflightResult | null;
   globalSkipReason: string | null;
@@ -989,7 +980,7 @@ async function sendWhatsAppTemplate(params: {
   templateName: string;
   languageCode: string;
   mode: string;
-  headerParameter?: TemplateHeaderParameter | null;
+  headerParameter?: CustomTemplateHeaderMedia | null;
   bodyParameters: TemplateBodyParameter[];
   mediaPreflight?: MediaUrlPreflightResult | null;
 }) {
@@ -1066,6 +1057,47 @@ async function sendWhatsAppTemplate(params: {
       bodyParamsCount: getBodyParamsCount(payload),
       parameterFormat: getBodyParameterFormat(payload),
       bodyParameterNames: getBodyParameterNames(payload),
+      mediaPreflight: params.mediaPreflight ?? null,
+    },
+  });
+}
+
+async function sendWhatsAppCustomTemplate(params: {
+  to: string;
+  templateName: string;
+  languageCode: string;
+  mode: CustomMessageMode;
+  headerMedia?: CustomTemplateHeaderMedia | null;
+  nomeCliente: string;
+  messaggio: string;
+  mediaPreflight?: MediaUrlPreflightResult | null;
+}) {
+  const payload = buildCustomTemplatePayload({
+    to: params.to,
+    mode: params.mode,
+    templateName: params.templateName,
+    language: params.languageCode,
+    nomeCliente: params.nomeCliente,
+    messaggio: params.messaggio,
+    headerMedia: params.headerMedia ?? null,
+  });
+
+  return sendMetaTemplateWithRetry({
+    templateName: params.templateName,
+    payload,
+    diagnostics: {
+      mode: `custom_${params.mode}`,
+      templateName: params.templateName,
+      language: params.languageCode,
+      hasHeaderMedia: Boolean(params.headerMedia),
+      mediaUrl: params.headerMedia ? sanitizeUrl(params.headerMedia.link) : null,
+      mediaMime:
+        params.headerMedia?.mimeType ??
+        params.mediaPreflight?.content_type ??
+        null,
+      bodyParamsCount: getBodyParamsCount(payload),
+      parameterFormat: "NAMED",
+      bodyParameterNames: [...CUSTOM_MESSAGE_BODY_PARAMETER_NAMES],
       mediaPreflight: params.mediaPreflight ?? null,
     },
   });
@@ -1610,17 +1642,25 @@ export async function POST(request: NextRequest) {
           text: customMessage,
         },
       ];
-      const customHeaderParameter =
-        messageMode === "custom" && customTemplateConfig.headerKind && attachmentPublicUrl
-          ? ({
-              kind: customTemplateConfig.headerKind,
+      const customHeaderParameter: CustomTemplateHeaderMedia | null =
+        messageMode === "custom" &&
+        customTemplateConfig.headerKind === "image" &&
+        attachmentPublicUrl
+          ? {
+              kind: "image",
               link: attachmentPublicUrl,
               mimeType: attachmentMimeType || null,
-              ...(customTemplateConfig.headerKind === "document"
-                ? { fileName: attachmentFileName || null }
-                : {}),
-            } as TemplateHeaderParameter)
-          : null;
+            }
+          : messageMode === "custom" &&
+              customTemplateConfig.headerKind === "document" &&
+              attachmentPublicUrl
+            ? {
+                kind: "document",
+                link: attachmentPublicUrl,
+                fileName: attachmentFileName || null,
+                mimeType: attachmentMimeType || null,
+              }
+            : null;
       const customParameterFormat: "NAMED" | "POSITIONAL" =
         customBodyParameters.every((parameter) => parameter.parameterName)
           ? "NAMED"
@@ -1731,13 +1771,14 @@ export async function POST(request: NextRequest) {
               continue;
             }
 
-            metaSendResult = await sendWhatsAppTemplate({
+            metaSendResult = await sendWhatsAppCustomTemplate({
               to: metaRecipient,
               templateName,
               languageCode: templateLanguage,
-              mode: `custom_${customTemplateConfig.mode}`,
-              headerParameter: customHeaderParameter,
-              bodyParameters: customBodyParameters,
+              mode: customTemplateConfig.mode,
+              headerMedia: customHeaderParameter,
+              nomeCliente: customBodyParameters[0].text,
+              messaggio: customBodyParameters[1].text,
               mediaPreflight,
             });
           } else {
