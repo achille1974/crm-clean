@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import {
   buildCustomTemplatePayload,
   CUSTOM_MESSAGE_BODY_PARAMETER_NAMES,
+  sanitizeWhatsAppTemplateText,
   type CustomTemplateHeaderMedia,
 } from "@/lib/phonesia/whatsapp-template-payload";
 
@@ -43,6 +44,7 @@ const WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_NAME = "ph_msg_txt2_v1";
 const WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_LANGUAGE = "it";
 const WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_IMAGE_NAME = "ph_msg_img_v1";
 const WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_DOCUMENT_NAME = "ph_msg_doc_v1";
+const MAX_CUSTOM_MESSAGE_LENGTH = 320;
 
 const OPPORTUNITA_HEADER_IMAGE_URL =
   "https://crm-clean.vercel.app/phonesia/welcome-header.jpg";
@@ -168,6 +170,9 @@ type MetaTemplateSendDiagnostics = {
   parameterFormat: "NAMED" | "POSITIONAL";
   bodyParameterNames: string[];
   mediaPreflight?: MediaUrlPreflightResult | null;
+  messageWasSanitized?: boolean;
+  originalMessageLength?: number;
+  sanitizedMessageLength?: number;
 };
 
 class MetaTemplateSendError extends Error {
@@ -898,6 +903,9 @@ async function sendMetaTemplateWithRetry(params: {
       ...params.diagnostics,
       parameter_format: params.diagnostics.parameterFormat,
       body_parameter_names: params.diagnostics.bodyParameterNames,
+      message_was_sanitized: params.diagnostics.messageWasSanitized ?? false,
+      original_message_length: params.diagnostics.originalMessageLength ?? null,
+      sanitized_message_length: params.diagnostics.sanitizedMessageLength ?? null,
       payload: payloadSummary,
     }),
   );
@@ -996,6 +1004,9 @@ async function sendWhatsAppCustomMessageTemplate(params: {
   headerMedia: CustomTemplateHeaderMedia | null;
   mediaPreflight?: MediaUrlPreflightResult | null;
   payload?: Record<string, unknown>;
+  messageWasSanitized?: boolean;
+  originalMessageLength?: number;
+  sanitizedMessageLength?: number;
 }) {
   const payload = params.payload ?? buildCustomMessageTemplatePayload(params);
 
@@ -1016,6 +1027,9 @@ async function sendWhatsAppCustomMessageTemplate(params: {
       parameterFormat: "NAMED",
       bodyParameterNames: [...CUSTOM_MESSAGE_BODY_PARAMETER_NAMES],
       mediaPreflight: params.mediaPreflight ?? null,
+      messageWasSanitized: params.messageWasSanitized ?? false,
+      originalMessageLength: params.originalMessageLength ?? params.messaggio.length,
+      sanitizedMessageLength: params.sanitizedMessageLength ?? params.messaggio.length,
     },
   });
 }
@@ -1335,7 +1349,11 @@ export async function POST(request: NextRequest) {
       ? customMessageModeRaw
       : "text";
     const customTemplateConfig = resolveCustomTemplateConfig(customMessageMode);
-    const customMessage = normalizeText(body.customMessage);
+    const originalCustomMessage = String(body.customMessage ?? "");
+    const customMessage = sanitizeWhatsAppTemplateText(originalCustomMessage);
+    const messageWasSanitized = originalCustomMessage !== customMessage;
+    const originalMessageLength = originalCustomMessage.length;
+    const sanitizedMessageLength = customMessage.length;
     const rawServices = Array.isArray(body.services) ? body.services : [];
     const services = [
       ...new Set(
@@ -1377,6 +1395,17 @@ export async function POST(request: NextRequest) {
           ok: false,
           error: "Inserisci un messaggio personalizzato.",
           message: "Inserisci un messaggio personalizzato.",
+        },
+        { status: 400 },
+      );
+    }
+
+    if (messageMode === "custom" && customMessage.length > MAX_CUSTOM_MESSAGE_LENGTH) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Messaggio personalizzato troppo lungo.",
+          message: `Messaggio personalizzato troppo lungo: massimo ${MAX_CUSTOM_MESSAGE_LENGTH} caratteri.`,
         },
         { status: 400 },
       );
@@ -1614,7 +1643,8 @@ export async function POST(request: NextRequest) {
     const nomeCliente =
       normalizeText([cliente.nome, cliente.cognome].filter(Boolean).join(" ")) ||
       "cliente";
-    const nomeClienteTemplate = normalizeText(cliente.nome) || "cliente";
+    const nomeClienteTemplate =
+      sanitizeWhatsAppTemplateText(cliente.nome ?? "") || "cliente";
 
     const offerText = buildOfferText(servicesToSend);
 
@@ -1699,6 +1729,9 @@ export async function POST(request: NextRequest) {
             language: WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_LANGUAGE,
             parameter_format: getBodyParameterFormat(customPayload),
             body_parameter_names: getBodyParameterNames(customPayload),
+            message_was_sanitized: messageWasSanitized,
+            original_message_length: originalMessageLength,
+            sanitized_message_length: sanitizedMessageLength,
             payload: payloadSummary,
             mediaPreflight,
           }),
@@ -1712,6 +1745,9 @@ export async function POST(request: NextRequest) {
           language: WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_LANGUAGE,
           parameter_format: getBodyParameterFormat(customPayload),
           body_parameter_names: getBodyParameterNames(customPayload),
+          message_was_sanitized: messageWasSanitized,
+          original_message_length: originalMessageLength,
+          sanitized_message_length: sanitizedMessageLength,
           payload: payloadSummary,
           media_check: mediaPreflight,
         });
@@ -1728,6 +1764,9 @@ export async function POST(request: NextRequest) {
           headerMedia: customHeaderMedia,
           mediaPreflight,
           payload: customPayload,
+          messageWasSanitized,
+          originalMessageLength,
+          sanitizedMessageLength,
         });
       } catch (error) {
         if (error instanceof MetaTemplateSendError) {

@@ -2,6 +2,7 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 import { createClient } from "@supabase/supabase-js";
+import { sanitizeWhatsAppTemplateText } from "@/lib/phonesia/whatsapp-template-payload";
 
 const SERVICE_COLUMNS = [
   "MOBILE",
@@ -371,7 +372,9 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
     [recipients],
   );
 
-  const trimmedCustomMessage = customMessage.trim();
+  const normalizedCustomMessage = sanitizeWhatsAppTemplateText(customMessage);
+  const customMessageWasSanitized = customMessage !== normalizedCustomMessage;
+  const trimmedCustomMessage = normalizedCustomMessage;
 
   const previewText =
     messageMode === "standard"
@@ -505,7 +508,7 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
         formData.append("standardService", standardService);
       } else {
         formData.append("customMessageMode", customMessageMode);
-        formData.append("customMessage", trimmedCustomMessage);
+        formData.append("customMessage", customMessage);
         if (uploadedAttachment) {
           formData.append("attachmentPublicUrl", uploadedAttachment.publicUrl);
           formData.append("attachmentFileName", uploadedAttachment.fileName);
@@ -749,6 +752,15 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
                   {" "}
                   {trimmedCustomMessage.length}/{MAX_CUSTOM_MESSAGE_LENGTH} caratteri.
                 </p>
+                <p className="mt-2 text-xs text-slate-500">
+                  WhatsApp non accetta a capo, tab o spazi multipli nei parametri template: il testo verrà normalizzato automaticamente prima dell’invio.
+                </p>
+                {customMessageWasSanitized && trimmedCustomMessage ? (
+                  <div className="mt-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+                    <div className="font-semibold">Testo normalizzato che verrà inviato</div>
+                    <div className="mt-1 text-sm text-amber-950">{trimmedCustomMessage}</div>
+                  </div>
+                ) : null}
                 {!trimmedCustomMessage ? (
                   <p className="mt-2 text-xs font-semibold text-rose-700">
                     Inserisci un messaggio personalizzato.

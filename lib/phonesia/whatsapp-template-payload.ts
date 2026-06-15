@@ -18,6 +18,13 @@ export type CustomTemplateHeaderMedia =
       mimeType?: string | null;
     };
 
+export function sanitizeWhatsAppTemplateText(value: string): string {
+  return String(value ?? "")
+    .replace(/[\n\r\t]+/g, " ")
+    .replace(/ {2,}/g, " ")
+    .trim();
+}
+
 export function buildCustomTemplatePayload(params: {
   to: string;
   mode: CustomTemplateMode;
@@ -44,8 +51,8 @@ export function buildCustomTemplatePayload(params: {
           }
         : null);
   const components: Array<Record<string, unknown>> = [];
-  const nomeCliente = String(params.nomeCliente ?? "").trim() || "cliente";
-  const messaggio = String(params.messaggio ?? "").trim();
+  const nomeCliente = sanitizeWhatsAppTemplateText(params.nomeCliente) || "cliente";
+  const messaggio = sanitizeWhatsAppTemplateText(params.messaggio);
 
   if (!messaggio) {
     throw new Error("Messaggio template custom vuoto.");

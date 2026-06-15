@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
+import { sanitizeWhatsAppTemplateText } from "@/lib/phonesia/whatsapp-template-payload";
 
 const SERVICE_COLUMNS = [
   "MOBILE",
@@ -547,7 +548,9 @@ export default function ClienteOpportunityPanel({
 
   const sentServicesCount = latestSentByService.size;
   const lastSent = history[0] ?? null;
-  const trimmedCustomMessage = customMessage.trim();
+  const normalizedCustomMessage = sanitizeWhatsAppTemplateText(customMessage);
+  const customMessageWasSanitized = customMessage !== normalizedCustomMessage;
+  const trimmedCustomMessage = normalizedCustomMessage;
 
   const canAttemptSend =
     messageMode === "standard"
@@ -708,7 +711,7 @@ export default function ClienteOpportunityPanel({
           messageMode,
           customMessageMode: messageMode === "custom" ? customMessageMode : null,
           services: messageMode === "standard" ? selectedServices : [],
-          customMessage: messageMode === "custom" ? trimmedCustomMessage : null,
+          customMessage: messageMode === "custom" ? customMessage : null,
           attachmentPublicUrl: uploadedAttachment?.publicUrl ?? null,
           attachmentFileName: uploadedAttachment?.fileName ?? null,
           attachmentMimeType: uploadedAttachment?.mimeType ?? null,
@@ -985,6 +988,15 @@ export default function ClienteOpportunityPanel({
                 {" "}
                 {trimmedCustomMessage.length}/{MAX_CUSTOM_MESSAGE_LENGTH} caratteri.
               </p>
+              <p className="mt-2 text-xs text-slate-500">
+                WhatsApp non accetta a capo, tab o spazi multipli nei parametri template: il testo verrà normalizzato automaticamente prima dell’invio.
+              </p>
+              {customMessageWasSanitized && trimmedCustomMessage ? (
+                <div className="mt-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+                  <div className="font-semibold">Testo normalizzato che verrà inviato</div>
+                  <div className="mt-1 text-sm text-amber-950">{trimmedCustomMessage}</div>
+                </div>
+              ) : null}
               {!trimmedCustomMessage ? (
                 <p className="mt-2 text-xs font-semibold text-rose-700">
                   Inserisci un messaggio personalizzato.
@@ -1244,8 +1256,16 @@ export default function ClienteOpportunityPanel({
                   ))}
                 </div>
               ) : (
-                <div className="mt-2 whitespace-pre-wrap rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-700">
-                  {trimmedCustomMessage}
+                <div className="mt-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-700">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Testo normalizzato che verrà inviato
+                  </div>
+                  <div className="mt-1">{trimmedCustomMessage}</div>
+                  {customMessageWasSanitized ? (
+                    <div className="mt-2 text-xs text-amber-700">
+                      A capo, tab e spazi multipli sono stati convertiti in spazi singoli.
+                    </div>
+                  ) : null}
                 </div>
               )}
 

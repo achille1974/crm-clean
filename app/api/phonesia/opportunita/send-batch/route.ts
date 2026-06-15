@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import {
   buildCustomTemplatePayload,
   CUSTOM_MESSAGE_BODY_PARAMETER_NAMES,
+  sanitizeWhatsAppTemplateText,
   type CustomTemplateHeaderMedia,
 } from "@/lib/phonesia/whatsapp-template-payload";
 
@@ -153,6 +154,9 @@ type MetaTemplateSendDiagnostics = {
   parameterFormat: "NAMED" | "POSITIONAL";
   bodyParameterNames: string[];
   mediaPreflight?: MediaUrlPreflightResult | null;
+  messageWasSanitized?: boolean;
+  originalMessageLength?: number;
+  sanitizedMessageLength?: number;
 };
 
 class MetaTemplateSendError extends Error {
@@ -887,6 +891,9 @@ async function sendMetaTemplateWithRetry(params: {
       ...params.diagnostics,
       parameter_format: params.diagnostics.parameterFormat,
       body_parameter_names: params.diagnostics.bodyParameterNames,
+      message_was_sanitized: params.diagnostics.messageWasSanitized ?? false,
+      original_message_length: params.diagnostics.originalMessageLength ?? null,
+      sanitized_message_length: params.diagnostics.sanitizedMessageLength ?? null,
       payload: payloadSummary,
     }),
   );
@@ -1071,6 +1078,9 @@ async function sendWhatsAppCustomTemplate(params: {
   nomeCliente: string;
   messaggio: string;
   mediaPreflight?: MediaUrlPreflightResult | null;
+  messageWasSanitized?: boolean;
+  originalMessageLength?: number;
+  sanitizedMessageLength?: number;
 }) {
   const payload = buildCustomTemplatePayload({
     to: params.to,
@@ -1099,6 +1109,9 @@ async function sendWhatsAppCustomTemplate(params: {
       parameterFormat: "NAMED",
       bodyParameterNames: [...CUSTOM_MESSAGE_BODY_PARAMETER_NAMES],
       mediaPreflight: params.mediaPreflight ?? null,
+      messageWasSanitized: params.messageWasSanitized ?? false,
+      originalMessageLength: params.originalMessageLength ?? params.messaggio.length,
+      sanitizedMessageLength: params.sanitizedMessageLength ?? params.messaggio.length,
     },
   });
 }
@@ -1393,7 +1406,11 @@ export async function POST(request: NextRequest) {
     ).toUpperCase();
     const standardService = isValidService(standardServiceRaw) ? standardServiceRaw : null;
 
-    const customMessage = normalizeText(String(formData.get("customMessage") ?? ""));
+    const originalCustomMessage = String(formData.get("customMessage") ?? "");
+    const customMessage = sanitizeWhatsAppTemplateText(originalCustomMessage);
+    const messageWasSanitized = originalCustomMessage !== customMessage;
+    const originalMessageLength = originalCustomMessage.length;
+    const sanitizedMessageLength = customMessage.length;
     const rawAttachmentPublicUrl = normalizeText(
       String(formData.get("attachmentPublicUrl") ?? ""),
     );
@@ -1420,12 +1437,25 @@ export async function POST(request: NextRequest) {
     }
 
     if (messageMode === "custom" && !customMessage) {
-      globalSkipReason = "Messaggio personalizzato vuoto.";
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Inserisci un messaggio personalizzato.",
+          message: "Inserisci un messaggio personalizzato.",
+        },
+        { status: 400 },
+      );
     }
 
     if (messageMode === "custom" && customMessage.length > MAX_CUSTOM_MESSAGE_LENGTH) {
-      globalSkipReason =
-        `Messaggio personalizzato troppo lungo: massimo ${MAX_CUSTOM_MESSAGE_LENGTH} caratteri.`;
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Messaggio personalizzato troppo lungo.",
+          message: `Messaggio personalizzato troppo lungo: massimo ${MAX_CUSTOM_MESSAGE_LENGTH} caratteri.`,
+        },
+        { status: 400 },
+      );
     }
 
     if (messageMode === "standard" && hasAttachment) {
@@ -1635,7 +1665,7 @@ export async function POST(request: NextRequest) {
       const customBodyParameters: TemplateBodyParameter[] = [
         {
           parameterName: CUSTOM_MESSAGE_BODY_PARAMETER_NAMES[0],
-          text: normalizeText(clienteCorrente.nome) || "cliente",
+          text: sanitizeWhatsAppTemplateText(clienteCorrente.nome ?? "") || "cliente",
         },
         {
           parameterName: CUSTOM_MESSAGE_BODY_PARAMETER_NAMES[1],
@@ -1780,6 +1810,9 @@ export async function POST(request: NextRequest) {
               nomeCliente: customBodyParameters[0].text,
               messaggio: customBodyParameters[1].text,
               mediaPreflight,
+              messageWasSanitized,
+              originalMessageLength,
+              sanitizedMessageLength,
             });
           } else {
             metaSendResult = await sendWhatsAppTemplate({
