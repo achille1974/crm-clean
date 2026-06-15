@@ -839,6 +839,10 @@ function formatMetaTemplateError(error: MetaTemplateSendError): string {
     lastError?.fbtrace_id ? `fbtrace ${lastError.fbtrace_id}` : null,
   ].filter(Boolean);
 
+  if (lastError?.error_code === 132018) {
+    return `Parametri template non validi per questo cliente. ${details.join(" - ")}`;
+  }
+
   if (hadTransientRetry) {
     return `Errore temporaneo Meta durante l’invio WhatsApp. Ho ritentato una volta dopo 3 secondi, ma l’invio non è riuscito. ${details.join(" - ")}`;
   }

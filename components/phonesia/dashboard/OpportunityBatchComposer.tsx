@@ -32,20 +32,33 @@ type Props = {
 type CustomMessageMode = "text" | "image" | "document";
 
 type SendResultRow = {
-  clienteId: number;
+  clienteId: number | null;
   nome: string;
-  status: "sent" | "blocked" | "error" | "not_found";
+  status: "sent" | "failed" | "skipped";
   reason: string;
+  errorCode?: number | null;
+  fbtraceId?: string | null;
+  metaMessage?: string | null;
+  templateName?: string | null;
+  parameterFormat?: "NAMED" | "POSITIONAL" | null;
+  bodyParameterNames?: string[];
+  telefonoMascherato?: string | null;
+  mediaUrl?: string | null;
 };
 
 type SendResponse =
   | {
       ok: true;
       batchId: string;
+      totalSelectedCount?: number;
       sentCount: number;
       blockedCount: number;
       errorCount: number;
+      failedCount?: number;
+      skippedCount?: number;
       results: SendResultRow[];
+      failedResults?: SendResultRow[];
+      skippedResults?: SendResultRow[];
     }
   | {
       ok: false;
@@ -80,6 +93,7 @@ type UploadedAttachment = {
 
 const MAX_IMAGE_ATTACHMENT_SIZE_BYTES = 5 * 1024 * 1024;
 const MAX_DOCUMENT_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024;
+const MAX_CUSTOM_MESSAGE_LENGTH = 320;
 
 function serviceLabel(service: ServiceFamily): string {
   switch (service) {
@@ -370,6 +384,7 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
     !isSending &&
     (messageMode === "standard" ||
       (trimmedCustomMessage.length > 0 &&
+        trimmedCustomMessage.length <= MAX_CUSTOM_MESSAGE_LENGTH &&
         (customMessageMode === "text" || selectedFile !== null)));
 
   function clearAttachment() {
@@ -443,6 +458,17 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
       setSendResponse({
         ok: false,
         error: "Inserisci un messaggio personalizzato.",
+      });
+      return;
+    }
+
+    if (
+      messageMode === "custom" &&
+      trimmedCustomMessage.length > MAX_CUSTOM_MESSAGE_LENGTH
+    ) {
+      setSendResponse({
+        ok: false,
+        error: `Messaggio personalizzato troppo lungo: massimo ${MAX_CUSTOM_MESSAGE_LENGTH} caratteri.`,
       });
       return;
     }
@@ -720,10 +746,17 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
                 />
                 <p className="mt-2 text-xs text-slate-500">
                   Verrà inviato tramite template WhatsApp approvato, non come messaggio libero.
+                  {" "}
+                  {trimmedCustomMessage.length}/{MAX_CUSTOM_MESSAGE_LENGTH} caratteri.
                 </p>
                 {!trimmedCustomMessage ? (
                   <p className="mt-2 text-xs font-semibold text-rose-700">
                     Inserisci un messaggio personalizzato.
+                  </p>
+                ) : null}
+                {trimmedCustomMessage.length > MAX_CUSTOM_MESSAGE_LENGTH ? (
+                  <p className="mt-2 text-xs font-semibold text-rose-700">
+                    Messaggio troppo lungo per l’invio batch sicuro.
                   </p>
                 ) : null}
                 {customMessageMode !== "text" ? (
@@ -846,10 +879,20 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
                 Invio completato. Batch ID: <strong>{sendResponse.batchId}</strong>
               </div>
 
-              <div className="mt-4 grid gap-4 md:grid-cols-3">
+              <div className="mt-4 grid gap-4 md:grid-cols-4">
+                <StatCard
+                  label="Selezionati"
+                  value={String(sendResponse.totalSelectedCount ?? sendResponse.results.length)}
+                />
                 <StatCard label="Inviati" value={String(sendResponse.sentCount)} />
-                <StatCard label="Bloccati" value={String(sendResponse.blockedCount)} />
-                <StatCard label="Errori" value={String(sendResponse.errorCount)} />
+                <StatCard
+                  label="Falliti"
+                  value={String(sendResponse.failedCount ?? sendResponse.errorCount)}
+                />
+                <StatCard
+                  label="Saltati"
+                  value={String(sendResponse.skippedCount ?? sendResponse.blockedCount)}
+                />
               </div>
 
               <div className="mt-5 overflow-hidden rounded-3xl border border-slate-200">
@@ -864,13 +907,26 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
                     </thead>
 
                     <tbody>
-                      {sendResponse.results.map((row) => (
-                        <tr key={`${row.clienteId}-${row.status}`} className="border-b border-slate-100">
+                      {sendResponse.results.map((row, index) => (
+                        <tr
+                          key={`${row.clienteId ?? "unknown"}-${row.status}-${index}`}
+                          className="border-b border-slate-100"
+                        >
                           <td className="px-4 py-4 font-semibold text-slate-950">{row.nome}</td>
                           <td className="px-4 py-4">
                             <StatusPill status={row.status} />
                           </td>
-                          <td className="px-4 py-4 text-slate-700">{row.reason}</td>
+                          <td className="px-4 py-4 text-slate-700">
+                            <div>{row.reason}</div>
+                            {row.status !== "sent" ? (
+                              <div className="mt-1 text-xs text-slate-500">
+                                {row.templateName ? `Template ${row.templateName}` : null}
+                                {row.parameterFormat ? ` - ${row.parameterFormat}` : null}
+                                {row.errorCode != null ? ` - code ${row.errorCode}` : null}
+                                {row.fbtraceId ? ` - fbtrace ${row.fbtraceId}` : null}
+                              </div>
+                            ) : null}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -926,21 +982,19 @@ function Badge({
 function StatusPill({
   status,
 }: {
-  status: "sent" | "blocked" | "error" | "not_found";
+  status: "sent" | "failed" | "skipped";
 }) {
   const label =
     status === "sent"
       ? "Inviato"
-      : status === "blocked"
-        ? "Bloccato"
-        : status === "not_found"
-          ? "Non trovato"
-          : "Errore";
+      : status === "skipped"
+        ? "Saltato"
+        : "Fallito";
 
   const className =
     status === "sent"
       ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-      : status === "blocked"
+      : status === "skipped"
         ? "border-amber-200 bg-amber-50 text-amber-700"
         : "border-rose-200 bg-rose-50 text-rose-700";
 

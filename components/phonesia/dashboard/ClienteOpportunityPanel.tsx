@@ -104,6 +104,7 @@ const FALLBACK_ORDER: ServiceFamily[] = [
 
 const MAX_ATTACHMENT_SIZE_BYTES = 5 * 1024 * 1024;
 const MAX_DOCUMENT_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024;
+const MAX_CUSTOM_MESSAGE_LENGTH = 320;
 
 function normalizeText(value?: string | null): string {
   return String(value ?? "").trim();
@@ -552,6 +553,7 @@ export default function ClienteOpportunityPanel({
     messageMode === "standard"
       ? selectedServices.length > 0
       : trimmedCustomMessage.length > 0 &&
+        trimmedCustomMessage.length <= MAX_CUSTOM_MESSAGE_LENGTH &&
         (customMessageMode === "text" || attachmentFile !== null);
   const canReallySend = canAttemptSend && whatsappActive && marketingConsented && !isSending;
 
@@ -650,6 +652,18 @@ export default function ClienteOpportunityPanel({
       setSendState({
         type: "error",
         message: "Inserisci un messaggio personalizzato.",
+      });
+      setConfirmOpen(false);
+      return;
+    }
+
+    if (
+      messageMode === "custom" &&
+      trimmedCustomMessage.length > MAX_CUSTOM_MESSAGE_LENGTH
+    ) {
+      setSendState({
+        type: "error",
+        message: `Messaggio personalizzato troppo lungo: massimo ${MAX_CUSTOM_MESSAGE_LENGTH} caratteri.`,
       });
       setConfirmOpen(false);
       return;
@@ -968,10 +982,17 @@ export default function ClienteOpportunityPanel({
               />
               <p className="mt-2 text-xs text-slate-500">
                 Il testo viene inviato dentro il template Meta approvato, non come messaggio libero.
+                {" "}
+                {trimmedCustomMessage.length}/{MAX_CUSTOM_MESSAGE_LENGTH} caratteri.
               </p>
               {!trimmedCustomMessage ? (
                 <p className="mt-2 text-xs font-semibold text-rose-700">
                   Inserisci un messaggio personalizzato.
+                </p>
+              ) : null}
+              {trimmedCustomMessage.length > MAX_CUSTOM_MESSAGE_LENGTH ? (
+                <p className="mt-2 text-xs font-semibold text-rose-700">
+                  Messaggio troppo lungo per l’invio sicuro.
                 </p>
               ) : null}
 
