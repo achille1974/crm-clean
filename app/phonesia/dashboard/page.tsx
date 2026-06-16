@@ -18,6 +18,13 @@ const CARDS = [
       "Consulta le attività importate dagli Excel dei punti vendita e i collegamenti ai clienti CRM.",
   },
   {
+    href: "/phonesia/dashboard/campagne",
+    badge: "WhatsApp",
+    title: "Campagne WhatsApp",
+    description:
+      "Controlla invii, costi, errori Meta e risposte generate dalle campagne.",
+  },
+  {
     href: "/phonesia/dashboard/richieste",
     badge: "AI Agent",
     title: "Richieste clienti da gestire",

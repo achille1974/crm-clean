@@ -28,6 +28,11 @@ type MarketingConsentRow = {
   cliente_id: number | null;
 };
 
+type SentOpportunityRow = {
+  cliente_id: number | null;
+  opportunita_code: string | null;
+};
+
 const NEGOZI: Record<number, string> = {
   1: "Floridia",
   2: "Augusta",
@@ -111,6 +116,7 @@ export default async function DashboardOpportunitySendPage({ searchParams }: Pro
   const [
     { data: clientiData, error: clientiError },
     { data: marketingConsentRows, error: marketingConsentError },
+    { data: sentOpportunityRows, error: sentOpportunityError },
   ] = await Promise.all([
     supabase
       .from("phonesia_clienti")
@@ -120,6 +126,10 @@ export default async function DashboardOpportunitySendPage({ searchParams }: Pro
       .from("phonesia_consensi")
       .select("cliente_id")
       .eq("tipo_evento", "marketing_accepted")
+      .in("cliente_id", clienteIds),
+    supabase
+      .from("phonesia_opportunita_inviate")
+      .select("cliente_id, opportunita_code")
       .in("cliente_id", clienteIds),
   ]);
 
@@ -131,6 +141,10 @@ export default async function DashboardOpportunitySendPage({ searchParams }: Pro
     throw new Error(`Errore lettura consensi marketing: ${marketingConsentError.message}`);
   }
 
+  if (sentOpportunityError) {
+    throw new Error(`Errore lettura opportunità già inviate: ${sentOpportunityError.message}`);
+  }
+
   const clienti = (clientiData ?? []) as ClienteRow[];
   if (clienti.length === 0) notFound();
 
@@ -139,6 +153,19 @@ export default async function DashboardOpportunitySendPage({ searchParams }: Pro
       .map((row) => Number(row.cliente_id))
       .filter((value): value is number => Number.isFinite(value)),
   );
+
+  const sentOpportunityCodesByCliente = new Map<number, string[]>();
+
+  for (const row of (sentOpportunityRows ?? []) as SentOpportunityRow[]) {
+    const clienteId = Number(row.cliente_id);
+    const opportunityCode = String(row.opportunita_code ?? "").trim();
+
+    if (!Number.isFinite(clienteId) || !opportunityCode) continue;
+
+    const current = sentOpportunityCodesByCliente.get(clienteId) ?? [];
+    current.push(opportunityCode);
+    sentOpportunityCodesByCliente.set(clienteId, current);
+  }
 
   const recipients = clienti
     .sort((a, b) => a.id - b.id)
@@ -150,6 +177,7 @@ export default async function DashboardOpportunitySendPage({ searchParams }: Pro
       negozioLabel: negozioLabel(cliente.negozio_id),
       whatsappActive: cliente.whatsapp_active === true,
       marketingConsented: marketingConsentedIds.has(cliente.id),
+      sentOpportunityCodes: sentOpportunityCodesByCliente.get(cliente.id) ?? [],
     }));
 
   return (

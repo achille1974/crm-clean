@@ -24,6 +24,7 @@ type Recipient = {
   negozioLabel: string;
   whatsappActive: boolean;
   marketingConsented: boolean;
+  sentOpportunityCodes?: string[];
 };
 
 type Props = {
@@ -95,6 +96,7 @@ type UploadedAttachment = {
 const MAX_IMAGE_ATTACHMENT_SIZE_BYTES = 5 * 1024 * 1024;
 const MAX_DOCUMENT_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024;
 const MAX_CUSTOM_MESSAGE_LENGTH = 320;
+const MARKETING_MESSAGE_COST_EUR = 0.0522;
 
 function serviceLabel(service: ServiceFamily): string {
   switch (service) {
@@ -167,6 +169,15 @@ function formatSendResponseError(data: Extract<SendResponse, { ok: false }>): st
   }
 
   return data.message || data.detail || data.error || "Invio batch non riuscito.";
+}
+
+function formatCurrency(value: number): string {
+  return new Intl.NumberFormat("it-IT", {
+    style: "currency",
+    currency: "EUR",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value);
 }
 
 function getSupabaseBrowserClient() {
@@ -372,6 +383,31 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
     [recipients],
   );
 
+  const alreadySentRecipients = useMemo(
+    () =>
+      messageMode === "standard"
+        ? eligibleRecipients.filter((recipient) =>
+            (recipient.sentOpportunityCodes ?? []).includes(standardService),
+          )
+        : [],
+    [eligibleRecipients, messageMode, standardService],
+  );
+
+  const sendableRecipients = useMemo(
+    () =>
+      messageMode === "standard"
+        ? eligibleRecipients.filter(
+            (recipient) =>
+              !(recipient.sentOpportunityCodes ?? []).includes(standardService),
+          )
+        : eligibleRecipients,
+    [eligibleRecipients, messageMode, standardService],
+  );
+
+  const excludedBeforeSendCount =
+    blockedRecipients.length + alreadySentRecipients.length;
+  const estimatedCost = sendableRecipients.length * MARKETING_MESSAGE_COST_EUR;
+
   const normalizedCustomMessage = sanitizeWhatsAppTemplateText(customMessage);
   const customMessageWasSanitized = customMessage !== normalizedCustomMessage;
   const trimmedCustomMessage = normalizedCustomMessage;
@@ -383,7 +419,7 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
 
   const canSend =
     recipients.length > 0 &&
-    eligibleRecipients.length > 0 &&
+    sendableRecipients.length > 0 &&
     !isSending &&
     (messageMode === "standard" ||
       (trimmedCustomMessage.length > 0 &&
@@ -826,6 +862,25 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
             <section className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
               <div className="text-sm font-semibold text-slate-900">Invio</div>
 
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <CompactStat
+                  label="Clienti selezionati"
+                  value={String(recipients.length)}
+                />
+                <CompactStat
+                  label="Già inviati/esclusi"
+                  value={String(excludedBeforeSendCount)}
+                />
+                <CompactStat
+                  label="Da inviare"
+                  value={String(sendableRecipients.length)}
+                />
+                <CompactStat
+                  label="Costo stimato"
+                  value={formatCurrency(estimatedCost)}
+                />
+              </div>
+
               <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-700">
                 Verrà inviato:
                 <ul className="mt-2 space-y-1.5">
@@ -966,6 +1021,17 @@ function StatCard({ label, value }: { label: string; value: string }) {
     <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
       <div className="text-sm text-slate-500">{label}</div>
       <div className="mt-2 text-3xl font-black text-slate-950">{value}</div>
+    </div>
+  );
+}
+
+function CompactStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+        {label}
+      </div>
+      <div className="mt-1 text-lg font-black text-slate-950">{value}</div>
     </div>
   );
 }
