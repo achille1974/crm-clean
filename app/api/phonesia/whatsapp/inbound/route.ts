@@ -90,6 +90,35 @@ type MetaWebhookMessage = {
   text?: MetaWebhookText;
 };
 
+type MetaWebhookStatusName = "sent" | "delivered" | "read" | "failed";
+
+type MetaWebhookStatus = {
+  id?: string;
+  status?: string;
+  timestamp?: string;
+  recipient_id?: string;
+  conversation?: {
+    id?: string;
+    origin?: {
+      type?: string;
+    };
+  };
+  pricing?: {
+    billable?: boolean;
+    pricing_model?: string;
+    category?: string;
+    type?: string;
+  };
+  errors?: Array<{
+    code?: number | string;
+    title?: string;
+    message?: string;
+    error_data?: {
+      details?: string;
+    };
+  }>;
+};
+
 type MetaWebhookValue = {
   messaging_product?: string;
   metadata?: {
@@ -103,6 +132,7 @@ type MetaWebhookValue = {
     wa_id?: string;
   }>;
   messages?: MetaWebhookMessage[];
+  statuses?: MetaWebhookStatus[];
 };
 
 type MetaWebhookChange = {
@@ -126,6 +156,20 @@ type HandoffStatus =
   | "failed_template"
   | "skipped_no_customer"
   | "skipped_duplicate";
+
+type WhatsappStatusCallback = {
+  whatsappMessageId: string;
+  status: MetaWebhookStatusName;
+  recipientPhone: string | null;
+  timestampMeta: string | null;
+  conversationIdMeta: string | null;
+  pricingCategory: string | null;
+  pricingBillable: boolean | null;
+  errorCode: string | null;
+  errorTitle: string | null;
+  errorMessage: string | null;
+  rawJson: MetaWebhookStatus;
+};
 
 const STORE_CONTACTS: Record<
   number,
@@ -702,6 +746,100 @@ function extractInboundMessages(payload: MetaWebhookPayload) {
   return results;
 }
 
+function readWebhookStatus(value: string | undefined): MetaWebhookStatusName | null {
+  if (
+    value === "sent" ||
+    value === "delivered" ||
+    value === "read" ||
+    value === "failed"
+  ) {
+    return value;
+  }
+
+  return null;
+}
+
+function formatMetaTimestamp(value: string | undefined): string | null {
+  const timestamp = Number(value);
+
+  if (!Number.isFinite(timestamp) || timestamp <= 0) {
+    return null;
+  }
+
+  return new Date(timestamp * 1000).toISOString();
+}
+
+function extractStatusCallbacks(payload: MetaWebhookPayload): WhatsappStatusCallback[] {
+  const results: WhatsappStatusCallback[] = [];
+
+  for (const entry of payload.entry ?? []) {
+    for (const change of entry.changes ?? []) {
+      const statuses = change.value?.statuses ?? [];
+
+      for (const item of statuses) {
+        const whatsappMessageId = item.id?.trim();
+        const status = readWebhookStatus(item.status);
+
+        if (!whatsappMessageId || !status) {
+          continue;
+        }
+
+        const firstError = item.errors?.[0] ?? null;
+
+        results.push({
+          whatsappMessageId,
+          status,
+          recipientPhone: normalizePhoneForMeta(item.recipient_id),
+          timestampMeta: formatMetaTimestamp(item.timestamp),
+          conversationIdMeta: item.conversation?.id ?? null,
+          pricingCategory:
+            item.pricing?.category ?? item.pricing?.type ?? item.conversation?.origin?.type ?? null,
+          pricingBillable:
+            typeof item.pricing?.billable === "boolean" ? item.pricing.billable : null,
+          errorCode:
+            typeof firstError?.code === "undefined" ? null : String(firstError.code),
+          errorTitle: firstError?.title ?? null,
+          errorMessage: firstError?.message ?? firstError?.error_data?.details ?? null,
+          rawJson: item,
+        });
+      }
+    }
+  }
+
+  return results;
+}
+
+async function saveWhatsappStatusCallbacks(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  statuses: WhatsappStatusCallback[],
+) {
+  if (statuses.length === 0) return;
+
+  const rows = statuses.map((item) => ({
+    whatsapp_message_id: item.whatsappMessageId,
+    status: item.status,
+    recipient_phone: item.recipientPhone,
+    timestamp_meta: item.timestampMeta,
+    conversation_id_meta: item.conversationIdMeta,
+    pricing_category: item.pricingCategory,
+    pricing_billable: item.pricingBillable,
+    error_code: item.errorCode,
+    error_title: item.errorTitle,
+    error_message: item.errorMessage,
+    raw_json: item.rawJson,
+  }));
+
+  const { error } = await supabase
+    .from("phonesia_whatsapp_message_statuses")
+    .upsert(rows, {
+      onConflict: "whatsapp_message_id,status,timestamp_meta",
+    });
+
+  if (error) {
+    throw error;
+  }
+}
+
 async function askPhonesiaAgent(params: {
   origin: string;
   telefono: string;
@@ -1119,6 +1257,19 @@ export async function POST(request: Request) {
     const payload = (await request.json()) as MetaWebhookPayload;
     const origin = new URL(request.url).origin;
     const supabase = getSupabaseAdmin();
+
+    const statusCallbacks = extractStatusCallbacks(payload);
+    if (statusCallbacks.length > 0) {
+      try {
+        await saveWhatsappStatusCallbacks(supabase, statusCallbacks);
+        console.log("WA META STATUS CALLBACKS SAVED:", {
+          count: statusCallbacks.length,
+          statuses: Array.from(new Set(statusCallbacks.map((item) => item.status))),
+        });
+      } catch (statusError) {
+        console.error("Errore salvataggio status WhatsApp Meta:", statusError);
+      }
+    }
 
     const inboundMessages = extractInboundMessages(payload);
 

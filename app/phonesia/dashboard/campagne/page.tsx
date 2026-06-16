@@ -53,7 +53,21 @@ type ClienteRow = {
   id: number;
   nome: string | null;
   cognome: string | null;
+  telefono: string | null;
   negozio_id: number | null;
+};
+
+type WhatsappMessageStatusRow = {
+  whatsapp_message_id: string | null;
+  status: "sent" | "delivered" | "read" | "failed" | string | null;
+  recipient_phone: string | null;
+  timestamp_meta: string | null;
+  created_at: string | null;
+  pricing_category: string | null;
+  pricing_billable: boolean | null;
+  error_code: string | null;
+  error_title: string | null;
+  error_message: string | null;
 };
 
 type MetaErrorSummary = {
@@ -69,6 +83,14 @@ type CampaignDraft = {
   opportunities: OpportunityRow[];
   logs: ConversationRow[];
   responseCount: number;
+};
+
+type CampaignStatusSummary = {
+  hasDeliveryStatus: boolean;
+  deliveredCount: number | null;
+  readCount: number | null;
+  failedCount: number | null;
+  billableDeliveredCount: number | null;
 };
 
 type CampaignItem = {
@@ -184,6 +206,13 @@ function readNumber(value: unknown): number | null {
 
 function normalizeSearch(value: string): string {
   return value.toLowerCase().trim();
+}
+
+function normalizePhoneDigits(value: string | null | undefined): string {
+  const digits = String(value ?? "").replace(/\D/g, "");
+  if (digits.startsWith("39") && digits.length > 10) return digits;
+  if (digits.startsWith("3") && digits.length >= 9) return `39${digits}`;
+  return digits;
 }
 
 function formatDate(value: string | null) {
@@ -440,6 +469,102 @@ function getExplicitWhatsappStatuses(row: OpportunityRow | ConversationRow) {
   return statuses;
 }
 
+function getWhatsappMessageIds(row: OpportunityRow | ConversationRow): string[] {
+  const metadata = getMetadata(row);
+  const ids = new Set<string>();
+  const directKeys = [
+    "whatsapp_message_id",
+    "message_id",
+    "meta_message_id",
+    "wa_message_id",
+  ];
+
+  for (const key of directKeys) {
+    const value = readString(metadata[key]);
+    if (value) ids.add(value);
+  }
+
+  for (const attempt of getAttemptRecords(metadata)) {
+    for (const key of directKeys) {
+      const value = readString(attempt[key]);
+      if (value) ids.add(value);
+    }
+  }
+
+  return Array.from(ids);
+}
+
+function getStatusRank(status: string | null): number {
+  if (status === "read") return 4;
+  if (status === "delivered") return 3;
+  if (status === "sent") return 2;
+  if (status === "failed") return 1;
+  return 0;
+}
+
+function getCampaignStatusSummaryFromWebhookRows(
+  campaign: CampaignDraft,
+  rows: Array<OpportunityRow | ConversationRow>,
+  clientiById: Map<number, ClienteRow>,
+  whatsappStatuses: WhatsappMessageStatusRow[],
+): CampaignStatusSummary | null {
+  if (whatsappStatuses.length === 0) return null;
+
+  const messageIds = new Set(rows.flatMap(getWhatsappMessageIds));
+  const campaignStartTime = getCampaignStartTime(campaign);
+  const campaignEndTime = campaignStartTime + 7 * 24 * 60 * 60 * 1000;
+  const phones = new Set<string>();
+
+  for (const row of rows) {
+    if (!row.cliente_id) continue;
+    const phone = normalizePhoneDigits(clientiById.get(row.cliente_id)?.telefono);
+    if (phone) phones.add(phone);
+  }
+
+  const matchingStatuses = whatsappStatuses.filter((row) => {
+    const messageId = readString(row.whatsapp_message_id);
+    if (messageId && messageIds.has(messageId)) return true;
+
+    if (messageIds.size > 0) return false;
+
+    const phone = normalizePhoneDigits(row.recipient_phone);
+    if (!phone || !phones.has(phone)) return false;
+
+    const statusTime = new Date(row.timestamp_meta || row.created_at || "").getTime();
+    if (!Number.isFinite(statusTime) || campaignStartTime <= 0) return false;
+
+    return statusTime >= campaignStartTime && statusTime <= campaignEndTime;
+  });
+
+  if (matchingStatuses.length === 0) return null;
+
+  const latestByMessage = new Map<string, WhatsappMessageStatusRow>();
+
+  for (const row of matchingStatuses) {
+    const messageKey =
+      readString(row.whatsapp_message_id) ||
+      `${normalizePhoneDigits(row.recipient_phone)}:${row.timestamp_meta ?? row.created_at ?? ""}`;
+    const current = latestByMessage.get(messageKey);
+
+    if (!current || getStatusRank(row.status) >= getStatusRank(current.status)) {
+      latestByMessage.set(messageKey, row);
+    }
+  }
+
+  const latest = Array.from(latestByMessage.values());
+  const deliveredCount = latest.filter((row) => row.status === "delivered").length;
+  const readCount = latest.filter((row) => row.status === "read").length;
+  const failedCount = latest.filter((row) => row.status === "failed").length;
+
+  return {
+    hasDeliveryStatus: true,
+    deliveredCount,
+    readCount,
+    failedCount,
+    billableDeliveredCount: deliveredCount + readCount,
+  };
+}
+
 function getDeliveryStatusSummary(rows: Array<OpportunityRow | ConversationRow>) {
   const statuses = rows.flatMap(getExplicitWhatsappStatuses);
 
@@ -448,17 +573,20 @@ function getDeliveryStatusSummary(rows: Array<OpportunityRow | ConversationRow>)
       hasDeliveryStatus: false,
       deliveredCount: null as number | null,
       readCount: null as number | null,
+      failedCount: null as number | null,
       billableDeliveredCount: null as number | null,
     };
   }
 
   const deliveredCount = statuses.filter((status) => status === "delivered").length;
   const readCount = statuses.filter((status) => status === "read").length;
+  const failedCount = statuses.filter((status) => status === "failed").length;
 
   return {
     hasDeliveryStatus: true,
     deliveredCount,
     readCount,
+    failedCount,
     billableDeliveredCount: deliveredCount + readCount,
   };
 }
@@ -569,6 +697,7 @@ function buildCampaigns(
   opportunities: OpportunityRow[],
   logs: ConversationRow[],
   clientiById: Map<number, ClienteRow>,
+  whatsappStatuses: WhatsappMessageStatusRow[],
 ): CampaignItem[] {
   const drafts = new Map<string, CampaignDraft>();
 
@@ -669,7 +798,17 @@ function buildCampaigns(
         .sort((a, b) => a.localeCompare(b, "it"));
       const metaErrors = mergeErrorSummaries(allRows);
       const fbtraceIds = getFbtraceIds(allRows);
-      const deliveryStatusSummary = getDeliveryStatusSummary(allRows);
+      const deliveryStatusSummary =
+        getCampaignStatusSummaryFromWebhookRows(
+          campaign,
+          allRows,
+          clientiById,
+          whatsappStatuses,
+        ) ?? getDeliveryStatusSummary(allRows);
+      const effectiveFailedCount =
+        deliveryStatusSummary.failedCount === null
+          ? failedCount
+          : Math.max(failedCount, deliveryStatusSummary.failedCount);
       const realCost = sentCount * WHATSAPP_MARKETING_MESSAGE_COST_EUR;
       const responseCount = campaign.responseCount;
       const costPerResponse = responseCount > 0 ? realCost / responseCount : null;
@@ -697,7 +836,7 @@ function buildCampaigns(
         alreadyExcludedCount,
         estimatedSendableCount,
         sentCount,
-        failedCount,
+        failedCount: effectiveFailedCount,
         skippedCount,
         estimatedCost: estimatedSendableCount * WHATSAPP_MARKETING_MESSAGE_COST_EUR,
         realCost,
@@ -757,7 +896,7 @@ async function fetchClienti(
 
   const { data, error } = await supabase
     .from("phonesia_clienti")
-    .select("id, nome, cognome, negozio_id")
+    .select("id, nome, cognome, telefono, negozio_id")
     .in("id", clienteIds);
 
   if (error) {
@@ -765,6 +904,33 @@ async function fetchClienti(
   }
 
   return new Map(((data ?? []) as ClienteRow[]).map((row) => [row.id, row]));
+}
+
+async function fetchWhatsappStatuses(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  phones: string[],
+  minDate: string | null,
+): Promise<WhatsappMessageStatusRow[]> {
+  const normalizedPhones = Array.from(new Set(phones.map(normalizePhoneDigits).filter(Boolean)));
+
+  if (normalizedPhones.length === 0 || !minDate) return [];
+
+  const { data, error } = await supabase
+    .from("phonesia_whatsapp_message_statuses")
+    .select(
+      "whatsapp_message_id, status, recipient_phone, timestamp_meta, created_at, pricing_category, pricing_billable, error_code, error_title, error_message",
+    )
+    .in("recipient_phone", normalizedPhones)
+    .gte("timestamp_meta", minDate)
+    .order("timestamp_meta", { ascending: false })
+    .limit(5000);
+
+  if (error) {
+    console.warn("Status WhatsApp non disponibili per campagne:", error.message);
+    return [];
+  }
+
+  return (data ?? []) as WhatsappMessageStatusRow[];
 }
 
 async function fetchResponseRows(
@@ -974,20 +1140,29 @@ export default async function PhonesiaCampagneWhatsappPage({ searchParams }: Pro
       .map(getCampaignStartTime)
       .filter((value) => value > 0)
       .sort((a, b) => a - b)[0] ?? null;
-  const responseRows = await fetchResponseRows(
-    supabase,
-    allClienteIds,
-    responseMinDate ? new Date(responseMinDate).toISOString() : null,
-  );
+  const minStatusDate = responseMinDate ? new Date(responseMinDate).toISOString() : null;
+  const clientePhones = Array.from(clientiById.values())
+    .map((cliente) => cliente.telefono)
+    .filter((value): value is string => Boolean(value));
+  const [responseRows, whatsappStatuses] = await Promise.all([
+    fetchResponseRows(supabase, allClienteIds, minStatusDate),
+    fetchWhatsappStatuses(supabase, clientePhones, minStatusDate),
+  ]);
   const responseDrafts = Array.from(draftsForResponses.values());
   addResponseAttribution(responseDrafts, responseRows);
 
   const responseCountsByKey = new Map(
     responseDrafts.map((campaign) => [campaign.key, campaign.responseCount]),
   );
-  const campaigns = buildCampaigns(opportunities, batchLogs, clientiById).map((campaign) => {
+  const campaigns = buildCampaigns(
+    opportunities,
+    batchLogs,
+    clientiById,
+    whatsappStatuses,
+  ).map((campaign) => {
     const responseCount = responseCountsByKey.get(campaign.key) ?? 0;
-    const costPerResponse = responseCount > 0 ? campaign.realCost / responseCount : null;
+    const costForResponse = campaign.billableEstimatedCost ?? campaign.realCost;
+    const costPerResponse = responseCount > 0 ? costForResponse / responseCount : null;
 
     return {
       ...campaign,
@@ -1152,9 +1327,9 @@ export default async function PhonesiaCampagneWhatsappPage({ searchParams }: Pro
               Nessuna campagna trovata con i filtri selezionati.
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <div className="relative max-h-[72vh] overflow-auto">
               <table className="min-w-[1180px] w-full text-sm">
-                <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                <thead className="sticky top-0 z-20 bg-slate-50 text-xs uppercase tracking-wide text-slate-500 shadow-sm">
                   <tr className="border-b border-slate-200">
                     <th className="px-4 py-3 text-left font-semibold">Data</th>
                     <th className="px-4 py-3 text-left font-semibold">Negozio</th>
@@ -1375,6 +1550,14 @@ export default async function PhonesiaCampagneWhatsappPage({ searchParams }: Pro
                                         campaign.billableEstimatedCost === null
                                           ? "-"
                                           : `${campaign.deliveredCount ?? 0} delivered + ${campaign.readCount ?? 0} read = ${formatCurrency(campaign.billableEstimatedCost)}`
+                                      }
+                                    />
+                                    <InfoRow
+                                      label="Status webhook"
+                                      value={
+                                        campaign.hasDeliveryStatus
+                                          ? `${campaign.deliveredCount ?? 0} delivered, ${campaign.readCount ?? 0} read, ${campaign.failedCount} failed`
+                                          : "-"
                                       }
                                     />
                                   </div>
