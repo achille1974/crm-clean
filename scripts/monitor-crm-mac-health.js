@@ -38,6 +38,7 @@ const CONTRACT_QUEUE_DIRS = {
   processing: path.join(CONTRACT_IMPORTER_BASE, "contracts_queue/processing"),
   processed: path.join(CONTRACT_IMPORTER_BASE, "contracts_queue/processed"),
   errori: path.join(CONTRACT_IMPORTER_BASE, "contracts_queue/errori"),
+  scartati: path.join(CONTRACT_IMPORTER_BASE, "contracts_queue/scartati"),
 };
 const CONTRACT_LOG_FILES = {
   importer_out: path.join(CONTRACT_IMPORTER_BASE, "logs/contract_importer.out.log"),
@@ -54,7 +55,9 @@ const CONTRACT_LAUNCHD_LABELS = [
   "com.phonesia.importer-healthcheck.v1",
 ];
 const CONTRACT_LOG_CRITICAL_RE =
-  /\b(traceback|exception|failed|error|errore|quota|auth)\b|permission denied|supabase|google drive/i;
+  /\b(traceback|exception)\b|permission denied|no space left|errno 28|supabase|quota|auth/i;
+const CONTRACT_LOG_WARNING_RE =
+  /llm extraction failed|read timed out|\b(failed|error|errore)\b/i;
 
 function nowIso() {
   return new Date().toISOString();
@@ -645,11 +648,19 @@ function extractContractHealthSummary(healthState) {
     processing_count: summary.processing_count ?? null,
     processed_count: summary.processed_count ?? null,
     error_count: summary.error_count ?? null,
+    scartati_count: summary.scartati_count ?? null,
     oldest_processing_age_minutes: summary.oldest_processing_age_minutes ?? null,
     recent_error_lines: summary.recent_error_lines ?? null,
+    recent_discard_lines: summary.recent_discard_lines ?? null,
+    recent_llm_warning_lines: summary.recent_llm_warning_lines ?? null,
     error_delta_since_last_check: summary.error_delta_since_last_check ?? null,
+    scartati_delta_since_last_check: summary.scartati_delta_since_last_check ?? null,
     recent_error_delta_since_last_check: summary.recent_error_delta_since_last_check ?? null,
+    recent_discard_delta_since_last_check: summary.recent_discard_delta_since_last_check ?? null,
+    recent_llm_warning_delta_since_last_check: summary.recent_llm_warning_delta_since_last_check ?? null,
     processed_delta_since_last_check: summary.processed_delta_since_last_check ?? null,
+    last_events: summary.last_events || null,
+    discard_reasons_tail: summary.discard_reasons_tail || null,
     thresholds: summary.thresholds || null,
   };
 }
@@ -731,44 +742,83 @@ function parseContractLogLineTime(line) {
   return null;
 }
 
-function findContractLogCriticalMatches(text, nowMs, countUndatedLines) {
+function contractLogLineIsBenign(line) {
+  const lowered = String(line || "").toLowerCase();
+
+  if (/fine sync .*errori:\s*0\b/.test(lowered)) return true;
+  if (/pdf trovati nella sorgente/.test(lowered)) return true;
+
+  return false;
+}
+
+function collectContractLogKeywords(line, matcherKeywords) {
   const keywords = new Set();
-  let matchCount = 0;
+  const lowered = String(line || "").toLowerCase();
+
+  for (const keyword of matcherKeywords) {
+    if (lowered.includes(keyword)) keywords.add(keyword);
+  }
+
+  return keywords;
+}
+
+function findContractLogCriticalMatches(text, nowMs, countUndatedLines) {
+  const criticalKeywords = new Set();
+  const warningKeywords = new Set();
+  let criticalMatchCount = 0;
+  let warningMatchCount = 0;
 
   for (const line of String(text || "").split(/\r?\n/)) {
-    if (!CONTRACT_LOG_CRITICAL_RE.test(line)) continue;
+    if (contractLogLineIsBenign(line)) continue;
+
+    const isCritical = CONTRACT_LOG_CRITICAL_RE.test(line);
+    const isWarning = CONTRACT_LOG_WARNING_RE.test(line);
+
+    if (!isCritical && !isWarning) continue;
+
     const lineTimeMs = parseContractLogLineTime(line);
 
     if (lineTimeMs !== null && nowMs - lineTimeMs > CONTRACT_RECENT_LOG_WINDOW_MS) {
       continue;
     }
 
-    if (lineTimeMs === null && !countUndatedLines) {
+    if (lineTimeMs === null && (!countUndatedLines || !isCritical)) {
       continue;
     }
 
-    matchCount += 1;
-
-    const lowered = line.toLowerCase();
-    for (const keyword of [
-      "traceback",
-      "exception",
-      "failed",
-      "error",
-      "errore",
-      "permission denied",
-      "supabase",
-      "google drive",
-      "quota",
-      "auth",
-    ]) {
-      if (lowered.includes(keyword)) keywords.add(keyword);
+    if (isCritical) {
+      criticalMatchCount += 1;
+      for (const keyword of collectContractLogKeywords(line, [
+        "traceback",
+        "exception",
+        "permission denied",
+        "no space left",
+        "errno 28",
+        "supabase",
+        "quota",
+        "auth",
+      ])) {
+        criticalKeywords.add(keyword);
+      }
+    } else if (isWarning) {
+      warningMatchCount += 1;
+      for (const keyword of collectContractLogKeywords(line, [
+        "llm extraction failed",
+        "read timed out",
+        "failed",
+        "error",
+        "errore",
+      ])) {
+        warningKeywords.add(keyword);
+      }
     }
   }
 
   return {
-    match_count: matchCount,
-    keywords: [...keywords].sort(),
+    match_count: criticalMatchCount,
+    keywords: [...criticalKeywords].sort(),
+    warning_match_count: warningMatchCount,
+    warning_keywords: [...warningKeywords].sort(),
   };
 }
 
@@ -786,6 +836,8 @@ function analyzeContractLogFile(name, filePath, nowMs) {
     is_recent: file.modified_ms ? nowMs - file.modified_ms <= CONTRACT_RECENT_LOG_WINDOW_MS : false,
     critical_match_count: 0,
     critical_keywords: [],
+    warning_match_count: 0,
+    warning_keywords: [],
     error: file.error || null,
   };
 
@@ -796,6 +848,8 @@ function analyzeContractLogFile(name, filePath, nowMs) {
     const matches = findContractLogCriticalMatches(tail, nowMs, result.is_recent);
     result.critical_match_count = matches.match_count;
     result.critical_keywords = matches.keywords;
+    result.warning_match_count = matches.warning_match_count;
+    result.warning_keywords = matches.warning_keywords;
   } catch (error) {
     result.ok = false;
     result.error = serializeError(error);
@@ -848,6 +902,7 @@ function checkContractParser(log, _env) {
       processing_max_age_minutes: CONTRACT_PROCESSING_MAX_AGE_MS / 60000,
       recent_log_window_minutes: CONTRACT_RECENT_LOG_WINDOW_MS / 60000,
       errori_count_is_not_alert_condition: true,
+      scartati_count_is_not_alert_condition: true,
     },
     note:
       "Parser contratti reale configurato da /Users/archimede/phonesia_ai; nessun import eseguito dal monitor.",
@@ -918,8 +973,8 @@ function checkContractParser(log, _env) {
     if (result.ok) continue;
     addAlert(
       log,
-      name === "errori" ? "warning" : "critical",
-      name === "errori" ? "contract_errori_queue_unreadable" : "contract_queue_unreadable",
+      name === "errori" || name === "scartati" ? "warning" : "critical",
+      name === "errori" || name === "scartati" ? "contract_noncritical_queue_unreadable" : "contract_queue_unreadable",
       `Cartella queue contratti non accessibile: ${result.path}`,
       { name, path: result.path, error: result.error || result.directory.error || null }
     );
@@ -967,6 +1022,28 @@ function checkContractParser(log, _env) {
           age_minutes: item.age_minutes,
           critical_match_count: item.critical_match_count,
           critical_keywords: item.critical_keywords,
+        })),
+      }
+    );
+  }
+
+  const recentWarningLogs = Object.values(logs).filter(
+    (item) => item.ok && item.is_recent && item.warning_match_count > 0
+  );
+  if (recentWarningLogs.length > 0) {
+    addAlert(
+      log,
+      "warning",
+      "contract_recent_log_warning",
+      "Log parser contratti recenti contengono righe da verificare, non critiche.",
+      {
+        logs: recentWarningLogs.map((item) => ({
+          name: item.name,
+          path: item.path,
+          modified_at: item.modified_at,
+          age_minutes: item.age_minutes,
+          warning_match_count: item.warning_match_count,
+          warning_keywords: item.warning_keywords,
         })),
       }
     );
@@ -1281,7 +1358,7 @@ function printSummary(log) {
       `Launchd contratti: ${contractLaunchd.filter((item) => item.ok).length}/${contractLaunchd.length} caricati`
     );
     console.log(
-      `Queue contratti PDF: processing=${queues.processing.pdf_count}, processed=${queues.processed.pdf_count}, errori=${queues.errori.pdf_count}`
+      `Queue contratti PDF: processing=${queues.processing.pdf_count}, processed=${queues.processed.pdf_count}, errori=${queues.errori.pdf_count}, scartati=${queues.scartati.pdf_count}`
     );
   } else {
     console.log("Parser contratti: percorso esatto non configurato");

@@ -239,7 +239,7 @@ function buildUnstableFilesMessage(files) {
 async function findExistingBatchByHash(supabase, fileHash) {
   const { data, error } = await supabase
     .from(BATCH_TABLE)
-    .select(`id, import_status, created_at, file_name, source_file_name, ${HASH_COLUMN}`)
+    .select(`id, import_status, created_at, source_file_name, source_sheet_name, ${HASH_COLUMN}`)
     .eq(HASH_COLUMN, fileHash)
     .limit(1);
 
