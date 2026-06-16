@@ -1,6 +1,12 @@
 import Link from "next/link";
 import { createClient } from "@supabase/supabase-js";
 import ClientiSelectionForm from "@/components/phonesia/dashboard/ClientiSelectionForm";
+import {
+  buildPromoSendSummaries,
+  formatPromoSentAtRome,
+  type PromoOpportunityHistoryRow,
+  type PromoSendSummary,
+} from "@/lib/phonesia/opportunita-promo-history";
 
 export const dynamic = "force-dynamic";
 
@@ -163,6 +169,30 @@ function CellFlag({ active }: { active: boolean }) {
   );
 }
 
+function PromoHistoryBadge({ summary }: { summary: PromoSendSummary | null }) {
+  if (summary?.sentToday) {
+    return (
+      <span className="inline-flex rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-xs font-semibold text-orange-700">
+        Promo inviata oggi
+      </span>
+    );
+  }
+
+  if (summary?.lastSentAt) {
+    return (
+      <span className="inline-flex rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700">
+        Ultimo invio: {formatPromoSentAtRome(summary.lastSentAt) || "—"}
+      </span>
+    );
+  }
+
+  return (
+    <span className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
+      Mai inviato
+    </span>
+  );
+}
+
 export default async function DashboardClientiPage({ searchParams }: Props) {
   const resolvedParams = searchParams ? await searchParams : {};
 
@@ -198,9 +228,14 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
 
   const serviziByCliente = new Map<number, ServizioRow[]>();
   const contrattiByCliente = new Map<number, ContrattoRow[]>();
+  let promoSummaries = new Map<number, PromoSendSummary>();
 
   if (clienteIds.length > 0) {
-    const [{ data: serviziData, error: serviziError }, { data: contrattiData, error: contrattiError }] =
+    const [
+      { data: serviziData, error: serviziError },
+      { data: contrattiData, error: contrattiError },
+      { data: opportunitaData, error: opportunitaError },
+    ] =
       await Promise.all([
         supabase
           .from("phonesia_servizi_cliente")
@@ -214,6 +249,14 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
           .in("cliente_id", clienteIds)
           .order("data_stipula", { ascending: false })
           .order("created_at", { ascending: false }),
+        supabase
+          .from("phonesia_opportunita_inviate")
+          .select(
+            "cliente_id, channel, sent_at, created_at, send_mode, inviato_at, metadata",
+          )
+          .in("cliente_id", clienteIds)
+          .order("inviato_at", { ascending: false })
+          .limit(5000),
       ]);
 
     if (serviziError) {
@@ -222,6 +265,12 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
 
     if (contrattiError) {
       throw new Error(`Errore lettura contratti: ${contrattiError.message}`);
+    }
+
+    if (opportunitaError) {
+      throw new Error(
+        `Errore lettura storico opportunità: ${opportunitaError.message}`,
+      );
     }
 
     for (const row of (serviziData ?? []) as ServizioRow[]) {
@@ -237,6 +286,10 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
       list.push(row);
       contrattiByCliente.set(row.cliente_id, list);
     }
+
+    promoSummaries = buildPromoSendSummaries(
+      (opportunitaData ?? []) as PromoOpportunityHistoryRow[],
+    );
   }
 
   const rows = clienti.map((cliente) => {
@@ -254,12 +307,13 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
       }
     }
 
-    return {
-      cliente,
-      operatore: resolveOperatore(servizi, contratti),
-      activeFamilies,
-    };
-  });
+      return {
+        cliente,
+        operatore: resolveOperatore(servizi, contratti),
+        activeFamilies,
+        promoSummary: promoSummaries.get(cliente.id) ?? null,
+      };
+    });
 
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-6 md:px-8">
@@ -350,7 +404,7 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
         <ClientiSelectionForm visibleClientCount={rows.length}>
           <section className="rounded-3xl border border-slate-200 bg-white shadow-sm">
             <div className="max-h-[70vh] overflow-auto rounded-3xl">
-              <table className="min-w-[1580px] w-full text-sm">
+              <table className="min-w-[1720px] w-full text-sm">
                 <thead className="text-slate-600">
                   <tr className="border-b border-slate-200">
                     <th className="sticky top-0 z-20 bg-slate-50 px-4 py-3 text-left font-semibold shadow-[0_1px_0_0_rgb(226_232_240)]">
@@ -377,6 +431,9 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
                       </th>
                     ))}
                     <th className="sticky top-0 z-20 bg-slate-50 px-4 py-3 text-left font-semibold shadow-[0_1px_0_0_rgb(226_232_240)]">
+                      Promo WhatsApp
+                    </th>
+                    <th className="sticky top-0 z-20 bg-slate-50 px-4 py-3 text-left font-semibold shadow-[0_1px_0_0_rgb(226_232_240)]">
                       Opportunità
                     </th>
                   </tr>
@@ -386,7 +443,7 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
                   {rows.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={6 + SERVICE_COLUMNS.length}
+                        colSpan={7 + SERVICE_COLUMNS.length}
                         className="px-4 py-10 text-center text-sm text-slate-500"
                       >
                         Nessun cliente trovato con i filtri selezionati.
@@ -403,6 +460,14 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
                             type="checkbox"
                             name="clienti"
                             value={row.cliente.id}
+                            data-promo-sent-today={
+                              row.promoSummary?.sentToday ? "true" : "false"
+                            }
+                            title={
+                              row.promoSummary?.sentToday
+                                ? "Escluso dal seleziona tutti: promo WhatsApp già inviata oggi."
+                                : undefined
+                            }
                             className="h-4 w-4 rounded border-slate-300 text-orange-500 focus:ring-orange-500"
                           />
                         </td>
@@ -430,6 +495,15 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
                             <CellFlag active={row.activeFamilies.has(service)} />
                           </td>
                         ))}
+
+                        <td className="px-4 py-4">
+                          <PromoHistoryBadge summary={row.promoSummary} />
+                          {row.promoSummary?.sentToday ? (
+                            <div className="mt-1 text-xs text-slate-500">
+                              Escluso dal seleziona tutti
+                            </div>
+                          ) : null}
+                        </td>
 
                         <td className="px-4 py-4">
                           <Link

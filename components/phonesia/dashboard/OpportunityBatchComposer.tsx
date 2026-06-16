@@ -25,6 +25,9 @@ type Recipient = {
   whatsappActive: boolean;
   marketingConsented: boolean;
   sentOpportunityCodes?: string[];
+  promoSentToday?: boolean;
+  lastPromoSentAt?: string | null;
+  lastPromoSentAtLabel?: string | null;
 };
 
 type Props = {
@@ -370,15 +373,25 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
   const eligibleRecipients = useMemo(
     () =>
       recipients.filter(
-        (recipient) => recipient.whatsappActive && recipient.marketingConsented,
+        (recipient) =>
+          recipient.whatsappActive &&
+          recipient.marketingConsented &&
+          !recipient.promoSentToday,
       ),
+    [recipients],
+  );
+
+  const alreadySentTodayRecipients = useMemo(
+    () => recipients.filter((recipient) => recipient.promoSentToday),
     [recipients],
   );
 
   const blockedRecipients = useMemo(
     () =>
       recipients.filter(
-        (recipient) => !recipient.whatsappActive || !recipient.marketingConsented,
+        (recipient) =>
+          !recipient.promoSentToday &&
+          (!recipient.whatsappActive || !recipient.marketingConsented),
       ),
     [recipients],
   );
@@ -405,7 +418,9 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
   );
 
   const excludedBeforeSendCount =
-    blockedRecipients.length + alreadySentRecipients.length;
+    blockedRecipients.length +
+    alreadySentTodayRecipients.length +
+    alreadySentRecipients.length;
   const estimatedCost = sendableRecipients.length * MARKETING_MESSAGE_COST_EUR;
 
   const normalizedCustomMessage = sanitizeWhatsAppTemplateText(customMessage);
@@ -593,19 +608,24 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
         <div className="mb-4">
           <h2 className="text-xl font-black text-slate-950">Destinatari selezionati</h2>
           <p className="mt-1 text-sm text-slate-600">
-            Invia l’opportunità solo ai clienti idonei: consenso marketing attivo e WhatsApp attivo.
+            Invia l’opportunità solo ai clienti idonei: consenso marketing attivo,
+            WhatsApp attivo e nessuna promo già inviata oggi.
           </p>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-4">
           <StatCard label="Selezionati" value={String(recipients.length)} />
           <StatCard label="Idonei all’invio" value={String(eligibleRecipients.length)} />
+          <StatCard
+            label="Già inviati oggi"
+            value={String(alreadySentTodayRecipients.length)}
+          />
           <StatCard label="Bloccati" value={String(blockedRecipients.length)} />
         </div>
 
         <div className="mt-5 overflow-hidden rounded-3xl border border-slate-200">
           <div className="overflow-x-auto">
-            <table className="min-w-[900px] w-full text-sm">
+            <table className="min-w-[1040px] w-full text-sm">
               <thead className="bg-slate-50 text-slate-600">
                 <tr className="border-b border-slate-200">
                   <th className="px-4 py-3 text-left font-semibold">Cliente</th>
@@ -613,6 +633,7 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
                   <th className="px-4 py-3 text-left font-semibold">Negozio</th>
                   <th className="px-4 py-3 text-left font-semibold">WhatsApp</th>
                   <th className="px-4 py-3 text-left font-semibold">Marketing</th>
+                  <th className="px-4 py-3 text-left font-semibold">Promo WhatsApp</th>
                 </tr>
               </thead>
 
@@ -633,6 +654,9 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
                       <Badge ok={recipient.marketingConsented}>
                         {recipient.marketingConsented ? "Autorizzato" : "Non autorizzato"}
                       </Badge>
+                    </td>
+                    <td className="px-4 py-4">
+                      <PromoStatusBadge recipient={recipient} />
                     </td>
                   </tr>
                 ))}
@@ -872,6 +896,10 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
                   value={String(excludedBeforeSendCount)}
                 />
                 <CompactStat
+                  label="Già inviati oggi"
+                  value={String(alreadySentTodayRecipients.length)}
+                />
+                <CompactStat
                   label="Da inviare"
                   value={String(sendableRecipients.length)}
                 />
@@ -930,7 +958,8 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
                 </button>
 
                 <p className="text-xs text-slate-500">
-                  I clienti senza consenso marketing o senza WhatsApp attivo verranno saltati automaticamente.
+                  I clienti senza consenso marketing, senza WhatsApp attivo o con
+                  promo già inviata oggi verranno saltati automaticamente.
                 </p>
               </div>
             </section>
@@ -1053,6 +1082,30 @@ function Badge({
       ].join(" ")}
     >
       {children}
+    </span>
+  );
+}
+
+function PromoStatusBadge({ recipient }: { recipient: Recipient }) {
+  if (recipient.promoSentToday) {
+    return (
+      <span className="inline-flex rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-xs font-semibold text-orange-700">
+        Promo inviata oggi
+      </span>
+    );
+  }
+
+  if (recipient.lastPromoSentAtLabel) {
+    return (
+      <span className="inline-flex rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700">
+        Ultimo invio: {recipient.lastPromoSentAtLabel}
+      </span>
+    );
+  }
+
+  return (
+    <span className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
+      Mai inviato
     </span>
   );
 }

@@ -3,6 +3,12 @@ import { notFound } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 
 import OpportunityBatchComposer from "@/components/phonesia/dashboard/OpportunityBatchComposer";
+import {
+  buildPromoSendSummaries,
+  formatPromoSentAtRome,
+  type PromoOpportunityHistoryRow,
+  type PromoSendSummary,
+} from "@/lib/phonesia/opportunita-promo-history";
 
 export const dynamic = "force-dynamic";
 
@@ -117,6 +123,7 @@ export default async function DashboardOpportunitySendPage({ searchParams }: Pro
     { data: clientiData, error: clientiError },
     { data: marketingConsentRows, error: marketingConsentError },
     { data: sentOpportunityRows, error: sentOpportunityError },
+    { data: promoHistoryRows, error: promoHistoryError },
   ] = await Promise.all([
     supabase
       .from("phonesia_clienti")
@@ -131,6 +138,12 @@ export default async function DashboardOpportunitySendPage({ searchParams }: Pro
       .from("phonesia_opportunita_inviate")
       .select("cliente_id, opportunita_code")
       .in("cliente_id", clienteIds),
+    supabase
+      .from("phonesia_opportunita_inviate")
+      .select("cliente_id, channel, sent_at, created_at, send_mode, inviato_at, metadata")
+      .in("cliente_id", clienteIds)
+      .order("inviato_at", { ascending: false })
+      .limit(5000),
   ]);
 
   if (clientiError) {
@@ -145,8 +158,16 @@ export default async function DashboardOpportunitySendPage({ searchParams }: Pro
     throw new Error(`Errore lettura opportunità già inviate: ${sentOpportunityError.message}`);
   }
 
+  if (promoHistoryError) {
+    throw new Error(`Errore lettura storico promo WhatsApp: ${promoHistoryError.message}`);
+  }
+
   const clienti = (clientiData ?? []) as ClienteRow[];
   if (clienti.length === 0) notFound();
+
+  const promoSummaries = buildPromoSendSummaries(
+    (promoHistoryRows ?? []) as PromoOpportunityHistoryRow[],
+  );
 
   const marketingConsentedIds = new Set<number>(
     ((marketingConsentRows ?? []) as MarketingConsentRow[])
@@ -170,6 +191,7 @@ export default async function DashboardOpportunitySendPage({ searchParams }: Pro
   const recipients = clienti
     .sort((a, b) => a.id - b.id)
     .map((cliente) => ({
+      lastPromoSummary: promoSummaries.get(cliente.id) ?? null,
       id: cliente.id,
       nomeCompleto:
         [cliente.nome, cliente.cognome].filter(Boolean).join(" ").trim() || `Cliente ${cliente.id}`,
@@ -178,7 +200,25 @@ export default async function DashboardOpportunitySendPage({ searchParams }: Pro
       whatsappActive: cliente.whatsapp_active === true,
       marketingConsented: marketingConsentedIds.has(cliente.id),
       sentOpportunityCodes: sentOpportunityCodesByCliente.get(cliente.id) ?? [],
-    }));
+    }))
+    .map((recipient) => {
+      const summary = recipient.lastPromoSummary as PromoSendSummary | null;
+
+      return {
+        id: recipient.id,
+        nomeCompleto: recipient.nomeCompleto,
+        telefono: recipient.telefono,
+        negozioLabel: recipient.negozioLabel,
+        whatsappActive: recipient.whatsappActive,
+        marketingConsented: recipient.marketingConsented,
+        sentOpportunityCodes: recipient.sentOpportunityCodes,
+        promoSentToday: summary?.sentToday === true,
+        lastPromoSentAt: summary?.lastSentAt ?? null,
+        lastPromoSentAtLabel: summary?.lastSentAt
+          ? formatPromoSentAtRome(summary.lastSentAt)
+          : null,
+      };
+    });
 
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-6 md:px-8">
@@ -209,6 +249,11 @@ export default async function DashboardOpportunitySendPage({ searchParams }: Pro
 
               <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
                 Clienti selezionati: <strong className="text-slate-950">{recipients.length}</strong>
+                <span className="mx-2 text-slate-300">·</span>
+                Già inviati oggi:{" "}
+                <strong className="text-slate-950">
+                  {recipients.filter((recipient) => recipient.promoSentToday).length}
+                </strong>
               </div>
             </div>
           </div>

@@ -6,6 +6,12 @@ import {
   sanitizeWhatsAppTemplateText,
   type CustomTemplateHeaderMedia,
 } from "@/lib/phonesia/whatsapp-template-payload";
+import {
+  buildPromoSendSummaries,
+  buildTodayPromoDateFilter,
+  DAILY_WHATSAPP_PROMO_SKIP_REASON,
+  type PromoOpportunityHistoryRow,
+} from "@/lib/phonesia/opportunita-promo-history";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -191,6 +197,7 @@ class MetaTemplateSendError extends Error {
 
 type OpportunityInsertRow = {
   cliente_id: number;
+  channel: "whatsapp";
   opportunita_code: string;
   opportunita_label: string;
   send_mode: string;
@@ -1312,6 +1319,7 @@ async function saveOpportunitySentRow(
 
   const row: OpportunityInsertRow = {
     cliente_id: params.clienteId,
+    channel: "whatsapp",
     opportunita_code: opportunityCode,
     opportunita_label: opportunityLabel,
     send_mode: params.sendMode,
@@ -1584,6 +1592,7 @@ export async function POST(request: NextRequest) {
       { data: marketingRows, error: marketingError },
       { data: contrattiData, error: contrattiError },
       { data: alreadySentRows, error: alreadySentError },
+      { data: todayPromoRows, error: todayPromoError },
     ] = await Promise.all([
       supabase
         .from("phonesia_clienti")
@@ -1609,6 +1618,12 @@ export async function POST(request: NextRequest) {
             .eq("opportunita_code", standardService)
             .in("cliente_id", clienteIds)
         : Promise.resolve({ data: [], error: null } as { data: AlreadySentRow[]; error: null }),
+      supabase
+        .from("phonesia_opportunita_inviate")
+        .select("cliente_id, channel, sent_at, created_at, send_mode, inviato_at, metadata")
+        .in("cliente_id", clienteIds)
+        .or(buildTodayPromoDateFilter())
+        .limit(Math.max(100, clienteIds.length * 5)),
     ]);
 
     if (clientiError) {
@@ -1627,10 +1642,17 @@ export async function POST(request: NextRequest) {
       throw new Error(`Errore lettura opportunità già inviate: ${alreadySentError.message}`);
     }
 
+    if (todayPromoError) {
+      throw new Error(`Errore lettura promo già inviate oggi: ${todayPromoError.message}`);
+    }
+
     const clienti = (clientiData ?? []) as ClienteRow[];
     const contratti = (contrattiData ?? []) as ContrattoRow[];
     const marketingData = (marketingRows ?? []) as MarketingRow[];
     const alreadySentData = (alreadySentRows ?? []) as AlreadySentRow[];
+    const todayPromoSummaries = buildPromoSendSummaries(
+      (todayPromoRows ?? []) as PromoOpportunityHistoryRow[],
+    );
 
     const clientiMap = new Map<number, ClienteRow>();
     for (const cliente of clienti) {
@@ -1656,6 +1678,11 @@ export async function POST(request: NextRequest) {
       alreadySentData
         .map((row) => Number(row.cliente_id))
         .filter((value): value is number => Number.isFinite(value)),
+    );
+    const todayPromoSentIds = new Set<number>(
+      [...todayPromoSummaries.entries()]
+        .filter(([, summary]) => summary.sentToday)
+        .map(([clienteId]) => clienteId),
     );
 
     const results: SendResultRow[] = [];
@@ -1792,6 +1819,11 @@ export async function POST(request: NextRequest) {
           telefonoMascherato: maskedPhone,
           mediaUrl,
         });
+      }
+
+      if (todayPromoSentIds.has(clienteCorrente.id)) {
+        await pushSkipped(DAILY_WHATSAPP_PROMO_SKIP_REASON);
+        continue;
       }
 
       if (!marketingIds.has(clienteCorrente.id)) {

@@ -22,13 +22,21 @@ export default function ClientiSelectionForm({
     );
   }, []);
 
+  const getSelectAllCheckboxes = useCallback(() => {
+    return getClientCheckboxes().filter(
+      (checkbox) => checkbox.dataset.promoSentToday !== "true",
+    );
+  }, [getClientCheckboxes]);
+
   const refreshSelectedCount = useCallback(() => {
     const checkedCount = getClientCheckboxes().filter((checkbox) => checkbox.checked).length;
     setSelectedCount(checkedCount);
   }, [getClientCheckboxes]);
 
   function setAllVisibleClients(checked: boolean) {
-    for (const checkbox of getClientCheckboxes()) {
+    const checkboxes = checked ? getSelectAllCheckboxes() : getClientCheckboxes();
+
+    for (const checkbox of checkboxes) {
       checkbox.checked = checked;
     }
 

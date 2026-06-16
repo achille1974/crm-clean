@@ -6,6 +6,12 @@ import {
   sanitizeWhatsAppTemplateText,
   type CustomTemplateHeaderMedia,
 } from "@/lib/phonesia/whatsapp-template-payload";
+import {
+  buildPromoSendSummaries,
+  buildTodayPromoDateFilter,
+  DAILY_WHATSAPP_PROMO_SKIP_REASON,
+  type PromoOpportunityHistoryRow,
+} from "@/lib/phonesia/opportunita-promo-history";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -70,6 +76,7 @@ type ContrattoRow = {
 
 type OpportunityInsertRow = {
   cliente_id: number;
+  channel: "whatsapp";
   opportunita_code: string;
   opportunita_label: string;
   send_mode: string;
@@ -1171,6 +1178,7 @@ async function saveSentOpportunities(
 ) {
   const rows: OpportunityInsertRow[] = params.services.map((service) => ({
     cliente_id: params.clienteId,
+    channel: "whatsapp",
     opportunita_code: service,
     opportunita_label: serviceLabel(service),
     send_mode: params.sendMode,
@@ -1257,6 +1265,7 @@ async function saveCustomMessageOpportunity(
 
   const row: OpportunityInsertRow = {
     cliente_id: params.clienteId,
+    channel: "whatsapp",
     opportunita_code: `${codePrefix}:${crypto.randomUUID()}`,
     opportunita_label: "Messaggio personalizzato",
     send_mode: params.sendMode,
@@ -1563,6 +1572,7 @@ export async function POST(request: NextRequest) {
       { data: marketingConsentData, error: marketingConsentError },
       { data: contrattiData, error: contrattiError },
       { data: alreadySentData, error: alreadySentError },
+      { data: todayPromoRows, error: todayPromoError },
     ] = await Promise.all([
       supabase
         .from("phonesia_clienti")
@@ -1592,6 +1602,12 @@ export async function POST(request: NextRequest) {
             .eq("cliente_id", clienteId)
             .in("opportunita_code", services)
         : Promise.resolve({ data: [], error: null } as { data: AlreadySentRow[]; error: null }),
+      supabase
+        .from("phonesia_opportunita_inviate")
+        .select("cliente_id, channel, sent_at, created_at, send_mode, inviato_at, metadata")
+        .eq("cliente_id", clienteId)
+        .or(buildTodayPromoDateFilter())
+        .limit(50),
     ]);
 
     if (clienteError) {
@@ -1614,14 +1630,34 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (todayPromoError) {
+      throw new Error(
+        `Errore lettura promo già inviate oggi: ${todayPromoError.message}`,
+      );
+    }
+
     const cliente = clienteData as ClienteRow | null;
     const contratti = (contrattiData ?? []) as ContrattoRow[];
     const alreadySentRows = (alreadySentData ?? []) as AlreadySentRow[];
+    const todayPromoSummaries = buildPromoSendSummaries(
+      (todayPromoRows ?? []) as PromoOpportunityHistoryRow[],
+    );
 
     if (!cliente) {
       return NextResponse.json(
         { ok: false, error: "cliente_non_trovato" },
         { status: 404 },
+      );
+    }
+
+    if (todayPromoSummaries.get(clienteId)?.sentToday) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "promo_whatsapp_gia_inviata_oggi",
+          message: `${DAILY_WHATSAPP_PROMO_SKIP_REASON} a questo cliente.`,
+        },
+        { status: 409 },
       );
     }
 
