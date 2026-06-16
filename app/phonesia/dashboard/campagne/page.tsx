@@ -1,13 +1,15 @@
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import { createClient } from "@supabase/supabase-js";
 
 export const dynamic = "force-dynamic";
 
-const MARKETING_MESSAGE_COST_EUR = 0.0522;
+const WHATSAPP_MARKETING_MESSAGE_COST_EUR = 0.0522;
 const MAX_OPPORTUNITY_ROWS = 1500;
 const MAX_BATCH_LOG_ROWS = 4000;
 const MAX_RESPONSE_ROWS = 4000;
+
+type CampaignSection = "dettaglio" | "clienti" | "errori" | "risposte" | "costi";
 
 type SearchParamsInput =
   | Promise<Record<string, string | string[] | undefined>>
@@ -83,6 +85,10 @@ type CampaignItem = {
   skippedCount: number;
   estimatedCost: number;
   realCost: number;
+  deliveredCount: number | null;
+  readCount: number | null;
+  hasDeliveryStatus: boolean;
+  billableEstimatedCost: number | null;
   responseCount: number;
   costPerResponse: number | null;
   message: string;
@@ -385,6 +391,78 @@ function getFbtraceIds(rows: Array<ConversationRow | OpportunityRow>): string[] 
   return Array.from(ids).sort();
 }
 
+function readMessageStatus(value: unknown): "delivered" | "read" | "sent" | "failed" | null {
+  const status = readString(value).toLowerCase();
+
+  if (
+    status === "delivered" ||
+    status === "read" ||
+    status === "sent" ||
+    status === "failed"
+  ) {
+    return status;
+  }
+
+  return null;
+}
+
+function getExplicitWhatsappStatuses(row: OpportunityRow | ConversationRow) {
+  const metadata = getMetadata(row);
+  const statuses: Array<"delivered" | "read" | "sent" | "failed"> = [];
+  const directKeys = [
+    "whatsapp_status",
+    "message_status",
+    "delivery_status",
+    "wa_status",
+    "meta_message_status",
+  ];
+
+  for (const key of directKeys) {
+    const status = readMessageStatus(metadata[key]);
+    if (status) statuses.push(status);
+  }
+
+  const statusContainers = [
+    metadata.statuses,
+    metadata.message_statuses,
+    metadata.whatsapp_statuses,
+  ];
+
+  for (const container of statusContainers) {
+    if (!Array.isArray(container)) continue;
+
+    for (const item of container) {
+      const status = isRecord(item) ? readMessageStatus(item.status) : readMessageStatus(item);
+      if (status) statuses.push(status);
+    }
+  }
+
+  return statuses;
+}
+
+function getDeliveryStatusSummary(rows: Array<OpportunityRow | ConversationRow>) {
+  const statuses = rows.flatMap(getExplicitWhatsappStatuses);
+
+  if (statuses.length === 0) {
+    return {
+      hasDeliveryStatus: false,
+      deliveredCount: null as number | null,
+      readCount: null as number | null,
+      billableDeliveredCount: null as number | null,
+    };
+  }
+
+  const deliveredCount = statuses.filter((status) => status === "delivered").length;
+  const readCount = statuses.filter((status) => status === "read").length;
+
+  return {
+    hasDeliveryStatus: true,
+    deliveredCount,
+    readCount,
+    billableDeliveredCount: deliveredCount + readCount,
+  };
+}
+
 function getSelectedCount(rows: Array<OpportunityRow | ConversationRow>, fallback: number): number {
   let selectedCount = 0;
 
@@ -591,7 +669,8 @@ function buildCampaigns(
         .sort((a, b) => a.localeCompare(b, "it"));
       const metaErrors = mergeErrorSummaries(allRows);
       const fbtraceIds = getFbtraceIds(allRows);
-      const realCost = sentCount * MARKETING_MESSAGE_COST_EUR;
+      const deliveryStatusSummary = getDeliveryStatusSummary(allRows);
+      const realCost = sentCount * WHATSAPP_MARKETING_MESSAGE_COST_EUR;
       const responseCount = campaign.responseCount;
       const costPerResponse = responseCount > 0 ? realCost / responseCount : null;
       const sentAt = getCampaignDate(campaign);
@@ -620,8 +699,16 @@ function buildCampaigns(
         sentCount,
         failedCount,
         skippedCount,
-        estimatedCost: estimatedSendableCount * MARKETING_MESSAGE_COST_EUR,
+        estimatedCost: estimatedSendableCount * WHATSAPP_MARKETING_MESSAGE_COST_EUR,
         realCost,
+        deliveredCount: deliveryStatusSummary.deliveredCount,
+        readCount: deliveryStatusSummary.readCount,
+        hasDeliveryStatus: deliveryStatusSummary.hasDeliveryStatus,
+        billableEstimatedCost:
+          deliveryStatusSummary.billableDeliveredCount === null
+            ? null
+            : deliveryStatusSummary.billableDeliveredCount *
+              WHATSAPP_MARKETING_MESSAGE_COST_EUR,
         responseCount,
         costPerResponse,
         message,
@@ -709,15 +796,19 @@ function getUniqueOptions(values: string[]): string[] {
 }
 
 function getTotals(campaigns: CampaignItem[]) {
-  return campaigns.reduce(
-    (totals, campaign) => ({
-      selected: totals.selected + campaign.selectedCount,
-      sent: totals.sent + campaign.sentCount,
-      failed: totals.failed + campaign.failedCount,
-      skipped: totals.skipped + campaign.skippedCount,
-      estimatedCost: totals.estimatedCost + campaign.estimatedCost,
-      realCost: totals.realCost + campaign.realCost,
-      responses: totals.responses + campaign.responseCount,
+  const totals = campaigns.reduce(
+    (current, campaign) => ({
+      selected: current.selected + campaign.selectedCount,
+      sent: current.sent + campaign.sentCount,
+      failed: current.failed + campaign.failedCount,
+      skipped: current.skipped + campaign.skippedCount,
+      estimatedCost: current.estimatedCost + campaign.estimatedCost,
+      realCost: current.realCost + campaign.realCost,
+      billableEstimatedCost:
+        current.billableEstimatedCost + (campaign.billableEstimatedCost ?? 0),
+      campaignsWithDeliveryStatus:
+        current.campaignsWithDeliveryStatus + (campaign.hasDeliveryStatus ? 1 : 0),
+      responses: current.responses + campaign.responseCount,
     }),
     {
       selected: 0,
@@ -726,9 +817,72 @@ function getTotals(campaigns: CampaignItem[]) {
       skipped: 0,
       estimatedCost: 0,
       realCost: 0,
+      billableEstimatedCost: 0,
+      campaignsWithDeliveryStatus: 0,
       responses: 0,
     },
   );
+
+  const hasDeliveryStatus = totals.campaignsWithDeliveryStatus > 0;
+  const costForResponse = hasDeliveryStatus ? totals.billableEstimatedCost : totals.realCost;
+
+  return {
+    ...totals,
+    hasDeliveryStatus,
+    billableEstimatedCost: hasDeliveryStatus ? totals.billableEstimatedCost : null,
+    costPerResponse: totals.responses > 0 ? costForResponse / totals.responses : null,
+  };
+}
+
+function getCampaignSection(value: string): CampaignSection {
+  if (
+    value === "clienti" ||
+    value === "errori" ||
+    value === "risposte" ||
+    value === "costi"
+  ) {
+    return value;
+  }
+
+  return "dettaglio";
+}
+
+function getCampaignDomId(key: string): string {
+  return `campagna-${key.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+}
+
+function buildCampaignSectionHref(
+  params: Record<string, string | string[] | undefined>,
+  campaignKey: string,
+  section: CampaignSection,
+): string {
+  const query = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(params)) {
+    if (key === "open" || key === "section") continue;
+
+    const normalizedValue = getSingleValue(value);
+    if (normalizedValue) query.set(key, normalizedValue);
+  }
+
+  query.set("open", campaignKey);
+  query.set("section", section);
+
+  return `/phonesia/dashboard/campagne?${query.toString()}#${getCampaignDomId(campaignKey)}`;
+}
+
+function buildCampaignCloseHref(params: Record<string, string | string[] | undefined>): string {
+  const query = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(params)) {
+    if (key === "open" || key === "section") continue;
+
+    const normalizedValue = getSingleValue(value);
+    if (normalizedValue) query.set(key, normalizedValue);
+  }
+
+  const queryString = query.toString();
+  return queryString ? `/phonesia/dashboard/campagne?${queryString}` : "/phonesia/dashboard/campagne";
 }
 
 export default async function PhonesiaCampagneWhatsappPage({ searchParams }: Props) {
@@ -847,12 +1001,14 @@ export default async function PhonesiaCampagneWhatsappPage({ searchParams }: Pro
     campaignMatchesFilters(campaign, filters),
   );
   const totals = getTotals(filteredCampaigns);
+  const activeCampaignKey = getSingleValue(resolvedParams.open);
+  const activeSection = getCampaignSection(getSingleValue(resolvedParams.section));
 
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-6 md:px-8">
       <div className="mx-auto max-w-7xl space-y-5">
-        <section className="rounded-3xl border border-slate-200 bg-white px-5 py-6 shadow-sm md:px-8 md:py-8">
-          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+        <section className="rounded-3xl border border-slate-200 bg-white px-5 py-5 shadow-sm md:px-7">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div>
               <Link
                 href="/phonesia/dashboard"
@@ -865,81 +1021,75 @@ export default async function PhonesiaCampagneWhatsappPage({ searchParams }: Pro
                 WhatsApp
               </div>
 
-              <h1 className="text-3xl font-black tracking-tight text-slate-950 md:text-5xl">
+              <h1 className="text-3xl font-black tracking-tight text-slate-950">
                 Campagne WhatsApp
               </h1>
 
-              <p className="mt-3 max-w-3xl text-sm leading-relaxed text-slate-600 md:text-base">
-                Controllo operativo degli invii marketing: costi stimati, costi reali,
-                errori Meta e risposte ricevute dai clienti.
+              <p className="mt-2 max-w-3xl text-sm leading-relaxed text-slate-600">
+                Vista sintetica di invii, risposte e costi marketing.
               </p>
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
               Costo marketing unitario:{" "}
               <strong className="text-slate-950">
-                {MARKETING_MESSAGE_COST_EUR.toLocaleString("it-IT", {
+                {WHATSAPP_MARKETING_MESSAGE_COST_EUR.toLocaleString("it-IT", {
                   minimumFractionDigits: 4,
                   maximumFractionDigits: 4,
                 })}{" "}
-                EUR
+                €
               </strong>
             </div>
           </div>
         </section>
 
-        <form className="rounded-3xl border border-slate-200 bg-white px-5 py-5 shadow-sm md:px-6">
-          <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-6">
-            <label className="block">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Data da
-              </span>
-              <input
-                type="date"
-                name="data_da"
-                defaultValue={filters.dataDa}
-                className="mt-2 w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-orange-500"
-              />
-            </label>
+        <section className="grid gap-3 md:grid-cols-5">
+          <SummaryCard label="Campagne totali" value={String(filteredCampaigns.length)} />
+          <SummaryCard label="Costo stimato" value={formatCurrency(totals.estimatedCost)} />
+          <SummaryCard
+            label="Costo fatturabile stimato"
+            value={
+              totals.billableEstimatedCost === null
+                ? "-"
+                : formatCurrency(totals.billableEstimatedCost)
+            }
+            note={
+              totals.billableEstimatedCost === null
+                ? "Dato stimato: Meta fattura i messaggi consegnati, non solo inviati."
+                : "Basato sugli status delivered/read disponibili."
+            }
+          />
+          <SummaryCard label="Risposte generate" value={String(totals.responses)} />
+          <SummaryCard
+            label="Costo per risposta"
+            value={totals.costPerResponse === null ? "-" : formatCurrency(totals.costPerResponse)}
+            note={totals.responses === 0 ? "Nessuna risposta attribuita." : undefined}
+          />
+        </section>
 
-            <label className="block">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Data a
-              </span>
-              <input
-                type="date"
-                name="data_a"
-                defaultValue={filters.dataA}
-                className="mt-2 w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-orange-500"
-              />
-            </label>
+        <details className="rounded-3xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+          <summary className="cursor-pointer text-sm font-semibold text-slate-800">
+            Filtri
+          </summary>
 
-            <label className="block">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Template
-              </span>
-              <select
-                name="template"
-                defaultValue={filters.template}
-                className="mt-2 w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-orange-500"
-              >
+          <form className="mt-4">
+            <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-6">
+              <FilterDate label="Data da" name="data_da" defaultValue={filters.dataDa} />
+              <FilterDate label="Data a" name="data_a" defaultValue={filters.dataA} />
+
+              <FilterSelect label="Template" name="template" defaultValue={filters.template}>
                 <option value="">Tutti</option>
                 {templateOptions.map((template) => (
                   <option key={template} value={template}>
                     {template}
                   </option>
                 ))}
-              </select>
-            </label>
+              </FilterSelect>
 
-            <label className="block">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Tipo invio
-              </span>
-              <select
+              <FilterSelect
+                label="Tipo invio"
                 name="tipo_invio"
                 defaultValue={filters.tipoInvio}
-                className="mt-2 w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-orange-500"
               >
                 <option value="">Tutti</option>
                 {tipoInvioOptions.map((tipoInvio) => (
@@ -947,227 +1097,304 @@ export default async function PhonesiaCampagneWhatsappPage({ searchParams }: Pro
                     {tipoInvio}
                   </option>
                 ))}
-              </select>
-            </label>
+              </FilterSelect>
 
-            <label className="block">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Stato
-              </span>
-              <select
-                name="stato"
-                defaultValue={filters.stato}
-                className="mt-2 w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-orange-500"
-              >
+              <FilterSelect label="Stato" name="stato" defaultValue={filters.stato}>
                 <option value="tutte">Tutte</option>
                 <option value="con_errori">Con errori</option>
                 <option value="senza_errori">Senza errori</option>
-              </select>
-            </label>
+              </FilterSelect>
 
-            <label className="block">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Negozio
-              </span>
-              <select
-                name="negozio"
-                defaultValue={filters.negozio}
-                className="mt-2 w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-orange-500"
-              >
+              <FilterSelect label="Negozio" name="negozio" defaultValue={filters.negozio}>
                 <option value="">Tutti</option>
                 {Object.entries(NEGOZI).map(([id, label]) => (
                   <option key={id} value={id}>
                     {label}
                   </option>
                 ))}
-              </select>
-            </label>
-          </div>
+              </FilterSelect>
+            </div>
 
-          <div className="mt-4 flex flex-col gap-3 md:flex-row md:items-end">
-            <label className="block flex-1">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Ricerca
-              </span>
-              <input
-                type="search"
-                name="q"
-                defaultValue={filters.q}
-                placeholder="Batch, template, errore, fbtrace, messaggio"
-                className="mt-2 w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-orange-500"
-              />
-            </label>
+            <div className="mt-4 flex flex-col gap-3 md:flex-row md:items-end">
+              <label className="block flex-1">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Ricerca
+                </span>
+                <input
+                  type="search"
+                  name="q"
+                  defaultValue={filters.q}
+                  placeholder="Batch, template, errore, fbtrace, messaggio"
+                  className="mt-2 w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-orange-500"
+                />
+              </label>
 
-            <button
-              type="submit"
-              className="rounded-2xl bg-orange-500 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-orange-600"
-            >
-              Filtra
-            </button>
+              <button
+                type="submit"
+                className="rounded-2xl bg-orange-500 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-orange-600"
+              >
+                Filtra
+              </button>
 
-            <Link
-              href="/phonesia/dashboard/campagne"
-              className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-2.5 text-center text-sm font-semibold text-slate-700 transition hover:border-orange-300 hover:text-orange-700"
-            >
-              Reset
-            </Link>
-          </div>
-        </form>
+              <Link
+                href="/phonesia/dashboard/campagne"
+                className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-2.5 text-center text-sm font-semibold text-slate-700 transition hover:border-orange-300 hover:text-orange-700"
+              >
+                Reset
+              </Link>
+            </div>
+          </form>
+        </details>
 
-        <section className="grid gap-4 md:grid-cols-4">
-          <SummaryCard label="Campagne" value={String(filteredCampaigns.length)} />
-          <SummaryCard label="Clienti selezionati" value={String(totals.selected)} />
-          <SummaryCard label="Inviati" value={String(totals.sent)} />
-          <SummaryCard label="Risposte generate" value={String(totals.responses)} />
-          <SummaryCard label="Falliti" value={String(totals.failed)} />
-          <SummaryCard label="Saltati" value={String(totals.skipped)} />
-          <SummaryCard label="Costo stimato" value={formatCurrency(totals.estimatedCost)} />
-          <SummaryCard label="Costo reale" value={formatCurrency(totals.realCost)} />
-        </section>
-
-        <section className="space-y-4">
+        <section className="rounded-3xl border border-slate-200 bg-white shadow-sm">
           {filteredCampaigns.length === 0 ? (
-            <div className="rounded-3xl border border-slate-200 bg-white px-5 py-8 text-sm text-slate-600 shadow-sm">
+            <div className="px-5 py-8 text-sm text-slate-600">
               Nessuna campagna trovata con i filtri selezionati.
             </div>
           ) : (
-            filteredCampaigns.map((campaign) => (
-              <article
-                key={campaign.key}
-                className="rounded-3xl border border-slate-200 bg-white px-5 py-5 shadow-sm md:px-6"
-              >
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-orange-700">
-                        {campaign.batchId ? "Batch" : "Invio"}
-                      </span>
-                      <span className="text-sm font-semibold text-slate-500">
-                        {campaign.batchId ?? campaign.key.replace(/^single:/, "#")}
-                      </span>
-                    </div>
+            <div className="overflow-x-auto">
+              <table className="min-w-[1180px] w-full text-sm">
+                <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                  <tr className="border-b border-slate-200">
+                    <th className="px-4 py-3 text-left font-semibold">Data</th>
+                    <th className="px-4 py-3 text-left font-semibold">Negozio</th>
+                    <th className="px-4 py-3 text-left font-semibold">Template</th>
+                    <th className="px-4 py-3 text-left font-semibold">Tipo invio</th>
+                    <th className="px-4 py-3 text-right font-semibold">Clienti selezionati</th>
+                    <th className="px-4 py-3 text-right font-semibold">Inviati</th>
+                    <th className="px-4 py-3 text-right font-semibold">Falliti</th>
+                    <th className="px-4 py-3 text-right font-semibold">Saltati</th>
+                    <th className="px-4 py-3 text-right font-semibold">Risposte</th>
+                    <th className="px-4 py-3 text-right font-semibold">Costo</th>
+                    <th className="px-4 py-3 text-left font-semibold">Azioni</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredCampaigns.map((campaign) => {
+                    const isOpen = activeCampaignKey === campaign.key;
 
-                    <h2 className="mt-3 text-2xl font-black tracking-tight text-slate-950">
-                      {campaign.templateName}
-                    </h2>
-
-                    <div className="mt-2 flex flex-wrap gap-2 text-xs font-semibold text-slate-600">
-                      <span className="rounded-full bg-slate-100 px-3 py-1">
-                        {formatDate(campaign.sentAt)}
-                      </span>
-                      <span className="rounded-full bg-slate-100 px-3 py-1">
-                        {campaign.sendType}
-                      </span>
-                      {campaign.negozioLabels.map((label) => (
-                        <span key={label} className="rounded-full bg-slate-100 px-3 py-1">
-                          {label}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="grid min-w-full gap-3 sm:grid-cols-2 lg:min-w-[520px] lg:grid-cols-4">
-                    <MiniMetric label="Selezionati" value={String(campaign.selectedCount)} />
-                    <MiniMetric
-                      label="Già inviati/esclusi"
-                      value={String(campaign.alreadyExcludedCount)}
-                    />
-                    <MiniMetric label="Inviati" value={String(campaign.sentCount)} />
-                    <MiniMetric label="Falliti" value={String(campaign.failedCount)} />
-                    <MiniMetric label="Saltati" value={String(campaign.skippedCount)} />
-                    <MiniMetric
-                      label="Costo stimato"
-                      value={formatCurrency(campaign.estimatedCost)}
-                    />
-                    <MiniMetric label="Costo reale" value={formatCurrency(campaign.realCost)} />
-                    <MiniMetric
-                      label="Costo per risposta"
-                      value={
-                        campaign.costPerResponse === null
-                          ? "-"
-                          : formatCurrency(campaign.costPerResponse)
-                      }
-                    />
-                  </div>
-                </div>
-
-                <div className="mt-5 grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
-                  <section className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                    <div className="mb-2 text-sm font-semibold text-slate-900">
-                      Messaggio inviato
-                    </div>
-                    <div className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
-                      {campaign.message ? truncateText(campaign.message, 700) : "-"}
-                    </div>
-                  </section>
-
-                  <section className="space-y-3">
-                    <InfoRow
-                      label="Clienti da inviare"
-                      value={String(campaign.estimatedSendableCount)}
-                    />
-                    <InfoRow
-                      label="Risposte generate"
-                      value={String(campaign.responseCount)}
-                    />
-                    <InfoRow
-                      label="Allegato"
-                      value={
-                        campaign.attachmentUrl ? (
-                          <a
-                            href={campaign.attachmentUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="font-semibold text-orange-700 underline-offset-2 hover:underline"
-                          >
-                            {campaign.attachmentFileName || "Apri allegato"}
-                          </a>
-                        ) : (
-                          "-"
-                        )
-                      }
-                    />
-                    <InfoRow
-                      label="fbtrace_id"
-                      value={
-                        campaign.fbtraceIds.length > 0
-                          ? campaign.fbtraceIds.slice(0, 4).join(", ")
-                          : "-"
-                      }
-                    />
-                  </section>
-                </div>
-
-                <section className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-4">
-                  <div className="mb-2 text-sm font-semibold text-slate-900">
-                    Errori Meta principali
-                  </div>
-
-                  {campaign.metaErrors.length === 0 ? (
-                    <div className="text-sm text-slate-500">-</div>
-                  ) : (
-                    <div className="space-y-2">
-                      {campaign.metaErrors.slice(0, 4).map((error) => (
-                        <div
-                          key={`${error.code || "no-code"}-${error.label}`}
-                          className="rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm text-rose-900"
+                    return (
+                      <Fragment key={campaign.key}>
+                        <tr
+                          id={getCampaignDomId(campaign.key)}
+                          className="border-b border-slate-100 align-top"
                         >
-                          <div className="font-semibold">
-                            {error.count}x {truncateText(error.label, 220)}
-                          </div>
-                          <div className="mt-1 text-xs text-rose-700">
-                            {error.code ? `code ${error.code}` : "code non indicato"}
-                            {error.fbtraceIds.size > 0
-                              ? ` - fbtrace ${Array.from(error.fbtraceIds).slice(0, 3).join(", ")}`
-                              : ""}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </section>
-              </article>
-            ))
+                          <td className="px-4 py-4 text-slate-700">
+                            {formatDate(campaign.sentAt)}
+                          </td>
+                          <td className="px-4 py-4 text-slate-700">
+                            {campaign.negozioLabels.join(", ") || "-"}
+                          </td>
+                          <td className="px-4 py-4 font-semibold text-slate-950">
+                            {campaign.templateName}
+                          </td>
+                          <td className="px-4 py-4 text-slate-700">{campaign.sendType}</td>
+                          <td className="px-4 py-4 text-right font-semibold text-slate-950">
+                            {campaign.selectedCount}
+                          </td>
+                          <td className="px-4 py-4 text-right text-slate-700">
+                            {campaign.sentCount}
+                          </td>
+                          <td className="px-4 py-4 text-right text-slate-700">
+                            {campaign.failedCount}
+                          </td>
+                          <td className="px-4 py-4 text-right text-slate-700">
+                            {campaign.skippedCount}
+                          </td>
+                          <td className="px-4 py-4 text-right text-slate-700">
+                            {campaign.responseCount}
+                          </td>
+                          <td className="px-4 py-4 text-right">
+                            <div className="font-semibold text-slate-950">
+                              {formatCurrency(campaign.realCost)}
+                            </div>
+                            <div className="text-[11px] text-slate-500">provvisorio</div>
+                          </td>
+                          <td className="px-4 py-4">
+                            <div className="flex flex-wrap gap-2">
+                              {(
+                                [
+                                  ["dettaglio", "Dettaglio"],
+                                  ["clienti", "Clienti"],
+                                  ["errori", "Errori"],
+                                  ["risposte", "Risposte"],
+                                  ["costi", "Costi"],
+                                ] as const
+                              ).map(([section, label]) => (
+                                <ActionLink
+                                  key={section}
+                                  href={buildCampaignSectionHref(
+                                    resolvedParams,
+                                    campaign.key,
+                                    section,
+                                  )}
+                                  active={isOpen && activeSection === section}
+                                >
+                                  {label}
+                                </ActionLink>
+                              ))}
+                            </div>
+                          </td>
+                        </tr>
+
+                        {isOpen ? (
+                          <tr className="border-b border-slate-200 bg-slate-50/70">
+                            <td colSpan={11} className="px-4 py-4">
+                              <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                                <div className="text-sm font-semibold text-slate-900">
+                                  {campaign.batchId ? `Batch ${campaign.batchId}` : "Invio singolo"}
+                                </div>
+                                <Link
+                                  href={buildCampaignCloseHref(resolvedParams)}
+                                  className="w-fit rounded-2xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-600 transition hover:border-orange-300 hover:text-orange-700"
+                                >
+                                  Chiudi
+                                </Link>
+                              </div>
+
+                              <div className="grid gap-3 lg:grid-cols-2">
+                                <DetailsSection title="Dettaglio" open={activeSection === "dettaglio"}>
+                                  <div className="grid gap-3 sm:grid-cols-2">
+                                    <InfoRow label="Clienti da inviare" value={String(campaign.estimatedSendableCount)} />
+                                    <InfoRow label="Già inviati/esclusi" value={String(campaign.alreadyExcludedCount)} />
+                                    <InfoRow
+                                      label="Allegato"
+                                      value={
+                                        campaign.attachmentUrl ? (
+                                          <a
+                                            href={campaign.attachmentUrl}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="font-semibold text-orange-700 underline-offset-2 hover:underline"
+                                          >
+                                            {campaign.attachmentFileName || "Apri allegato"}
+                                          </a>
+                                        ) : (
+                                          "-"
+                                        )
+                                      }
+                                    />
+                                    <InfoRow
+                                      label="fbtrace_id"
+                                      value={
+                                        campaign.fbtraceIds.length > 0
+                                          ? campaign.fbtraceIds.slice(0, 4).join(", ")
+                                          : "-"
+                                      }
+                                    />
+                                  </div>
+
+                                  <div className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+                                    <div className="mb-1 font-semibold text-slate-900">Messaggio inviato</div>
+                                    <div className="whitespace-pre-wrap">
+                                      {campaign.message ? truncateText(campaign.message, 700) : "-"}
+                                    </div>
+                                  </div>
+                                </DetailsSection>
+
+                                <DetailsSection title="Clienti" open={activeSection === "clienti"}>
+                                  {campaign.clientNames.length === 0 ? (
+                                    <div className="text-sm text-slate-500">-</div>
+                                  ) : (
+                                    <div className="flex flex-wrap gap-2">
+                                      {campaign.clientNames.slice(0, 60).map((name) => (
+                                        <span
+                                          key={name}
+                                          className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700"
+                                        >
+                                          {name}
+                                        </span>
+                                      ))}
+                                      {campaign.clientNames.length > 60 ? (
+                                        <span className="rounded-full bg-slate-200 px-3 py-1 text-xs font-semibold text-slate-700">
+                                          +{campaign.clientNames.length - 60}
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                  )}
+                                </DetailsSection>
+
+                                <DetailsSection title="Errori" open={activeSection === "errori"}>
+                                  {campaign.metaErrors.length === 0 ? (
+                                    <div className="text-sm text-slate-500">Nessun errore Meta registrato.</div>
+                                  ) : (
+                                    <div className="space-y-2">
+                                      {campaign.metaErrors.slice(0, 6).map((error) => (
+                                        <div
+                                          key={`${error.code || "no-code"}-${error.label}`}
+                                          className="rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm text-rose-900"
+                                        >
+                                          <div className="font-semibold">
+                                            {error.count}x {truncateText(error.label, 220)}
+                                          </div>
+                                          <div className="mt-1 text-xs text-rose-700">
+                                            {error.code ? `code ${error.code}` : "code non indicato"}
+                                            {error.fbtraceIds.size > 0
+                                              ? ` - fbtrace ${Array.from(error.fbtraceIds).slice(0, 3).join(", ")}`
+                                              : ""}
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </DetailsSection>
+
+                                <DetailsSection title="Risposte" open={activeSection === "risposte"}>
+                                  <div className="grid gap-3 sm:grid-cols-2">
+                                    <InfoRow label="Risposte generate" value={String(campaign.responseCount)} />
+                                    <InfoRow
+                                      label="Costo per risposta"
+                                      value={
+                                        campaign.costPerResponse === null
+                                          ? "-"
+                                          : formatCurrency(campaign.costPerResponse)
+                                      }
+                                    />
+                                  </div>
+                                </DetailsSection>
+
+                                <DetailsSection title="Costi" open={activeSection === "costi"}>
+                                  <div className="grid gap-3 sm:grid-cols-2">
+                                    <InfoRow
+                                      label="Costo stimato"
+                                      value={`${campaign.estimatedSendableCount} x ${WHATSAPP_MARKETING_MESSAGE_COST_EUR.toLocaleString("it-IT", {
+                                        minimumFractionDigits: 4,
+                                        maximumFractionDigits: 4,
+                                      })} EUR = ${formatCurrency(campaign.estimatedCost)}`}
+                                    />
+                                    <InfoRow
+                                      label="Costo reale provvisorio"
+                                      value={`${campaign.sentCount} x ${WHATSAPP_MARKETING_MESSAGE_COST_EUR.toLocaleString("it-IT", {
+                                        minimumFractionDigits: 4,
+                                        maximumFractionDigits: 4,
+                                      })} EUR = ${formatCurrency(campaign.realCost)}`}
+                                    />
+                                    <InfoRow
+                                      label="Costo fatturabile stimato"
+                                      value={
+                                        campaign.billableEstimatedCost === null
+                                          ? "-"
+                                          : `${campaign.deliveredCount ?? 0} delivered + ${campaign.readCount ?? 0} read = ${formatCurrency(campaign.billableEstimatedCost)}`
+                                      }
+                                    />
+                                  </div>
+
+                                  {!campaign.hasDeliveryStatus ? (
+                                    <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                                      Dato stimato: Meta fattura i messaggi consegnati, non solo inviati.
+                                    </div>
+                                  ) : null}
+                                </DetailsSection>
+                              </div>
+                            </td>
+                          </tr>
+                        ) : null}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
         </section>
       </div>
@@ -1175,21 +1402,120 @@ export default async function PhonesiaCampagneWhatsappPage({ searchParams }: Pro
   );
 }
 
-function SummaryCard({ label, value }: { label: string; value: string }) {
+function SummaryCard({
+  label,
+  value,
+  note,
+}: {
+  label: string;
+  value: string;
+  note?: string;
+}) {
   return (
     <div className="rounded-3xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
-      <div className="text-sm text-slate-500">{label}</div>
+      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+        {label}
+      </div>
       <div className="mt-2 text-2xl font-black text-slate-950">{value}</div>
+      {note ? <div className="mt-2 text-xs leading-relaxed text-slate-500">{note}</div> : null}
     </div>
   );
 }
 
-function MiniMetric({ label, value }: { label: string; value: string }) {
+function FilterDate({
+  label,
+  name,
+  defaultValue,
+}: {
+  label: string;
+  name: string;
+  defaultValue: string;
+}) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
-      <div className="text-xs text-slate-500">{label}</div>
-      <div className="mt-1 text-lg font-black text-slate-950">{value}</div>
-    </div>
+    <label className="block">
+      <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+        {label}
+      </span>
+      <input
+        type="date"
+        name={name}
+        defaultValue={defaultValue}
+        className="mt-2 w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-orange-500"
+      />
+    </label>
+  );
+}
+
+function FilterSelect({
+  label,
+  name,
+  defaultValue,
+  children,
+}: {
+  label: string;
+  name: string;
+  defaultValue: string;
+  children: ReactNode;
+}) {
+  return (
+    <label className="block">
+      <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+        {label}
+      </span>
+      <select
+        name={name}
+        defaultValue={defaultValue}
+        className="mt-2 w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-orange-500"
+      >
+        {children}
+      </select>
+    </label>
+  );
+}
+
+function ActionLink({
+  href,
+  active,
+  children,
+}: {
+  href: string;
+  active: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <Link
+      href={href}
+      className={[
+        "rounded-2xl border px-3 py-1.5 text-xs font-semibold transition",
+        active
+          ? "border-orange-300 bg-orange-50 text-orange-700"
+          : "border-slate-200 bg-slate-50 text-slate-600 hover:border-orange-300 hover:text-orange-700",
+      ].join(" ")}
+    >
+      {children}
+    </Link>
+  );
+}
+
+function DetailsSection({
+  title,
+  open,
+  children,
+}: {
+  title: string;
+  open: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <details
+      open={open}
+      className="rounded-2xl border border-slate-200 bg-white px-4 py-3"
+    >
+      <summary className="cursor-pointer text-sm font-semibold text-slate-900">
+        {title}
+      </summary>
+      <div className="mt-3">{children}</div>
+    </details>
   );
 }
 
