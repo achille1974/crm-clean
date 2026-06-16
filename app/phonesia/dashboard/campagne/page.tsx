@@ -8,6 +8,8 @@ const WHATSAPP_MARKETING_MESSAGE_COST_EUR = 0.0522;
 const MAX_OPPORTUNITY_ROWS = 1500;
 const MAX_BATCH_LOG_ROWS = 4000;
 const MAX_RESPONSE_ROWS = 4000;
+const BILLABLE_COST_NOTE =
+  "Se pricing_billable è disponibile, il costo fatturabile stima solo i messaggi billable; altrimenti usa delivered/read come stima.";
 
 type CampaignSection = "dettaglio" | "clienti" | "errori" | "risposte" | "costi";
 
@@ -110,6 +112,7 @@ type CampaignItem = {
   deliveredCount: number | null;
   readCount: number | null;
   hasDeliveryStatus: boolean;
+  billableDeliveredCount: number | null;
   billableEstimatedCost: number | null;
   responseCount: number;
   costPerResponse: number | null;
@@ -484,6 +487,15 @@ function getWhatsappMessageIds(row: OpportunityRow | ConversationRow): string[] 
     if (value) ids.add(value);
   }
 
+  if (Array.isArray(metadata.meta_messages)) {
+    for (const message of metadata.meta_messages) {
+      if (!isRecord(message)) continue;
+
+      const value = readString(message.id);
+      if (value) ids.add(value);
+    }
+  }
+
   for (const attempt of getAttemptRecords(metadata)) {
     for (const key of directKeys) {
       const value = readString(attempt[key]);
@@ -492,6 +504,15 @@ function getWhatsappMessageIds(row: OpportunityRow | ConversationRow): string[] 
   }
 
   return Array.from(ids);
+}
+
+function isDeliveredOrRead(status: string | null): boolean {
+  return status === "delivered" || status === "read";
+}
+
+function isBillableDeliveredOrRead(row: WhatsappMessageStatusRow): boolean {
+  if (!isDeliveredOrRead(row.status)) return false;
+  return row.pricing_billable !== false;
 }
 
 function getStatusRank(status: string | null): number {
@@ -513,28 +534,32 @@ function getCampaignStatusSummaryFromWebhookRows(
   const messageIds = new Set(rows.flatMap(getWhatsappMessageIds));
   const campaignStartTime = getCampaignStartTime(campaign);
   const campaignEndTime = campaignStartTime + 7 * 24 * 60 * 60 * 1000;
-  const phones = new Set<string>();
+  let matchingStatuses: WhatsappMessageStatusRow[] = [];
 
-  for (const row of rows) {
-    if (!row.cliente_id) continue;
-    const phone = normalizePhoneDigits(clientiById.get(row.cliente_id)?.telefono);
-    if (phone) phones.add(phone);
+  if (messageIds.size > 0) {
+    matchingStatuses = whatsappStatuses.filter((row) => {
+      const messageId = readString(row.whatsapp_message_id);
+      return Boolean(messageId && messageIds.has(messageId));
+    });
+  } else {
+    const phones = new Set<string>();
+
+    for (const row of rows) {
+      if (!row.cliente_id) continue;
+      const phone = normalizePhoneDigits(clientiById.get(row.cliente_id)?.telefono);
+      if (phone) phones.add(phone);
+    }
+
+    matchingStatuses = whatsappStatuses.filter((row) => {
+      const phone = normalizePhoneDigits(row.recipient_phone);
+      if (!phone || !phones.has(phone)) return false;
+
+      const statusTime = new Date(row.timestamp_meta || row.created_at || "").getTime();
+      if (!Number.isFinite(statusTime) || campaignStartTime <= 0) return false;
+
+      return statusTime >= campaignStartTime && statusTime <= campaignEndTime;
+    });
   }
-
-  const matchingStatuses = whatsappStatuses.filter((row) => {
-    const messageId = readString(row.whatsapp_message_id);
-    if (messageId && messageIds.has(messageId)) return true;
-
-    if (messageIds.size > 0) return false;
-
-    const phone = normalizePhoneDigits(row.recipient_phone);
-    if (!phone || !phones.has(phone)) return false;
-
-    const statusTime = new Date(row.timestamp_meta || row.created_at || "").getTime();
-    if (!Number.isFinite(statusTime) || campaignStartTime <= 0) return false;
-
-    return statusTime >= campaignStartTime && statusTime <= campaignEndTime;
-  });
 
   if (matchingStatuses.length === 0) return null;
 
@@ -555,13 +580,14 @@ function getCampaignStatusSummaryFromWebhookRows(
   const deliveredCount = latest.filter((row) => row.status === "delivered").length;
   const readCount = latest.filter((row) => row.status === "read").length;
   const failedCount = latest.filter((row) => row.status === "failed").length;
+  const billableDeliveredCount = latest.filter(isBillableDeliveredOrRead).length;
 
   return {
     hasDeliveryStatus: true,
     deliveredCount,
     readCount,
     failedCount,
-    billableDeliveredCount: deliveredCount + readCount,
+    billableDeliveredCount,
   };
 }
 
@@ -843,6 +869,7 @@ function buildCampaigns(
         deliveredCount: deliveryStatusSummary.deliveredCount,
         readCount: deliveryStatusSummary.readCount,
         hasDeliveryStatus: deliveryStatusSummary.hasDeliveryStatus,
+        billableDeliveredCount: deliveryStatusSummary.billableDeliveredCount,
         billableEstimatedCost:
           deliveryStatusSummary.billableDeliveredCount === null
             ? null
@@ -1228,11 +1255,7 @@ export default async function PhonesiaCampagneWhatsappPage({ searchParams }: Pro
                 ? "-"
                 : formatCurrency(totals.billableEstimatedCost)
             }
-            note={
-              totals.billableEstimatedCost === null
-                ? "Dato stimato: Meta fattura i messaggi consegnati, non solo inviati."
-                : "Basato sugli status delivered/read disponibili."
-            }
+            note={BILLABLE_COST_NOTE}
           />
           <SummaryCard label="Risposte generate" value={String(totals.responses)} />
           <SummaryCard
@@ -1549,7 +1572,7 @@ export default async function PhonesiaCampagneWhatsappPage({ searchParams }: Pro
                                       value={
                                         campaign.billableEstimatedCost === null
                                           ? "-"
-                                          : `${campaign.deliveredCount ?? 0} delivered + ${campaign.readCount ?? 0} read = ${formatCurrency(campaign.billableEstimatedCost)}`
+                                          : `${campaign.billableDeliveredCount ?? 0} delivered/read conteggiati = ${formatCurrency(campaign.billableEstimatedCost)}`
                                       }
                                     />
                                     <InfoRow
@@ -1564,9 +1587,13 @@ export default async function PhonesiaCampagneWhatsappPage({ searchParams }: Pro
 
                                   {!campaign.hasDeliveryStatus ? (
                                     <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                                      Dato stimato: Meta fattura i messaggi consegnati, non solo inviati.
+                                      {BILLABLE_COST_NOTE}
                                     </div>
-                                  ) : null}
+                                  ) : (
+                                    <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                                      {BILLABLE_COST_NOTE}
+                                    </div>
+                                  )}
                                 </DetailsSection>
                               </div>
                             </td>

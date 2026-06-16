@@ -119,6 +119,8 @@ type MetaTemplateSendAttempt = {
   template_name: string;
   status: "success" | "error";
   http_status: number | null;
+  whatsapp_message_id?: string | null;
+  meta_message_id?: string | null;
   error_message: string | null;
   error_type: string | null;
   error_code: number | null;
@@ -132,6 +134,8 @@ type MetaTemplateSendAttempt = {
 
 type MetaTemplateSendResult = {
   response: unknown;
+  whatsappMessageId: string | null;
+  metaMessages: Record<string, unknown>[];
   attempts: MetaTemplateSendAttempt[];
 };
 
@@ -434,6 +438,26 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function getMetaResponseMessages(value: unknown): Record<string, unknown>[] {
+  const response = asRecord(value);
+  const messages = response?.messages;
+
+  if (!Array.isArray(messages)) return [];
+
+  return messages
+    .map((message) => asRecord(message))
+    .filter((message): message is Record<string, unknown> => Boolean(message));
+}
+
+function getMetaMessageId(messages: Record<string, unknown>[]): string | null {
+  for (const message of messages) {
+    const id = typeof message.id === "string" ? message.id.trim() : "";
+    if (id) return id;
+  }
+
+  return null;
 }
 
 function sanitizeUrl(value: unknown): string | null {
@@ -925,11 +949,17 @@ async function sendMetaTemplateWithRetry(params: {
     );
 
     if (response.ok) {
+      const responseBody = await response.json().catch(() => null);
+      const metaMessages = getMetaResponseMessages(responseBody);
+      const whatsappMessageId = getMetaMessageId(metaMessages);
+
       attempts.push({
         attempt,
         template_name: params.templateName,
         status: "success",
         http_status: response.status,
+        whatsapp_message_id: whatsappMessageId,
+        meta_message_id: whatsappMessageId,
         error_message: null,
         error_type: null,
         error_code: null,
@@ -942,7 +972,9 @@ async function sendMetaTemplateWithRetry(params: {
       });
 
       return {
-        response: await response.json().catch(() => null),
+        response: responseBody,
+        whatsappMessageId,
+        metaMessages,
         attempts,
       };
     }
@@ -1066,6 +1098,8 @@ async function logOpportunitySend(
     customMessage?: string | null;
     selectedClientCount?: number;
     metaSendAttempts?: MetaTemplateSendAttempt[];
+    whatsappMessageId: string | null;
+    metaMessages: Record<string, unknown>[];
     attachmentPublicUrl: string | null;
     attachmentFileName: string | null;
   },
@@ -1097,6 +1131,9 @@ async function logOpportunitySend(
         selected_client_count: params.selectedClientCount ?? 1,
         numero_clienti_selezionati: params.selectedClientCount ?? 1,
         meta_send_attempts: params.metaSendAttempts ?? [],
+        whatsapp_message_id: params.whatsappMessageId,
+        meta_message_id: params.whatsappMessageId,
+        meta_messages: params.metaMessages,
         meta_error_code:
           params.metaSendAttempts?.find((attempt) => attempt.status === "error")
             ?.error_code ?? null,
@@ -1126,6 +1163,8 @@ async function saveSentOpportunities(
     sendMode: SendMode;
     templateName: string;
     metaSendAttempts?: MetaTemplateSendAttempt[];
+    whatsappMessageId: string | null;
+    metaMessages: Record<string, unknown>[];
     attachmentPublicUrl: string | null;
     attachmentFileName: string | null;
   },
@@ -1148,6 +1187,9 @@ async function saveSentOpportunities(
       tipo_invio: params.sendMode,
       send_mode: params.sendMode,
       meta_send_attempts: params.metaSendAttempts ?? [],
+      whatsapp_message_id: params.whatsappMessageId,
+      meta_message_id: params.whatsappMessageId,
+      meta_messages: params.metaMessages,
       meta_error_code:
         params.metaSendAttempts?.find((attempt) => attempt.status === "error")
           ?.error_code ?? null,
@@ -1202,6 +1244,8 @@ async function saveCustomMessageOpportunity(
     attachmentPublicUrl: string | null;
     attachmentFileName: string | null;
     metaSendAttempts: MetaTemplateSendAttempt[];
+    whatsappMessageId: string | null;
+    metaMessages: Record<string, unknown>[];
   },
 ) {
   const codePrefix =
@@ -1234,6 +1278,9 @@ async function saveCustomMessageOpportunity(
       selected_client_count: params.selectedClientCount,
       numero_clienti_selezionati: params.selectedClientCount,
       meta_send_attempts: params.metaSendAttempts,
+      whatsapp_message_id: params.whatsappMessageId,
+      meta_message_id: params.whatsappMessageId,
+      meta_messages: params.metaMessages,
       meta_error_code:
         params.metaSendAttempts.find((attempt) => attempt.status === "error")
           ?.error_code ?? null,
@@ -1811,6 +1858,8 @@ export async function POST(request: NextRequest) {
         attachmentPublicUrl,
         attachmentFileName,
         metaSendAttempts: metaSendResult.attempts,
+        whatsappMessageId: metaSendResult.whatsappMessageId,
+        metaMessages: metaSendResult.metaMessages,
       });
 
       await logOpportunitySend(supabase, {
@@ -1823,6 +1872,8 @@ export async function POST(request: NextRequest) {
         customMessage,
         selectedClientCount: 1,
         metaSendAttempts: metaSendResult.attempts,
+        whatsappMessageId: metaSendResult.whatsappMessageId,
+        metaMessages: metaSendResult.metaMessages,
         attachmentPublicUrl,
         attachmentFileName,
       });
@@ -1942,6 +1993,8 @@ export async function POST(request: NextRequest) {
       sendMode,
       templateName,
       metaSendAttempts: metaSendResult.attempts,
+      whatsappMessageId: metaSendResult.whatsappMessageId,
+      metaMessages: metaSendResult.metaMessages,
       attachmentPublicUrl,
       attachmentFileName,
     });
@@ -1954,6 +2007,8 @@ export async function POST(request: NextRequest) {
       templateName,
       sendMode,
       metaSendAttempts: metaSendResult.attempts,
+      whatsappMessageId: metaSendResult.whatsappMessageId,
+      metaMessages: metaSendResult.metaMessages,
       attachmentPublicUrl,
       attachmentFileName,
     });
