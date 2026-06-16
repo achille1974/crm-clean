@@ -55,7 +55,7 @@ const CONTRACT_LAUNCHD_LABELS = [
   "com.phonesia.importer-healthcheck.v1",
 ];
 const CONTRACT_LOG_CRITICAL_RE =
-  /\b(traceback|exception)\b|permission denied|no space left|errno 28|supabase|quota|auth/i;
+  /\b(traceback|exception)\b|permission denied|no space left|errno 28|supabase|quota|authentication (?:failed|error)|auth (?:failed|error)|invalid auth|unauthorized|forbidden/i;
 const CONTRACT_LOG_WARNING_RE =
   /llm extraction failed|read timed out|\b(failed|error|errore)\b/i;
 
@@ -747,6 +747,7 @@ function contractLogLineIsBenign(line) {
 
   if (/fine sync .*errori:\s*0\b/.test(lowered)) return true;
   if (/pdf trovati nella sorgente/.test(lowered)) return true;
+  if (/\bssh_auth_sock\b/.test(lowered)) return true;
 
   return false;
 }
@@ -796,7 +797,13 @@ function findContractLogCriticalMatches(text, nowMs, countUndatedLines) {
         "errno 28",
         "supabase",
         "quota",
-        "auth",
+        "authentication failed",
+        "authentication error",
+        "auth failed",
+        "auth error",
+        "invalid auth",
+        "unauthorized",
+        "forbidden",
       ])) {
         criticalKeywords.add(keyword);
       }
