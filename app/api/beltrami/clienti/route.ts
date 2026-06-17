@@ -22,7 +22,6 @@ type BeltramiClienteRow = {
   telefono_normalizzato: string | null;
   email: string | null;
   codice_fiscale: string | null;
-  note: string | null;
 };
 
 function isDuplicateInsertError(error: unknown): boolean {
@@ -50,7 +49,7 @@ async function findExistingCliente(
   data: BeltramiRegistrationData,
 ): Promise<BeltramiClienteRow | null> {
   const selectFields =
-    "id, nome, cognome, telefono, telefono_normalizzato, email, codice_fiscale, note";
+    "id, nome, cognome, telefono, telefono_normalizzato, email, codice_fiscale";
 
   const { data: byPhone, error: phoneError } = await supabase
     .from("beltrami_clienti")
@@ -97,7 +96,6 @@ function buildClienteInsert(data: BeltramiRegistrationData) {
     telefono_normalizzato: data.telefono_normalizzato,
     email: data.email,
     codice_fiscale: data.codice_fiscale,
-    note: data.note,
     privacy_consent: true,
     whatsapp_consent: true,
     privacy_version: BELTRAMI_PRIVACY_VERSION,
@@ -122,7 +120,6 @@ function buildClientePatch(data: BeltramiRegistrationData) {
 
   if (data.email) patch.email = data.email;
   if (data.codice_fiscale) patch.codice_fiscale = data.codice_fiscale;
-  if (data.note) patch.note = data.note;
 
   return patch;
 }

@@ -40,7 +40,6 @@ export default function RegistrazioneForm() {
       telefono: formData.get("telefono"),
       email: formData.get("email"),
       codice_fiscale: formData.get("codice_fiscale"),
-      note: formData.get("note"),
       privacy_consent: privacyConsent,
       whatsapp_consent: whatsappConsent,
     };
@@ -109,9 +108,6 @@ export default function RegistrazioneForm() {
         <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
           Registrazione cliente
         </p>
-        <h1 className="mt-2 text-3xl font-black tracking-tight text-slate-950">
-          Beltrami 1876
-        </h1>
         <p className="mt-3 text-sm leading-relaxed text-slate-600">
           Lascia i tuoi dati per essere ricontattato su WhatsApp per servizi,
           pratiche e scadenze.
@@ -164,21 +160,7 @@ export default function RegistrazioneForm() {
           label="Codice fiscale"
           name="codice_fiscale"
           autoComplete="off"
-          uppercase
           error={state.errors?.codice_fiscale}
-        />
-      </div>
-
-      <div>
-        <label htmlFor="note" className="mb-2 block text-sm font-semibold text-slate-700">
-          Note
-        </label>
-        <textarea
-          id="note"
-          name="note"
-          rows={4}
-          className="w-full rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
-          placeholder="Esigenza, scadenza nota o informazioni utili"
         />
       </div>
 
@@ -244,7 +226,7 @@ function TextField({
   autoComplete,
   placeholder,
   required = false,
-  uppercase = false,
+  uppercase = true,
   error,
 }: {
   label: string;

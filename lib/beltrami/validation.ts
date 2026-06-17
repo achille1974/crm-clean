@@ -5,7 +5,6 @@ export type BeltramiRegistrationData = {
   telefono_normalizzato: string;
   email: string | null;
   codice_fiscale: string | null;
-  note: string | null;
   privacy_consent: true;
   whatsapp_consent: true;
 };
@@ -26,7 +25,6 @@ type RawBeltramiRegistrationInput = {
   telefono?: unknown;
   email?: unknown;
   codice_fiscale?: unknown;
-  note?: unknown;
   privacy_consent?: unknown;
   whatsapp_consent?: unknown;
 };
@@ -41,13 +39,17 @@ export function compactSpaces(value: unknown): string {
     .trim();
 }
 
+export function normalizeUppercaseText(value: unknown): string {
+  return compactSpaces(value).toUpperCase();
+}
+
 export function normalizeEmail(value: unknown): string | null {
-  const email = compactSpaces(value).toLowerCase();
+  const email = normalizeUppercaseText(value);
   return email || null;
 }
 
 export function normalizeCodiceFiscale(value: unknown): string | null {
-  const codiceFiscale = compactSpaces(value).toUpperCase();
+  const codiceFiscale = normalizeUppercaseText(value);
   return codiceFiscale || null;
 }
 
@@ -80,12 +82,11 @@ export function validateBeltramiRegistration(
 ): BeltramiValidationResult {
   const errors: Record<string, string> = {};
 
-  const nome = compactSpaces(input.nome);
-  const cognome = compactSpaces(input.cognome);
+  const nome = normalizeUppercaseText(input.nome);
+  const cognome = normalizeUppercaseText(input.cognome);
   const telefono = normalizeItalianWhatsappPhone(input.telefono);
   const email = normalizeEmail(input.email);
   const codiceFiscale = normalizeCodiceFiscale(input.codice_fiscale);
-  const note = compactSpaces(input.note) || null;
 
   if (!nome) {
     errors.nome = "Il nome e obbligatorio.";
@@ -131,7 +132,6 @@ export function validateBeltramiRegistration(
       telefono_normalizzato: telefono,
       email,
       codice_fiscale: codiceFiscale,
-      note,
       privacy_consent: true,
       whatsapp_consent: true,
     },
