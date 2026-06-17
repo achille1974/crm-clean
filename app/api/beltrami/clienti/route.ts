@@ -14,6 +14,7 @@ import {
   validateBeltramiRegistration,
 } from "@/lib/beltrami/validation";
 import { sendBeltramiWelcomeMessage } from "@/lib/beltrami/whatsapp";
+import { trackBeltramiWelcomeAttempt } from "@/lib/beltrami/whatsapp-history";
 
 type BeltramiClienteRow = {
   id: number;
@@ -213,6 +214,20 @@ export async function POST(request: NextRequest) {
     const welcomeResult = await sendBeltramiWelcomeMessage({
       telefono: validation.data.telefono_normalizzato,
     });
+
+    const trackingResult = await trackBeltramiWelcomeAttempt({
+      supabase,
+      clienteId: result.clienteId,
+      toPhone: validation.data.telefono_normalizzato,
+      welcomeResult,
+    });
+
+    if (!trackingResult.ok) {
+      console.warn("Tracking welcome Beltrami non completo:", {
+        messageLogged: trackingResult.messageLogged,
+        clienteUpdated: trackingResult.clienteUpdated,
+      });
+    }
 
     return NextResponse.json(
       {

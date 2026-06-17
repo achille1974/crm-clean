@@ -16,6 +16,7 @@ export type BeltramiWelcomeSendResult = {
     | "invalid_phone"
     | "meta_rejected"
     | "network_error";
+  error: string | null;
   whatsappMessageId: string | null;
   templateName: string;
 };
@@ -39,6 +40,7 @@ export async function sendBeltramiWelcomeMessage(params: {
     return {
       status: "skipped",
       reason: "missing_configuration",
+      error: "configuration_missing",
       whatsappMessageId: null,
       templateName,
     };
@@ -50,6 +52,7 @@ export async function sendBeltramiWelcomeMessage(params: {
     return {
       status: "skipped",
       reason: "invalid_phone",
+      error: "invalid_phone",
       whatsappMessageId: null,
       templateName,
     };
@@ -82,6 +85,7 @@ export async function sendBeltramiWelcomeMessage(params: {
       return {
         status: "failed",
         reason: "meta_rejected",
+        error: "meta_send_failed",
         whatsappMessageId: null,
         templateName,
       };
@@ -92,6 +96,7 @@ export async function sendBeltramiWelcomeMessage(params: {
     return {
       status: "sent",
       reason: "sent",
+      error: null,
       whatsappMessageId: result?.messages?.[0]?.id ?? null,
       templateName,
     };
@@ -99,6 +104,7 @@ export async function sendBeltramiWelcomeMessage(params: {
     return {
       status: "failed",
       reason: "network_error",
+      error: "network_error",
       whatsappMessageId: null,
       templateName,
     };
