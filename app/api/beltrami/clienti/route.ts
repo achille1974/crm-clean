@@ -13,6 +13,7 @@ import {
   type BeltramiRegistrationData,
   validateBeltramiRegistration,
 } from "@/lib/beltrami/validation";
+import { sendBeltramiWelcomeMessage } from "@/lib/beltrami/whatsapp";
 
 type BeltramiClienteRow = {
   id: number;
@@ -104,48 +105,10 @@ function buildClienteInsert(data: BeltramiRegistrationData) {
   };
 }
 
-function buildClientePatch(data: BeltramiRegistrationData) {
-  const patch: Record<string, string | boolean | null> = {
-    updated_at: new Date().toISOString(),
-    nome: data.nome,
-    cognome: data.cognome,
-    telefono: data.telefono,
-    telefono_normalizzato: data.telefono_normalizzato,
-    privacy_consent: true,
-    whatsapp_consent: true,
-    privacy_version: BELTRAMI_PRIVACY_VERSION,
-    qr_id: BELTRAMI_QR_ID,
-    source: BELTRAMI_SOURCE,
-  };
-
-  if (data.email) patch.email = data.email;
-  if (data.codice_fiscale) patch.codice_fiscale = data.codice_fiscale;
-
-  return patch;
-}
-
-async function upsertCliente(
+async function createCliente(
   supabase: ReturnType<typeof createBeltramiSupabaseAdmin>,
   data: BeltramiRegistrationData,
-) {
-  const existing = await findExistingCliente(supabase, data);
-
-  if (existing) {
-    const { data: updated, error } = await supabase
-      .from("beltrami_clienti")
-      .update(buildClientePatch(data))
-      .eq("id", existing.id)
-      .select("id")
-      .single();
-
-    if (error) throw error;
-
-    return {
-      clienteId: Number(updated.id),
-      created: false,
-    };
-  }
-
+): Promise<{ clienteId: number; duplicate: boolean }> {
   const { data: inserted, error } = await supabase
     .from("beltrami_clienti")
     .insert(buildClienteInsert(data))
@@ -154,23 +117,10 @@ async function upsertCliente(
 
   if (error) {
     if (isDuplicateInsertError(error)) {
-      const duplicate = await findExistingCliente(supabase, data);
-
-      if (duplicate) {
-        const { data: updated, error: updateError } = await supabase
-          .from("beltrami_clienti")
-          .update(buildClientePatch(data))
-          .eq("id", duplicate.id)
-          .select("id")
-          .single();
-
-        if (updateError) throw updateError;
-
-        return {
-          clienteId: Number(updated.id),
-          created: false,
-        };
-      }
+      return {
+        clienteId: 0,
+        duplicate: true,
+      };
     }
 
     throw error;
@@ -178,7 +128,7 @@ async function upsertCliente(
 
   return {
     clienteId: Number(inserted.id),
-    created: true,
+    duplicate: false,
   };
 }
 
@@ -229,20 +179,51 @@ export async function POST(request: NextRequest) {
     }
 
     const supabase = createBeltramiSupabaseAdmin();
-    const result = await upsertCliente(supabase, validation.data);
+    const existing = await findExistingCliente(supabase, validation.data);
+
+    if (existing) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "already_registered",
+          message: "utente già registrato",
+        },
+        { status: 409 },
+      );
+    }
+
+    const result = await createCliente(supabase, validation.data);
+
+    if (result.duplicate) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "already_registered",
+          message: "utente già registrato",
+        },
+        { status: 409 },
+      );
+    }
 
     await registraConsensi(supabase, {
       clienteId: result.clienteId,
       userAgent: request.headers.get("user-agent"),
     });
 
+    const welcomeResult = await sendBeltramiWelcomeMessage({
+      telefono: validation.data.telefono_normalizzato,
+    });
+
     return NextResponse.json(
       {
         ok: true,
         cliente_id: result.clienteId,
-        created: result.created,
+        created: true,
+        welcome_sent: welcomeResult.status === "sent",
+        welcome_status: welcomeResult.status,
+        welcome_template: welcomeResult.templateName,
       },
-      { status: result.created ? 201 : 200 },
+      { status: 201 },
     );
   } catch (error) {
     console.error("Errore registrazione Beltrami:", error);
