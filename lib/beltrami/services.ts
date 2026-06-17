@@ -2,6 +2,7 @@ export const BELTRAMI_QR_ID = "beltrami_1876_qr";
 export const BELTRAMI_SOURCE = "qr_beltrami_1876";
 export const BELTRAMI_PRIVACY_VERSION = "beltrami_privacy_v1";
 
+// Catalogo servizi per backoffice/import futuri: non viene mostrato nel form QR cliente.
 export const BELTRAMI_SERVICES = [
   "Prima Assicurazioni",
   "Conte.it",

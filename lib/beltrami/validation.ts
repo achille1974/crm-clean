@@ -1,5 +1,3 @@
-import { normalizeBeltramiServiceInterest } from "./services";
-
 export type BeltramiRegistrationData = {
   nome: string;
   cognome: string;
@@ -7,7 +5,6 @@ export type BeltramiRegistrationData = {
   telefono_normalizzato: string;
   email: string | null;
   codice_fiscale: string | null;
-  servizio_interesse: string | null;
   note: string | null;
   privacy_consent: true;
   whatsapp_consent: true;
@@ -29,7 +26,6 @@ type RawBeltramiRegistrationInput = {
   telefono?: unknown;
   email?: unknown;
   codice_fiscale?: unknown;
-  servizio_interesse?: unknown;
   note?: unknown;
   privacy_consent?: unknown;
   whatsapp_consent?: unknown;
@@ -89,7 +85,6 @@ export function validateBeltramiRegistration(
   const telefono = normalizeItalianWhatsappPhone(input.telefono);
   const email = normalizeEmail(input.email);
   const codiceFiscale = normalizeCodiceFiscale(input.codice_fiscale);
-  const servizioInteresse = normalizeBeltramiServiceInterest(input.servizio_interesse);
   const note = compactSpaces(input.note) || null;
 
   if (!nome) {
@@ -110,10 +105,6 @@ export function validateBeltramiRegistration(
 
   if (codiceFiscale && !CODICE_FISCALE_RE.test(codiceFiscale)) {
     errors.codice_fiscale = "Inserisci un codice fiscale valido.";
-  }
-
-  if (input.servizio_interesse && compactSpaces(input.servizio_interesse) && !servizioInteresse) {
-    errors.servizio_interesse = "Seleziona un servizio valido.";
   }
 
   if (input.privacy_consent !== true) {
@@ -140,7 +131,6 @@ export function validateBeltramiRegistration(
       telefono_normalizzato: telefono,
       email,
       codice_fiscale: codiceFiscale,
-      servizio_interesse: servizioInteresse,
       note,
       privacy_consent: true,
       whatsapp_consent: true,

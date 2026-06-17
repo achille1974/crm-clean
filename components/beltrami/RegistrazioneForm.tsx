@@ -4,7 +4,6 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent, type ReactNode } from "react";
 
-import { BELTRAMI_SERVICES } from "@/lib/beltrami/services";
 import { validateBeltramiRegistration } from "@/lib/beltrami/validation";
 
 type SubmitState =
@@ -41,7 +40,6 @@ export default function RegistrazioneForm() {
       telefono: formData.get("telefono"),
       email: formData.get("email"),
       codice_fiscale: formData.get("codice_fiscale"),
-      servizio_interesse: formData.get("servizio_interesse"),
       note: formData.get("note"),
       privacy_consent: privacyConsent,
       whatsapp_consent: whatsappConsent,
@@ -172,30 +170,6 @@ export default function RegistrazioneForm() {
       </div>
 
       <div>
-        <label htmlFor="servizio_interesse" className="mb-2 block text-sm font-semibold text-slate-700">
-          Servizio di interesse
-        </label>
-        <select
-          id="servizio_interesse"
-          name="servizio_interesse"
-          className="w-full rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
-          defaultValue=""
-        >
-          <option value="">Seleziona un servizio</option>
-          {BELTRAMI_SERVICES.map((service) => (
-            <option key={service} value={service}>
-              {service}
-            </option>
-          ))}
-        </select>
-        {state.errors?.servizio_interesse ? (
-          <p className="mt-2 text-xs font-semibold text-red-600">
-            {state.errors.servizio_interesse}
-          </p>
-        ) : null}
-      </div>
-
-      <div>
         <label htmlFor="note" className="mb-2 block text-sm font-semibold text-slate-700">
           Note
         </label>
@@ -208,7 +182,7 @@ export default function RegistrazioneForm() {
         />
       </div>
 
-      <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
+      <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
         <ConsentCheckbox
           checked={privacyConsent}
           onChange={setPrivacyConsent}
@@ -227,14 +201,27 @@ export default function RegistrazioneForm() {
           </a>
         </ConsentCheckbox>
 
+      </div>
+
+      <div className="rounded-lg border-2 border-emerald-600 bg-emerald-50 p-4 shadow-sm">
+        <div className="mb-3">
+          <h2 className="text-base font-black text-emerald-950">
+            Comunicazioni WhatsApp
+          </h2>
+          <p className="mt-1 text-sm leading-relaxed text-emerald-900">
+            Beltrami 1876 usera WhatsApp per comunicazioni legate alla
+            registrazione, ai servizi richiesti in negozio e ai promemoria di
+            scadenza.
+          </p>
+        </div>
         <ConsentCheckbox
           checked={whatsappConsent}
           onChange={setWhatsappConsent}
-          title="Autorizzo il contatto WhatsApp"
+          title="Autorizzo le comunicazioni WhatsApp"
           error={state.errors?.whatsapp_consent}
         >
-          Beltrami 1876 potra contattarmi su WhatsApp per comunicazioni legate
-          ai servizi richiesti, alle pratiche e alle relative scadenze.
+          Consenso obbligatorio per ricevere comunicazioni operative su
+          registrazione, servizi richiesti in negozio e promemoria di scadenza.
         </ConsentCheckbox>
       </div>
 

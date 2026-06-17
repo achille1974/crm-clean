@@ -2,6 +2,7 @@
 -- Non applicata automaticamente: eseguire manualmente solo dopo revisione.
 -- Applicare nel progetto Supabase dedicato a Beltrami, attualmente supreme-crm.
 -- Non applicare nel database Supabase usato da Phonesia.
+-- servizio_interesse resta nullable per import/backoffice futuri e non viene valorizzato dal form QR cliente.
 
 create table if not exists public.beltrami_clienti (
   id bigserial primary key,
