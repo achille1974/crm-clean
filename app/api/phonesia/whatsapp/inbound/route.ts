@@ -2,6 +2,10 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import {
+  routeBeltramiInbound,
+  saveBeltramiWhatsappStatusCallbacks,
+} from "@/lib/beltrami/inbound";
 
 const GRAPH_API_VERSION = process.env.WHATSAPP_GRAPH_API_VERSION || "v23.0";
 const WHATSAPP_ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN;
@@ -88,6 +92,10 @@ type MetaWebhookMessage = {
   timestamp?: string;
   type?: string;
   text?: MetaWebhookText;
+  context?: {
+    id?: string;
+    from?: string;
+  };
 };
 
 type MetaWebhookStatusName = "sent" | "delivered" | "read" | "failed";
@@ -707,7 +715,10 @@ function extractInboundMessages(payload: MetaWebhookPayload) {
     waId: string;
     body: string;
     messageId: string | null;
+    contextMessageId: string | null;
+    crmPhone: string | null;
     type: string | null;
+    rawMessage: MetaWebhookMessage;
   }> = [];
 
   for (const entry of payload.entry ?? []) {
@@ -737,7 +748,13 @@ function extractInboundMessages(payload: MetaWebhookPayload) {
           waId,
           body,
           messageId: message.id ?? null,
+          contextMessageId: message.context?.id ?? null,
+          crmPhone:
+            value?.metadata?.display_phone_number ??
+            value?.metadata?.phone_number_id ??
+            null,
           type,
+          rawMessage: message,
         });
       }
     }
@@ -1269,6 +1286,8 @@ export async function POST(request: Request) {
       } catch (statusError) {
         console.error("Errore salvataggio status WhatsApp Meta:", statusError);
       }
+
+      await saveBeltramiWhatsappStatusCallbacks(statusCallbacks);
     }
 
     const inboundMessages = extractInboundMessages(payload);
@@ -1286,10 +1305,31 @@ export async function POST(request: Request) {
         telefono,
         bodyOriginal,
         messageId: inbound.messageId,
+        contextMessageId: inbound.contextMessageId,
         type: inbound.type,
       });
 
       const cliente = await findClienteByWhatsAppNumber(supabase, telefono);
+
+      const beltramiRouting = await routeBeltramiInbound({
+        waId: telefono,
+        body: bodyOriginal,
+        inboundMessageId: inbound.messageId,
+        contextMessageId: inbound.contextMessageId,
+        crmPhone: inbound.crmPhone,
+        rawMessage: inbound.rawMessage,
+        publicBaseUrl: origin,
+        hasPhonesiaMatch: Boolean(cliente),
+      });
+
+      if (beltramiRouting.handled) {
+        console.log("WA BELTRAMI ROUTING:", {
+          telefono,
+          routingStatus: beltramiRouting.routingStatus,
+          reason: beltramiRouting.reason,
+        });
+        continue;
+      }
 
       if (cliente) {
         await logOperazione(supabase, {
