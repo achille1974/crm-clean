@@ -2,6 +2,7 @@ import "server-only";
 
 import { createBeltramiSupabaseAdmin } from "./supabase";
 import { sendBeltramiNotifyMessage, type BeltramiNotifySendResult } from "./whatsapp";
+import { createHandoffRequest } from "@/lib/handoff/create-request";
 
 const LAST_TOUCH_WINDOW_DAYS = 14;
 
@@ -291,28 +292,87 @@ async function saveNotificationOutbound(params: {
   notifyResult: BeltramiNotifySendResult;
   replyUrl: string;
   notificationKey: string | null;
-}) {
-  const { error } = await params.supabase.from("beltrami_whatsapp_messages").insert({
-    cliente_id: params.cliente?.id ?? null,
-    direction: "outbound",
-    message_kind: "notify_beltrami",
-    routing_status: "beltrami",
-    to_phone: params.notifyResult.toPhone,
-    template_name: params.notifyResult.templateName,
-    whatsapp_message_id: params.notifyResult.whatsappMessageId,
-    context_message_id: params.inbound.inboundMessageId,
-    status: params.notifyResult.status,
-    status_reason: params.notifyResult.reason,
-    notification_key: params.notificationKey,
-    metadata: {
-      source: "meta_whatsapp_inbound",
-      reply_url: params.replyUrl,
-      notify_error: params.notifyResult.error,
-    },
-  });
+}): Promise<number | string | null> {
+  const { data, error } = await params.supabase
+    .from("beltrami_whatsapp_messages")
+    .insert({
+      cliente_id: params.cliente?.id ?? null,
+      direction: "outbound",
+      message_kind: "notify_beltrami",
+      routing_status: "beltrami",
+      to_phone: params.notifyResult.toPhone,
+      template_name: params.notifyResult.templateName,
+      whatsapp_message_id: params.notifyResult.whatsappMessageId,
+      context_message_id: params.inbound.inboundMessageId,
+      status: params.notifyResult.status,
+      status_reason: params.notifyResult.reason,
+      notification_key: params.notificationKey,
+      metadata: {
+        source: "meta_whatsapp_inbound",
+        reply_url: params.replyUrl,
+        notify_error: params.notifyResult.error,
+      },
+    })
+    .select("id")
+    .maybeSingle();
 
   if (error && error.code !== "23505") {
     throw error;
+  }
+
+  return (data?.id as number | string | undefined) ?? null;
+}
+
+async function createBeltramiHandoffRequest(params: {
+  supabase: BeltramiSupabaseAdmin;
+  cliente: BeltramiClienteRow | null;
+  inbound: RouteBeltramiInboundParams;
+  notifyResult: BeltramiNotifySendResult;
+  replyUrl: string;
+  notificationKey: string | null;
+  beltramiWhatsappNotifyId: number | string | null;
+}) {
+  if (params.notifyResult.status !== "sent" || !params.notifyResult.toPhone) {
+    return;
+  }
+
+  const clientePhone =
+    params.cliente?.telefono_normalizzato ||
+    normalizePhoneForMeta(params.inbound.waId) ||
+    params.inbound.waId;
+
+  try {
+    const result = await createHandoffRequest({
+      supabase: params.supabase,
+      tableName: "beltrami_handoff_richieste",
+      businessArea: "beltrami",
+      clienteId: params.cliente?.id ?? null,
+      clientePhone,
+      clienteNome: getFullName(params.cliente),
+      destinazioneNome: "Beltrami 1876",
+      destinazionePhone: params.notifyResult.toPhone,
+      inboundMessageId: params.inbound.inboundMessageId,
+      inboundBody: params.inbound.body,
+      notificationWhatsappMessageId: params.notifyResult.whatsappMessageId,
+      replyLink: params.replyUrl,
+      metadata: {
+        source: "meta_whatsapp_inbound",
+        notification_key: params.notificationKey,
+        beltrami_whatsapp_notify_id: params.beltramiWhatsappNotifyId,
+        context_message_id: params.inbound.contextMessageId,
+      },
+    });
+
+    console.log("BELTRAMI HANDOFF REQUEST CREATED:", {
+      handoffId: result.id,
+      clienteId: params.cliente?.id ?? null,
+      dueAt: result.dueAt,
+    });
+  } catch (error) {
+    console.error("Errore creazione handoff Beltrami:", {
+      clienteId: params.cliente?.id ?? null,
+      message: error instanceof Error ? error.message : "errore sconosciuto",
+    });
   }
 }
 
@@ -346,13 +406,22 @@ async function notifyBeltramiIfNeeded(params: {
     replyUrl,
   });
 
-  await saveNotificationOutbound({
+  const beltramiWhatsappNotifyId = await saveNotificationOutbound({
     supabase: params.supabase,
     cliente: params.cliente,
     inbound: params.inbound,
     notifyResult,
     replyUrl,
     notificationKey,
+  });
+  await createBeltramiHandoffRequest({
+    supabase: params.supabase,
+    cliente: params.cliente,
+    inbound: params.inbound,
+    notifyResult,
+    replyUrl,
+    notificationKey,
+    beltramiWhatsappNotifyId,
   });
 }
 

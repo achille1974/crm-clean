@@ -6,6 +6,7 @@ import {
   routeBeltramiInbound,
   saveBeltramiWhatsappStatusCallbacks,
 } from "@/lib/beltrami/inbound";
+import { createHandoffRequest } from "@/lib/handoff/create-request";
 
 const GRAPH_API_VERSION = process.env.WHATSAPP_GRAPH_API_VERSION || "v23.0";
 const WHATSAPP_ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN;
@@ -156,6 +157,12 @@ type MetaWebhookEntry = {
 type MetaWebhookPayload = {
   object?: string;
   entry?: MetaWebhookEntry[];
+};
+
+type MetaMessageResponse = {
+  messages?: Array<{
+    id?: string;
+  }>;
 };
 
 type HandoffStatus =
@@ -555,7 +562,7 @@ async function sendStoreHandoffTemplate(params: {
   tipoRichiesta: string;
   replyWhatsappUrl: string;
   linkSchedaCliente: string;
-}) {
+}): Promise<MetaMessageResponse> {
   if (!WHATSAPP_ACCESS_TOKEN) {
     throw new Error("Missing WHATSAPP_ACCESS_TOKEN");
   }
@@ -678,7 +685,7 @@ async function sendStoreHandoffTemplate(params: {
     );
   }
 
-  return response.json();
+  return (await response.json().catch(() => ({}))) as MetaMessageResponse;
 }
 
 function buildWelcomeMessage(clienteId: number | string) {
@@ -925,8 +932,8 @@ async function updateLatestConversationHandoff(
     storeNotificationStatus?: HandoffStatus | null;
     storeNotificationError?: string | null;
   },
-) {
-  if (!params.clienteId) return;
+): Promise<number | string | null> {
+  if (!params.clienteId) return null;
 
   try {
     const { data, error } = await supabase
@@ -945,7 +952,7 @@ async function updateLatestConversationHandoff(
     const row = (data?.[0] as ConversationRow | undefined) ?? null;
 
     if (!row) {
-      return;
+      return null;
     }
 
     const metadata = {
@@ -979,8 +986,11 @@ async function updateLatestConversationHandoff(
     if (updateError) {
       throw updateError;
     }
+
+    return row.id;
   } catch (error) {
     console.error("Errore update metadata handoff conversazione:", error);
+    return null;
   }
 }
 
@@ -1022,10 +1032,68 @@ async function hasRecentStoreHandoff(params: {
   });
 }
 
+async function createPhonesiaHandoffRequest(params: {
+  supabase: ReturnType<typeof getSupabaseAdmin>;
+  clienteId: number;
+  clienteNome: string;
+  clientePhone: string;
+  negozioId: number | null;
+  storeLabel: string;
+  storePhone: string;
+  inboundMessageId: string | null;
+  inboundBody: string;
+  conversationId: number | string | null;
+  notificationWhatsappMessageId: string | null;
+  replyLink: string;
+  templateName: string;
+  tipoRichiesta: string;
+  agentResponse: AgentResponse | null;
+}) {
+  try {
+    const result = await createHandoffRequest({
+      supabase: params.supabase,
+      tableName: "phonesia_handoff_richieste",
+      businessArea: "phonesia",
+      clienteId: params.clienteId,
+      clientePhone: params.clientePhone,
+      clienteNome: params.clienteNome,
+      negozioId: params.negozioId,
+      destinazioneNome: params.storeLabel,
+      destinazionePhone: params.storePhone,
+      inboundMessageId: params.inboundMessageId,
+      inboundBody: params.inboundBody,
+      conversationId: params.conversationId,
+      notificationWhatsappMessageId: params.notificationWhatsappMessageId,
+      replyLink: params.replyLink,
+      metadata: {
+        source: "whatsapp_inbound",
+        template_name: params.templateName,
+        tipo_richiesta: params.tipoRichiesta,
+        intent: params.agentResponse?.intent ?? null,
+        detected_intent: params.agentResponse?.detected_intent ?? null,
+      },
+    });
+
+    console.log("PHONESIA HANDOFF REQUEST CREATED:", {
+      handoffId: result.id,
+      clienteId: params.clienteId,
+      storeLabel: params.storeLabel,
+      dueAt: result.dueAt,
+    });
+  } catch (error) {
+    console.error("Errore creazione handoff Phonesia:", {
+      clienteId: params.clienteId,
+      storeLabel: params.storeLabel,
+      message: error instanceof Error ? error.message : "errore sconosciuto",
+    });
+  }
+}
+
 async function notifyStoreIfNeeded(params: {
   supabase: ReturnType<typeof getSupabaseAdmin>;
   cliente: ClienteRow | null;
   telefono: string;
+  inboundMessageId: string | null;
   bodyOriginal: string;
   reply: string;
   agentResponse: AgentResponse | null;
@@ -1121,6 +1189,8 @@ async function notifyStoreIfNeeded(params: {
       })
     : null;
   const linkSchedaCliente = `${BASE_URL}/phonesia/dashboard/clienti/${clienteId}`;
+  const richiestaCliente = buildStoreHandoffRequestText(params.bodyOriginal, agentResponse);
+  const tipoRichiesta = buildStoreHandoffRequestType(agentResponse);
 
   if (hasDuplicateHandoff) {
     await updateLatestConversationHandoff(params.supabase, {
@@ -1167,16 +1237,17 @@ async function notifyStoreIfNeeded(params: {
   try {
     let sentTemplate = WHATSAPP_STORE_HANDOFF_TEMPLATE_NAME;
     let storeNotificationError: string | null = null;
+    let sentResponse: MetaMessageResponse | null = null;
 
     try {
-      await sendStoreHandoffTemplate({
+      sentResponse = await sendStoreHandoffTemplate({
         to: storePhone,
         templateName: WHATSAPP_STORE_HANDOFF_TEMPLATE_NAME,
         negozioNome: store.label,
         clienteNome,
         telefonoCliente,
-        richiestaCliente: buildStoreHandoffRequestText(params.bodyOriginal, agentResponse),
-        tipoRichiesta: buildStoreHandoffRequestType(agentResponse),
+        richiestaCliente,
+        tipoRichiesta,
         replyWhatsappUrl: replyShortUrl,
         linkSchedaCliente,
       });
@@ -1186,14 +1257,14 @@ async function notifyStoreIfNeeded(params: {
 
       console.error("Errore invio template handoff WhatsApp negozio primario:", primaryError);
 
-      await sendStoreHandoffTemplate({
+      sentResponse = await sendStoreHandoffTemplate({
         to: storePhone,
         templateName: WHATSAPP_STORE_HANDOFF_FALLBACK_TEMPLATE_NAME,
         negozioNome: store.label,
         clienteNome,
         telefonoCliente,
-        richiestaCliente: buildStoreHandoffRequestText(params.bodyOriginal, agentResponse),
-        tipoRichiesta: buildStoreHandoffRequestType(agentResponse),
+        richiestaCliente,
+        tipoRichiesta,
         replyWhatsappUrl: replyShortUrl,
         linkSchedaCliente,
       });
@@ -1201,7 +1272,8 @@ async function notifyStoreIfNeeded(params: {
       sentTemplate = WHATSAPP_STORE_HANDOFF_FALLBACK_TEMPLATE_NAME;
     }
 
-    await updateLatestConversationHandoff(params.supabase, {
+    const notificationWhatsappMessageId = sentResponse?.messages?.[0]?.id ?? null;
+    const conversationId = await updateLatestConversationHandoff(params.supabase, {
       clienteId,
       customerMessage: params.bodyOriginal,
       handoffRequired: true,
@@ -1218,11 +1290,30 @@ async function notifyStoreIfNeeded(params: {
       storeNotificationError,
     });
 
+    await createPhonesiaHandoffRequest({
+      supabase: params.supabase,
+      clienteId,
+      clienteNome,
+      clientePhone: telefonoClienteMeta || telefonoCliente,
+      negozioId: storeId,
+      storeLabel: store.label,
+      storePhone,
+      inboundMessageId: params.inboundMessageId,
+      inboundBody: params.bodyOriginal,
+      conversationId,
+      notificationWhatsappMessageId,
+      replyLink: replyShortUrl,
+      templateName: sentTemplate,
+      tipoRichiesta,
+      agentResponse,
+    });
+
     console.log("WA STORE HANDOFF TEMPLATE SENT:", {
       clienteId,
       storeLabel: store.label,
       storePhone,
       template: sentTemplate,
+      notificationWhatsappMessageId,
       replyShortUrl,
       replyWhatsappUrl,
     });
@@ -1433,6 +1524,7 @@ export async function POST(request: Request) {
         supabase,
         cliente,
         telefono,
+        inboundMessageId: inbound.messageId,
         bodyOriginal,
         reply,
         agentResponse,
