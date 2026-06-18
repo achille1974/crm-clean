@@ -732,6 +732,7 @@ function extractInboundMessages(payload: MetaWebhookPayload) {
     messageId: string | null;
     contextMessageId: string | null;
     crmPhone: string | null;
+    crmPhoneNumberId: string | null;
     type: string | null;
     rawMessage: MetaWebhookMessage;
   }> = [];
@@ -768,6 +769,7 @@ function extractInboundMessages(payload: MetaWebhookPayload) {
             value?.metadata?.display_phone_number ??
             value?.metadata?.phone_number_id ??
             null,
+          crmPhoneNumberId: value?.metadata?.phone_number_id ?? null,
           type,
           rawMessage: message,
         });
@@ -1476,6 +1478,7 @@ export async function POST(request: Request) {
         bodyOriginal,
         messageId: inbound.messageId,
         contextMessageId: inbound.contextMessageId,
+        crmPhoneNumberId: inbound.crmPhoneNumberId,
         type: inbound.type,
       });
 
@@ -1487,6 +1490,7 @@ export async function POST(request: Request) {
         inboundMessageId: inbound.messageId,
         contextMessageId: inbound.contextMessageId,
         crmPhone: inbound.crmPhone,
+        crmPhoneNumberId: inbound.crmPhoneNumberId,
         rawMessage: inbound.rawMessage,
         publicBaseUrl: origin,
         hasPhonesiaMatch: Boolean(cliente),

@@ -66,6 +66,7 @@ export type RouteBeltramiInboundParams = {
   inboundMessageId: string | null;
   contextMessageId: string | null;
   crmPhone: string | null;
+  crmPhoneNumberId: string | null;
   rawMessage: unknown;
   publicBaseUrl: string;
   hasPhonesiaMatch: boolean;
@@ -125,6 +126,24 @@ function isRecentTimestamp(value: string | null | undefined): boolean {
 
 function getPublicBaseUrl(value: string) {
   return String(value || "https://app.crm-supreme.it").replace(/\/+$/, "");
+}
+
+function normalizeMetaId(value: string | null | undefined): string | null {
+  const text = String(value ?? "").trim();
+  return text || null;
+}
+
+function isDedicatedBeltramiPhoneNumberId(value: string | null | undefined): boolean {
+  const incomingPhoneNumberId = normalizeMetaId(value);
+  const beltramiPhoneNumberId = normalizeMetaId(
+    process.env.BELTRAMI_WHATSAPP_PHONE_NUMBER_ID,
+  );
+
+  return Boolean(
+    incomingPhoneNumberId &&
+      beltramiPhoneNumberId &&
+      incomingPhoneNumberId === beltramiPhoneNumberId,
+  );
 }
 
 function buildBeltramiReplyUrl(params: {
@@ -267,6 +286,7 @@ async function saveInboundMessage(params: {
     metadata: {
       routing_reason: params.reason,
       has_phonesia_match: params.inbound.hasPhonesiaMatch,
+      crm_phone_number_id: params.inbound.crmPhoneNumberId,
       source: "meta_whatsapp_inbound",
     },
   });
@@ -526,6 +546,25 @@ export async function routeBeltramiInbound(
   }
 
   try {
+    if (isDedicatedBeltramiPhoneNumberId(params.crmPhoneNumberId)) {
+      const cliente = await findClienteByPhone(supabase, params.waId);
+
+      await saveInboundMessage({
+        supabase,
+        cliente,
+        inbound: params,
+        routingStatus: "beltrami",
+        reason: "metadata_phone_number_id",
+      });
+      await notifyBeltramiIfNeeded({ supabase, cliente, inbound: params });
+
+      return {
+        handled: true,
+        routingStatus: "beltrami",
+        reason: "metadata_phone_number_id",
+      };
+    }
+
     const contextOutbound = await findOutboundByContext(supabase, params.contextMessageId);
 
     if (contextOutbound) {
