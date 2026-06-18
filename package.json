@@ -11,7 +11,9 @@
     "beltrami:servizi:dry-run:live": "node scripts/beltrami/import-servizi-scadenze.js --dry-run --live",
     "beltrami:servizi:apply:live": "node scripts/beltrami/import-servizi-scadenze.js --apply --live",
     "handoff:reminders:dry-run": "node scripts/handoff/send-reminders.js --dry-run",
-    "handoff:reminders:apply": "node scripts/handoff/send-reminders.js --apply"
+    "handoff:reminders:apply": "node scripts/handoff/send-reminders.js --apply",
+    "phonesia:promo-key:backfill:dry-run": "node scripts/phonesia/backfill-promo-key.js --dry-run",
+    "phonesia:promo-key:backfill:apply": "node scripts/phonesia/backfill-promo-key.js --apply"
   },
   "dependencies": {
     "@supabase/ssr": "^0.10.3",
