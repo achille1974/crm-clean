@@ -1,5 +1,8 @@
 const GRAPH_API_VERSION = "v23.0";
-const DEFAULT_WELCOME_TEMPLATE_NAME = "beltrami_benvenuto_v1";
+const DEFAULT_WELCOME_TEMPLATE_NAME = "bel_welcome_img_v1";
+const WELCOME_FALLBACK_TEMPLATE_NAME = "beltrami_benvenuto_v1";
+const DEFAULT_WELCOME_IMAGE_URL =
+  "https://app.crm-supreme.it/beltrami/logo-whatsapp.jpg";
 export const BELTRAMI_NOTIFY_TEMPLATE_NAME = "bel_reply_done_v1";
 export const BELTRAMI_NOTIFY_FALLBACK_TEMPLATE_NAME = "beltrami_reply_v1";
 const DEFAULT_NOTIFY_TEMPLATE_NAME = BELTRAMI_NOTIFY_TEMPLATE_NAME;
@@ -64,8 +67,31 @@ export async function sendBeltramiWelcomeMessage(params: {
 }): Promise<BeltramiWelcomeSendResult> {
   const accessToken = process.env.BELTRAMI_WHATSAPP_ACCESS_TOKEN;
   const phoneNumberId = process.env.BELTRAMI_WHATSAPP_PHONE_NUMBER_ID;
-  const templateName =
+  const requestedTemplateName =
     process.env.BELTRAMI_WHATSAPP_WELCOME_TEMPLATE_NAME || DEFAULT_WELCOME_TEMPLATE_NAME;
+  const welcomeImageUrl =
+    process.env.BELTRAMI_WHATSAPP_WELCOME_IMAGE_URL || DEFAULT_WELCOME_IMAGE_URL;
+  const shouldUseImageHeader = requestedTemplateName === DEFAULT_WELCOME_TEMPLATE_NAME;
+  const templateName =
+    shouldUseImageHeader && !welcomeImageUrl
+      ? WELCOME_FALLBACK_TEMPLATE_NAME
+      : requestedTemplateName;
+  const components =
+    shouldUseImageHeader && templateName === requestedTemplateName
+      ? [
+          {
+            type: "header",
+            parameters: [
+              {
+                type: "image",
+                image: {
+                  link: welcomeImageUrl,
+                },
+              },
+            ],
+          },
+        ]
+      : undefined;
 
   if (!accessToken || !phoneNumberId) {
     return {
@@ -107,6 +133,7 @@ export async function sendBeltramiWelcomeMessage(params: {
             language: {
               code: WELCOME_TEMPLATE_LANGUAGE,
             },
+            ...(components ? { components } : {}),
           },
         }),
       },
