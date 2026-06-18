@@ -1,6 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const { createClient } = require("@supabase/supabase-js");
 const xlsx = require("xlsx");
 
 const DRIVE_ROOT =
@@ -15,6 +16,17 @@ const LIVE_STATE_FILE = path.join(LOCAL_STATE_DIR, "beltrami_servizi_live_state.
 const SHEET_NAME = "SERVIZI_SCADENZE";
 const UPCOMING_REMINDER_DAYS = 7;
 const FILE_STABILITY_WAIT_MS = 3000;
+const BELTRAMI_PRIVACY_VERSION = "beltrami_privacy_v1";
+const BELTRAMI_EXCEL_QR_ID = "beltrami_1876_excel";
+const BELTRAMI_EXCEL_SOURCE = "excel_beltrami_servizi";
+const BELTRAMI_ENV_KEYS = [
+  "BELTRAMI_SUPABASE_URL",
+  "BELTRAMI_SUPABASE_SERVICE_ROLE_KEY",
+];
+const BELTRAMI_ENV_FILES = [
+  path.resolve(process.cwd(), ".env.production.local"),
+  path.resolve(process.cwd(), ".env.local"),
+];
 
 const EXPECTED_HEADERS = [
   "nome",
@@ -35,6 +47,7 @@ const ITALIAN_MOBILE_RE = /^3\d{8,9}$/;
 function parseArgs(argv) {
   const args = {
     dryRun: false,
+    apply: false,
     file: null,
     live: false,
     force: false,
@@ -45,6 +58,8 @@ function parseArgs(argv) {
 
     if (arg === "--dry-run") {
       args.dryRun = true;
+    } else if (arg === "--apply") {
+      args.apply = true;
     } else if (arg === "--live") {
       args.live = true;
     } else if (arg === "--force") {
@@ -58,11 +73,14 @@ function parseArgs(argv) {
     }
   }
 
-  if (!args.dryRun) {
-    throw new Error("Per ora lo script supporta solo --dry-run.");
+  if (args.dryRun === args.apply) {
+    throw new Error("Usa esattamente una modalita: --dry-run oppure --apply.");
   }
   if (args.live && args.file) {
     throw new Error("Usa --live oppure --file, non entrambi.");
+  }
+  if (args.apply && !args.live && !args.file) {
+    throw new Error("La modalita --apply richiede --live oppure --file.");
   }
 
   return args;
@@ -170,6 +188,64 @@ function writeJsonFile(filePath, value) {
   ensureDir(path.dirname(filePath));
   fs.writeFileSync(`${filePath}.tmp`, `${JSON.stringify(value, null, 2)}\n`, "utf8");
   fs.renameSync(`${filePath}.tmp`, filePath);
+}
+
+function parseEnvFile(filePath) {
+  if (!fs.existsSync(filePath)) return {};
+
+  return fs.readFileSync(filePath, "utf8").split(/\r?\n/).reduce((acc, line) => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#") || !trimmed.includes("=")) return acc;
+
+    const index = trimmed.indexOf("=");
+    const key = trimmed.slice(0, index).trim();
+    if (!BELTRAMI_ENV_KEYS.includes(key)) return acc;
+
+    let value = trimmed.slice(index + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+
+    acc[key] = value;
+    return acc;
+  }, {});
+}
+
+function loadBeltramiEnv() {
+  const fileEnv = BELTRAMI_ENV_FILES.reduce(
+    (acc, filePath) => ({
+      ...acc,
+      ...parseEnvFile(filePath),
+    }),
+    {},
+  );
+
+  return BELTRAMI_ENV_KEYS.reduce((acc, key) => {
+    acc[key] = process.env[key] || fileEnv[key] || "";
+    return acc;
+  }, {});
+}
+
+function createBeltramiSupabaseAdmin() {
+  const env = loadBeltramiEnv();
+  const missing = BELTRAMI_ENV_KEYS.filter((key) => !env[key]);
+
+  if (missing.length > 0) {
+    throw new Error(
+      `Configurazione Supabase Beltrami mancante: ${missing.join(", ")}. ` +
+        "Impostare solo env BELTRAMI_*, non usare env Supabase globali Phonesia.",
+    );
+  }
+
+  return createClient(env.BELTRAMI_SUPABASE_URL, env.BELTRAMI_SUPABASE_SERVICE_ROLE_KEY, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  });
 }
 
 function getFileState(filePath) {
@@ -869,6 +945,373 @@ function countResultErrors(result) {
   return result.errorRows.length + (result.headerErrors.length > 0 ? 1 : 0);
 }
 
+function toJsonSafe(value) {
+  return JSON.parse(stableJson(value));
+}
+
+function isDuplicateInsertError(error) {
+  return (
+    error?.code === "23505" ||
+    /duplicate key/i.test(String(error?.message || "")) ||
+    /violates unique constraint/i.test(String(error?.message || ""))
+  );
+}
+
+function isKnownExampleRow(row) {
+  const normalized = row.normalized || {};
+  const nome = compactSpaces(normalized.nome || row.raw?.nome).toLowerCase();
+  const cognome = compactSpaces(normalized.cognome || row.raw?.cognome).toLowerCase();
+
+  return (
+    (nome === "mario" && cognome === "rossi") ||
+    (nome === "giulia" && cognome === "bianchi") ||
+    (nome === "luca" && cognome === "verdi")
+  );
+}
+
+function findKnownExampleRows(result) {
+  return [...result.validRows, ...result.errorRows]
+    .filter(isKnownExampleRow)
+    .map((row) => ({
+      source_row_index: row.normalized.source_row_index,
+      nome: row.normalized.nome || row.raw?.nome || "",
+      cognome: row.normalized.cognome || row.raw?.cognome || "",
+    }));
+}
+
+function buildClienteInsert(row) {
+  const data = row.normalized;
+
+  return {
+    nome: data.nome,
+    cognome: data.cognome,
+    telefono: data.telefono,
+    telefono_normalizzato: data.telefono_normalizzato,
+    email: data.email,
+    codice_fiscale: data.codice_fiscale,
+    privacy_consent: false,
+    whatsapp_consent: false,
+    privacy_version: BELTRAMI_PRIVACY_VERSION,
+    qr_id: BELTRAMI_EXCEL_QR_ID,
+    source: BELTRAMI_EXCEL_SOURCE,
+  };
+}
+
+function buildServizioPayload(row, clienteId, result) {
+  const data = row.normalized;
+  const sourceFileName = path.basename(result.inputFilePath || result.filePath);
+
+  return {
+    cliente_id: clienteId,
+    nome: data.nome,
+    cognome: data.cognome,
+    telefono: data.telefono,
+    telefono_normalizzato: data.telefono_normalizzato,
+    email: data.email,
+    codice_fiscale: data.codice_fiscale,
+    servizio: data.servizio,
+    data_attivazione: data.data_attivazione,
+    data_scadenza: data.data_scadenza,
+    durata_servizio: data.durata_servizio,
+    stato: "attivo",
+    note: data.note,
+    source_file_name: sourceFileName,
+    source_file_hash: result.fileHash,
+    source_row_index: data.source_row_index,
+    source_row_hash: row.row_hash,
+    metadata: {
+      source: BELTRAMI_EXCEL_SOURCE,
+      data_scadenza_teorica: data.data_scadenza_teorica,
+      warnings: row.warnings,
+    },
+  };
+}
+
+async function selectMaybeSingle(query) {
+  const { data, error } = await query.limit(1).maybeSingle();
+  if (error) throw error;
+  return data || null;
+}
+
+async function findClienteByRow(supabase, row) {
+  const data = row.normalized;
+  const selectFields =
+    "id, nome, cognome, telefono, telefono_normalizzato, email, codice_fiscale, whatsapp_consent";
+
+  const byPhone = await selectMaybeSingle(
+    supabase
+      .from("beltrami_clienti")
+      .select(selectFields)
+      .eq("telefono_normalizzato", data.telefono_normalizzato),
+  );
+  if (byPhone) return byPhone;
+
+  if (data.codice_fiscale) {
+    const byCodiceFiscale = await selectMaybeSingle(
+      supabase
+        .from("beltrami_clienti")
+        .select(selectFields)
+        .eq("codice_fiscale", data.codice_fiscale),
+    );
+    if (byCodiceFiscale) return byCodiceFiscale;
+  }
+
+  if (data.email) {
+    const byEmail = await selectMaybeSingle(
+      supabase.from("beltrami_clienti").select(selectFields).eq("email", data.email),
+    );
+    if (byEmail) return byEmail;
+  }
+
+  return null;
+}
+
+async function findOrCreateCliente(supabase, row) {
+  const existing = await findClienteByRow(supabase, row);
+  if (existing) {
+    return {
+      cliente: existing,
+      created: false,
+    };
+  }
+
+  const { data, error } = await supabase
+    .from("beltrami_clienti")
+    .insert(buildClienteInsert(row))
+    .select(
+      "id, nome, cognome, telefono, telefono_normalizzato, email, codice_fiscale, whatsapp_consent",
+    )
+    .single();
+
+  if (error) {
+    if (isDuplicateInsertError(error)) {
+      const duplicate = await findClienteByRow(supabase, row);
+      if (duplicate) {
+        return {
+          cliente: duplicate,
+          created: false,
+        };
+      }
+    }
+
+    throw error;
+  }
+
+  return {
+    cliente: data,
+    created: true,
+  };
+}
+
+async function findExistingServizio(supabase, row) {
+  const data = row.normalized;
+  return selectMaybeSingle(
+    supabase
+      .from("beltrami_servizi_cliente")
+      .select("id")
+      .eq("telefono_normalizzato", data.telefono_normalizzato)
+      .eq("servizio", data.servizio)
+      .eq("data_scadenza", data.data_scadenza)
+      .order("created_at", { ascending: false }),
+  );
+}
+
+async function insertOrUpdateServizio(supabase, row, clienteId, result, batchId) {
+  const existing = await findExistingServizio(supabase, row);
+  const payload = buildServizioPayload(row, clienteId, result);
+  payload.metadata.import_batch_id = batchId;
+
+  if (existing) {
+    const { data, error } = await supabase
+      .from("beltrami_servizi_cliente")
+      .update({
+        ...payload,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", existing.id)
+      .select("id")
+      .single();
+
+    if (error) throw error;
+
+    return {
+      servizio: data,
+      inserted: false,
+    };
+  }
+
+  const { data, error } = await supabase
+    .from("beltrami_servizi_cliente")
+    .insert(payload)
+    .select("id")
+    .single();
+
+  if (error) throw error;
+
+  return {
+    servizio: data,
+    inserted: true,
+  };
+}
+
+async function createImportBatch(supabase, result) {
+  const sourceFileName = path.basename(result.inputFilePath || result.filePath);
+  const existing = await selectMaybeSingle(
+    supabase
+      .from("beltrami_import_batches")
+      .select("id, import_status")
+      .eq("source_file_hash", result.fileHash),
+  );
+
+  if (existing) {
+    throw new Error(
+      `File gia registrato in beltrami_import_batches con lo stesso hash: batch ${existing.id}`,
+    );
+  }
+
+  const { data, error } = await supabase
+    .from("beltrami_import_batches")
+    .insert({
+      source_file_name: sourceFileName,
+      source_file_path: result.inputFilePath,
+      source_file_hash: result.fileHash,
+      import_status: "started",
+      total_rows: result.totalRows,
+      valid_rows: result.validRows.length,
+      error_rows: result.errorRows.length,
+      skipped_rows: result.skippedRows,
+      metadata: {
+        source: BELTRAMI_EXCEL_SOURCE,
+        mode: "apply",
+        snapshot_path: result.snapshotPath,
+        header_format: result.headerFormat,
+      },
+    })
+    .select("id")
+    .single();
+
+  if (error) throw error;
+  return data.id;
+}
+
+async function insertImportRow(supabase, row, batchId, clienteId, servizioClienteId) {
+  const { error } = await supabase.from("beltrami_import_rows").insert({
+    batch_id: batchId,
+    source_row_index: row.normalized.source_row_index,
+    row_hash: row.row_hash,
+    raw_json: toJsonSafe(row.raw),
+    validation_status: "valid",
+    validation_error: null,
+    cliente_id: clienteId,
+    servizio_cliente_id: servizioClienteId,
+  });
+
+  if (error) throw error;
+}
+
+async function completeImportBatch(supabase, batchId, summary) {
+  const { error } = await supabase
+    .from("beltrami_import_batches")
+    .update({
+      import_status: "completed",
+      metadata: {
+        source: BELTRAMI_EXCEL_SOURCE,
+        mode: "apply",
+        completed_at: new Date().toISOString(),
+        clienti_creati: summary.clientiCreati,
+        clienti_esistenti_usati: summary.clientiEsistentiUsati,
+        servizi_inseriti: summary.serviziInseriti,
+        servizi_aggiornati: summary.serviziAggiornati,
+        import_rows_inserite: summary.importRowsInserite,
+        servizi_senza_consenso_whatsapp: summary.serviziSenzaConsensoWhatsapp,
+        nessun_whatsapp_inviato: true,
+      },
+    })
+    .eq("id", batchId);
+
+  if (error) throw error;
+}
+
+function emptyApplySummary(result) {
+  return {
+    fileLetto: result.inputFilePath,
+    hashFile: result.fileHash,
+    batchId: null,
+    righeTotali: result.totalRows,
+    righeValide: result.validRows.length,
+    righeErrore: countResultErrors(result),
+    clientiCreati: 0,
+    clientiEsistentiUsati: 0,
+    serviziInseriti: 0,
+    serviziAggiornati: 0,
+    importRowsInserite: 0,
+    serviziSenzaConsensoWhatsapp: 0,
+    prossimeScadenzeEntro7Giorni: result.upcomingExpiries.length,
+    nessunWhatsappInviato: true,
+  };
+}
+
+function printApplySummary(summary) {
+  console.log("");
+  console.log("Riepilogo apply:");
+  console.log(`File letto: ${summary.fileLetto}`);
+  console.log(`Hash file SHA256: ${summary.hashFile}`);
+  console.log(`Batch id: ${summary.batchId ?? "non creato"}`);
+  console.log(`Righe totali: ${summary.righeTotali}`);
+  console.log(`Righe valide: ${summary.righeValide}`);
+  console.log(`Righe errore: ${summary.righeErrore}`);
+  console.log(`Clienti creati: ${summary.clientiCreati}`);
+  console.log(`Clienti esistenti usati: ${summary.clientiEsistentiUsati}`);
+  console.log(`Servizi inseriti: ${summary.serviziInseriti}`);
+  console.log(`Servizi aggiornati: ${summary.serviziAggiornati}`);
+  console.log(`Import rows inserite: ${summary.importRowsInserite}`);
+  console.log(`Servizi senza consenso WhatsApp: ${summary.serviziSenzaConsensoWhatsapp}`);
+  console.log(`Prossime scadenze entro ${UPCOMING_REMINDER_DAYS} giorni: ${summary.prossimeScadenzeEntro7Giorni}`);
+  console.log("Nessun WhatsApp inviato: si");
+}
+
+async function importResultToSupabase(result) {
+  const supabase = createBeltramiSupabaseAdmin();
+  const batchId = await createImportBatch(supabase, result);
+  const summary = {
+    ...emptyApplySummary(result),
+    batchId,
+  };
+
+  for (const row of result.validRows) {
+    const { cliente, created } = await findOrCreateCliente(supabase, row);
+    if (created) {
+      summary.clientiCreati += 1;
+    } else {
+      summary.clientiEsistentiUsati += 1;
+    }
+
+    if (cliente.whatsapp_consent !== true) {
+      summary.serviziSenzaConsensoWhatsapp += 1;
+    }
+
+    const servizioResult = await insertOrUpdateServizio(
+      supabase,
+      row,
+      cliente.id,
+      result,
+      batchId,
+    );
+
+    if (servizioResult.inserted) {
+      summary.serviziInseriti += 1;
+    } else {
+      summary.serviziAggiornati += 1;
+    }
+
+    await insertImportRow(supabase, row, batchId, cliente.id, servizioResult.servizio.id);
+    summary.importRowsInserite += 1;
+  }
+
+  await completeImportBatch(supabase, batchId, summary);
+  return summary;
+}
+
 function buildReport({ mode, force, liveFilePath, snapshot, results, summary }) {
   const lines = [
     "DRY-RUN BELTRAMI 1876 - SERVIZI E SCADENZE",
@@ -1049,8 +1492,91 @@ async function runLiveDryRun(args) {
   });
 }
 
+async function analyzeApplyInput(args) {
+  if (args.live) {
+    if (!fs.existsSync(LIVE_FILE)) {
+      throw new Error(`File LIVE non trovato: ${LIVE_FILE}`);
+    }
+
+    console.log(`File LIVE: ${LIVE_FILE}`);
+    console.log(`Controllo stabilita file: ${FILE_STABILITY_WAIT_MS}ms`);
+
+    const stability = await waitForStableFile(LIVE_FILE);
+    if (!stability.stable) {
+      console.log("file ancora in aggiornamento: size/mtime cambiati durante il controllo stabilita.");
+      console.log(JSON.stringify(stability, null, 2));
+      return null;
+    }
+
+    const fileHash = sha256File(LIVE_FILE);
+    const snapshot = createLiveSnapshot(LIVE_FILE, fileHash, args.force);
+    console.log(`Snapshot: ${snapshot.path}`);
+    console.log(`Snapshot creato: ${snapshot.created ? "si" : "no, riusato snapshot esistente"}`);
+
+    return analyzeFile(snapshot.path, {
+      inputFilePath: LIVE_FILE,
+      snapshotPath: snapshot.path,
+      snapshotCreated: snapshot.created,
+    });
+  }
+
+  const resolved = path.resolve(args.file);
+  if (!fs.existsSync(resolved)) {
+    throw new Error(`File non trovato: ${resolved}`);
+  }
+  if (!isImportableXlsx(resolved)) {
+    throw new Error(`File non importabile: ${resolved}`);
+  }
+
+  return analyzeFile(resolved);
+}
+
+async function runApply(args) {
+  console.log("APPLY BELTRAMI: scrive solo tabelle beltrami_ servizi/clienti/import.");
+  console.log("Nessun invio WhatsApp. Nessuna scrittura in beltrami_reminder_invii.");
+  console.log("Usa solo BELTRAMI_SUPABASE_URL e BELTRAMI_SUPABASE_SERVICE_ROLE_KEY.");
+  console.log(`Root Drive: ${DRIVE_ROOT}`);
+  console.log(`Foglio atteso: ${SHEET_NAME}`);
+
+  const result = await analyzeApplyInput(args);
+  if (!result) return;
+
+  printResult(result);
+
+  if (result.headerErrors.length > 0) {
+    throw new Error("Header non valido: import annullato, nessuna scrittura DB.");
+  }
+
+  const exampleRows = findKnownExampleRows(result);
+  if (exampleRows.length > 0) {
+    console.log("Righe esempio rilevate:");
+    console.log(JSON.stringify(exampleRows, null, 2));
+    throw new Error("File LIVE contiene ancora righe esempio: import annullato, nessuna scrittura DB.");
+  }
+
+  if (result.totalRows === 0 || result.validRows.length === 0) {
+    console.log("");
+    console.log("Nessuna riga da importare: file vuoto con sole intestazioni.");
+    console.log("Nessuna scrittura DB eseguita.");
+    printApplySummary(emptyApplySummary(result));
+    return;
+  }
+
+  if (result.errorRows.length > 0) {
+    throw new Error("Righe errore presenti: import annullato, nessuna scrittura DB.");
+  }
+
+  const summary = await importResultToSupabase(result);
+  printApplySummary(summary);
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+
+  if (args.apply) {
+    await runApply(args);
+    return;
+  }
 
   if (args.live) {
     await runLiveDryRun(args);
