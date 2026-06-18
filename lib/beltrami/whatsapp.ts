@@ -1,6 +1,6 @@
 const GRAPH_API_VERSION = "v23.0";
 const DEFAULT_WELCOME_TEMPLATE_NAME = "beltrami_benvenuto_v1";
-const DEFAULT_NOTIFY_TEMPLATE_NAME = "beltrami_notifica_risposta_cliente_v1";
+const DEFAULT_NOTIFY_TEMPLATE_NAME = "beltrami_reply_v1";
 const WELCOME_TEMPLATE_LANGUAGE = "it";
 const NOTIFY_TEMPLATE_LANGUAGE = "it";
 
@@ -200,18 +200,22 @@ export async function sendBeltramiNotifyMessage(params: {
                 parameters: [
                   {
                     type: "text",
+                    parameter_name: "cliente_nome",
                     text: compactTemplateText(params.clienteNome, 120),
                   },
                   {
                     type: "text",
+                    parameter_name: "cliente_telefono",
                     text: compactTemplateText(params.telefonoCliente, 60),
                   },
                   {
                     type: "text",
+                    parameter_name: "messaggio_cliente",
                     text: compactTemplateText(params.messaggioCliente, 320),
                   },
                   {
                     type: "text",
+                    parameter_name: "link_risposta",
                     text: compactTemplateText(params.replyUrl, 500),
                   },
                 ],
