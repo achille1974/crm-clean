@@ -2,6 +2,8 @@
 -- Non applicata automaticamente: eseguire manualmente solo dopo revisione.
 -- Applicare nel progetto Supabase dedicato a Beltrami, non nel database Phonesia.
 -- Il campo servizio resta testo libero: non introdurre whitelist applicative o DB.
+-- durata_valore e durata_unita sono state eliminate dal modello ufficiale:
+-- usare solo durata_servizio.
 
 create table if not exists public.beltrami_servizi_cliente (
   id bigserial primary key,
@@ -18,8 +20,6 @@ create table if not exists public.beltrami_servizi_cliente (
   data_attivazione date,
   data_scadenza date not null,
   durata_servizio text,
-  durata_valore integer,
-  durata_unita text,
   stato text not null default 'attivo',
   note text,
   source_file_name text,

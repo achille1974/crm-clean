@@ -29,20 +29,6 @@ const EXPECTED_HEADERS = [
   "note",
 ];
 
-const LEGACY_HEADERS = [
-  "nome",
-  "cognome",
-  "telefono",
-  "email",
-  "codice_fiscale",
-  "servizio",
-  "data_attivazione",
-  "data_scadenza",
-  "durata_valore",
-  "durata_unita",
-  "note",
-];
-
 const DURATION_UNITS = new Set(["days", "months", "years"]);
 const ITALIAN_MOBILE_RE = /^3\d{8,9}$/;
 
@@ -304,23 +290,7 @@ function parseInteger(value) {
   return number;
 }
 
-function formatDurationLabel(value, unit) {
-  if (value === null || value === undefined || value === "") return null;
-
-  if (unit === "years") {
-    return value === 1 ? "1 anno" : `${value} anni`;
-  }
-  if (unit === "months") {
-    return value === 1 ? "1 mese" : `${value} mesi`;
-  }
-  if (unit === "days") {
-    return value === 1 ? "1 giorno" : `${value} giorni`;
-  }
-
-  return null;
-}
-
-function normalizeLegacyDurationUnit(value) {
+function normalizeDurationUnit(value) {
   const unit = normalizeDurationText(value);
 
   if (unit === "year" || unit === "years" || unit === "anno" || unit === "anni") {
@@ -334,12 +304,6 @@ function normalizeLegacyDurationUnit(value) {
   }
 
   return unit || null;
-}
-
-function buildLegacyDurationService(value, unit) {
-  const durationValue = parseInteger(value);
-  const durationUnit = normalizeLegacyDurationUnit(unit);
-  return formatDurationLabel(durationValue, durationUnit);
 }
 
 function parseDurationService(value) {
@@ -383,7 +347,7 @@ function parseDurationService(value) {
   }
 
   const durationValue = Number(match[1]);
-  const durationUnit = normalizeLegacyDurationUnit(match[2]);
+  const durationUnit = normalizeDurationUnit(match[2]);
 
   if (!Number.isInteger(durationValue) || durationValue <= 0 || !DURATION_UNITS.has(durationUnit)) {
     return {
@@ -526,20 +490,34 @@ function matchHeaderFormat(headerRow, expectedHeaders) {
 }
 
 function detectHeaderFormat(headerRow) {
+  const normalizedHeaders = headerRow.map(normalizeHeader);
+
+  if (
+    normalizedHeaders.includes("durata_valore") ||
+    normalizedHeaders.includes("durata_unita")
+  ) {
+    return {
+      ok: false,
+      headers: EXPECTED_HEADERS,
+      format: null,
+      errors: [
+        {
+          column:
+            normalizedHeaders.findIndex(
+              (header) => header === "durata_valore" || header === "durata_unita",
+            ) + 1,
+          expected: "durata_servizio",
+          actual: "Formato vecchio non supportato: usare durata_servizio",
+        },
+      ],
+    };
+  }
+
   if (matchHeaderFormat(headerRow, EXPECTED_HEADERS)) {
     return {
       ok: true,
       headers: EXPECTED_HEADERS,
       format: "durata_servizio",
-      errors: [],
-    };
-  }
-
-  if (matchHeaderFormat(headerRow, LEGACY_HEADERS)) {
-    return {
-      ok: true,
-      headers: LEGACY_HEADERS,
-      format: "legacy_durata_valore_unita",
       errors: [],
     };
   }
@@ -586,13 +564,8 @@ function normalizeRow(raw, sourceRowIndex) {
   const note = normalizeOptionalText(raw.note);
   const dataAttivazione = parseDate(raw.data_attivazione);
   const dataScadenzaInput = parseDate(raw.data_scadenza);
-  const legacyDurationService = buildLegacyDurationService(raw.durata_valore, raw.durata_unita);
-  const durataServizio = normalizeOptionalText(raw.durata_servizio) || legacyDurationService;
+  const durataServizio = normalizeOptionalText(raw.durata_servizio);
   const parsedDuration = parseDurationService(durataServizio);
-  const durataValore = parsedDuration.ok ? parsedDuration.value : parseInteger(raw.durata_valore);
-  const durataUnita = parsedDuration.ok
-    ? parsedDuration.unit
-    : normalizeLegacyDurationUnit(raw.durata_unita);
 
   if (!nome) errors.push("nome obbligatorio");
   if (!cognome) errors.push("cognome obbligatorio");
@@ -626,11 +599,19 @@ function normalizeRow(raw, sourceRowIndex) {
         "scadenza mancante: indicare data_scadenza oppure data_attivazione + durata_servizio interpretabile",
       );
     } else {
-      const calculated = addDuration(parseDateString(dataAttivazione), durataValore, durataUnita);
+      const calculated = addDuration(
+        parseDateString(dataAttivazione),
+        parsedDuration.value,
+        parsedDuration.unit,
+      );
       dataScadenza = calculated ? formatDate(calculated) : null;
     }
   } else if (dataAttivazione && parsedDuration.ok) {
-    const calculated = addDuration(parseDateString(dataAttivazione), durataValore, durataUnita);
+    const calculated = addDuration(
+      parseDateString(dataAttivazione),
+      parsedDuration.value,
+      parsedDuration.unit,
+    );
     dataScadenzaTeorica = calculated ? formatDate(calculated) : null;
 
     if (dataScadenzaTeorica && dataScadenzaTeorica !== dataScadenza) {
@@ -653,8 +634,6 @@ function normalizeRow(raw, sourceRowIndex) {
     data_scadenza: dataScadenza,
     data_scadenza_teorica: dataScadenzaTeorica,
     durata_servizio: durataServizio,
-    durata_valore: durataValore,
-    durata_unita: durataUnita,
     note,
   };
 
