@@ -6,7 +6,12 @@ import {
   routeBeltramiInbound,
   saveBeltramiWhatsappStatusCallbacks,
 } from "@/lib/beltrami/inbound";
-import { createHandoffRequest } from "@/lib/handoff/create-request";
+import {
+  createHandoffRequest,
+  markHandoffNotificationFailed,
+  updateHandoffNotification,
+  type CreateHandoffRequestResult,
+} from "@/lib/handoff/create-request";
 
 const GRAPH_API_VERSION = process.env.WHATSAPP_GRAPH_API_VERSION || "v23.0";
 const WHATSAPP_ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN;
@@ -15,9 +20,8 @@ const WHATSAPP_WEBHOOK_VERIFY_TOKEN = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
 const PHONESIA_AGENT_SHARED_SECRET = process.env.PHONESIA_AGENT_SHARED_SECRET;
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || "https://crm-clean.vercel.app";
 
-const WHATSAPP_STORE_HANDOFF_TEMPLATE_NAME = "ph_notif_negozio_reply_v1";
-const WHATSAPP_STORE_HANDOFF_FALLBACK_TEMPLATE_NAME =
-  "phonesia_notifica_negozio_v1";
+const WHATSAPP_STORE_HANDOFF_TEMPLATE_NAME = "ph_reply_done_v1";
+const WHATSAPP_STORE_HANDOFF_FALLBACK_TEMPLATE_NAME = "ph_notif_negozio_reply_v1";
 
 const WHATSAPP_STORE_HANDOFF_TEMPLATE_LANGUAGE =
   process.env.WHATSAPP_STORE_HANDOFF_TEMPLATE_LANGUAGE || "it";
@@ -293,7 +297,10 @@ function buildPhoneCandidates(rawWaId: string): string[] {
 }
 
 function truncateText(value: string, maxLength: number) {
-  const text = String(value ?? "").trim();
+  const text = String(value ?? "")
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 
   if (text.length <= maxLength) {
     return text;
@@ -561,6 +568,7 @@ async function sendStoreHandoffTemplate(params: {
   richiestaCliente: string;
   tipoRichiesta: string;
   replyWhatsappUrl: string;
+  markDoneUrl: string;
   linkSchedaCliente: string;
 }): Promise<MetaMessageResponse> {
   if (!WHATSAPP_ACCESS_TOKEN) {
@@ -578,7 +586,7 @@ async function sendStoreHandoffTemplate(params: {
   }
 
   const bodyParameters =
-    params.templateName === WHATSAPP_STORE_HANDOFF_FALLBACK_TEMPLATE_NAME
+    params.templateName === WHATSAPP_STORE_HANDOFF_TEMPLATE_NAME
       ? [
           {
             type: "text",
@@ -592,23 +600,23 @@ async function sendStoreHandoffTemplate(params: {
           },
           {
             type: "text",
-            parameter_name: "telefono_cliente",
+            parameter_name: "cliente_telefono",
             text: truncateText(params.telefonoCliente, 60),
           },
           {
             type: "text",
-            parameter_name: "richiesta_cliente",
-            text: truncateText(params.richiestaCliente, 500),
+            parameter_name: "messaggio_cliente",
+            text: truncateText(params.richiestaCliente, 320),
           },
           {
             type: "text",
-            parameter_name: "tipo_richiesta",
-            text: truncateText(params.tipoRichiesta, 80),
+            parameter_name: "link_risposta",
+            text: truncateText(params.replyWhatsappUrl, 500),
           },
           {
             type: "text",
-            parameter_name: "link_scheda_cliente",
-            text: truncateText(params.linkSchedaCliente, 500),
+            parameter_name: "link_chiusura",
+            text: truncateText(params.markDoneUrl, 500),
           },
         ]
       : [
@@ -994,6 +1002,32 @@ async function updateLatestConversationHandoff(
   }
 }
 
+async function findLatestConversationId(params: {
+  supabase: ReturnType<typeof getSupabaseAdmin>;
+  clienteId: number;
+  customerMessage: string;
+}): Promise<number | string | null> {
+  try {
+    const { data, error } = await params.supabase
+      .from("phonesia_conversazioni")
+      .select("id")
+      .eq("cliente_id", params.clienteId)
+      .eq("canale", "whatsapp")
+      .eq("messaggio_utente", params.customerMessage)
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    if (error) throw error;
+    return (data?.[0]?.id as number | string | undefined) ?? null;
+  } catch (error) {
+    console.error("Errore lettura conversazione handoff Phonesia:", {
+      clienteId: params.clienteId,
+      message: error instanceof Error ? error.message : "errore sconosciuto",
+    });
+    return null;
+  }
+}
+
 async function hasRecentStoreHandoff(params: {
   supabase: ReturnType<typeof getSupabaseAdmin>;
   clienteId: number;
@@ -1043,12 +1077,11 @@ async function createPhonesiaHandoffRequest(params: {
   inboundMessageId: string | null;
   inboundBody: string;
   conversationId: number | string | null;
-  notificationWhatsappMessageId: string | null;
   replyLink: string;
   templateName: string;
   tipoRichiesta: string;
   agentResponse: AgentResponse | null;
-}) {
+}): Promise<CreateHandoffRequestResult | null> {
   try {
     const result = await createHandoffRequest({
       supabase: params.supabase,
@@ -1063,7 +1096,6 @@ async function createPhonesiaHandoffRequest(params: {
       inboundMessageId: params.inboundMessageId,
       inboundBody: params.inboundBody,
       conversationId: params.conversationId,
-      notificationWhatsappMessageId: params.notificationWhatsappMessageId,
       replyLink: params.replyLink,
       metadata: {
         source: "whatsapp_inbound",
@@ -1080,12 +1112,15 @@ async function createPhonesiaHandoffRequest(params: {
       storeLabel: params.storeLabel,
       dueAt: result.dueAt,
     });
+
+    return result;
   } catch (error) {
     console.error("Errore creazione handoff Phonesia:", {
       clienteId: params.clienteId,
       storeLabel: params.storeLabel,
       message: error instanceof Error ? error.message : "errore sconosciuto",
     });
+    return null;
   }
 }
 
@@ -1234,24 +1269,53 @@ async function notifyStoreIfNeeded(params: {
     return;
   }
 
+  const conversationId = await findLatestConversationId({
+    supabase: params.supabase,
+    clienteId,
+    customerMessage: params.bodyOriginal,
+  });
+  const handoffRequest = await createPhonesiaHandoffRequest({
+    supabase: params.supabase,
+    clienteId,
+    clienteNome,
+    clientePhone: telefonoClienteMeta || telefonoCliente,
+    negozioId: storeId,
+    storeLabel: store.label,
+    storePhone,
+    inboundMessageId: params.inboundMessageId,
+    inboundBody: params.bodyOriginal,
+    conversationId,
+    replyLink: replyShortUrl,
+    templateName: WHATSAPP_STORE_HANDOFF_TEMPLATE_NAME,
+    tipoRichiesta,
+    agentResponse,
+  });
+
   try {
-    let sentTemplate = WHATSAPP_STORE_HANDOFF_TEMPLATE_NAME;
+    let sentTemplate = handoffRequest
+      ? WHATSAPP_STORE_HANDOFF_TEMPLATE_NAME
+      : WHATSAPP_STORE_HANDOFF_FALLBACK_TEMPLATE_NAME;
     let storeNotificationError: string | null = null;
     let sentResponse: MetaMessageResponse | null = null;
 
     try {
       sentResponse = await sendStoreHandoffTemplate({
         to: storePhone,
-        templateName: WHATSAPP_STORE_HANDOFF_TEMPLATE_NAME,
+        templateName: sentTemplate,
         negozioNome: store.label,
         clienteNome,
         telefonoCliente,
         richiestaCliente,
         tipoRichiesta,
         replyWhatsappUrl: replyShortUrl,
+        markDoneUrl: handoffRequest?.markDoneUrl ?? "",
         linkSchedaCliente,
       });
     } catch (primaryError) {
+      if (sentTemplate === WHATSAPP_STORE_HANDOFF_FALLBACK_TEMPLATE_NAME) {
+        throw primaryError;
+      }
+
       storeNotificationError =
         primaryError instanceof Error ? primaryError.message : "Errore template primario.";
 
@@ -1266,6 +1330,7 @@ async function notifyStoreIfNeeded(params: {
         richiestaCliente,
         tipoRichiesta,
         replyWhatsappUrl: replyShortUrl,
+        markDoneUrl: "",
         linkSchedaCliente,
       });
 
@@ -1273,7 +1338,7 @@ async function notifyStoreIfNeeded(params: {
     }
 
     const notificationWhatsappMessageId = sentResponse?.messages?.[0]?.id ?? null;
-    const conversationId = await updateLatestConversationHandoff(params.supabase, {
+    await updateLatestConversationHandoff(params.supabase, {
       clienteId,
       customerMessage: params.bodyOriginal,
       handoffRequired: true,
@@ -1290,23 +1355,21 @@ async function notifyStoreIfNeeded(params: {
       storeNotificationError,
     });
 
-    await createPhonesiaHandoffRequest({
-      supabase: params.supabase,
-      clienteId,
-      clienteNome,
-      clientePhone: telefonoClienteMeta || telefonoCliente,
-      negozioId: storeId,
-      storeLabel: store.label,
-      storePhone,
-      inboundMessageId: params.inboundMessageId,
-      inboundBody: params.bodyOriginal,
-      conversationId,
-      notificationWhatsappMessageId,
-      replyLink: replyShortUrl,
-      templateName: sentTemplate,
-      tipoRichiesta,
-      agentResponse,
-    });
+    if (handoffRequest) {
+      try {
+        await updateHandoffNotification({
+          supabase: params.supabase,
+          tableName: "phonesia_handoff_richieste",
+          id: handoffRequest.id,
+          notificationWhatsappMessageId,
+        });
+      } catch (handoffError) {
+        console.error("Errore update handoff Phonesia notificato:", {
+          handoffId: handoffRequest.id,
+          message: handoffError instanceof Error ? handoffError.message : "errore sconosciuto",
+        });
+      }
+    }
 
     console.log("WA STORE HANDOFF TEMPLATE SENT:", {
       clienteId,
@@ -1314,11 +1377,27 @@ async function notifyStoreIfNeeded(params: {
       storePhone,
       template: sentTemplate,
       notificationWhatsappMessageId,
+      handoffId: handoffRequest?.id ?? null,
       replyShortUrl,
       replyWhatsappUrl,
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Errore sconosciuto";
+
+    if (handoffRequest) {
+      try {
+        await markHandoffNotificationFailed({
+          supabase: params.supabase,
+          tableName: "phonesia_handoff_richieste",
+          id: handoffRequest.id,
+        });
+      } catch (handoffError) {
+        console.error("Errore update handoff Phonesia fallito:", {
+          handoffId: handoffRequest.id,
+          message: handoffError instanceof Error ? handoffError.message : "errore sconosciuto",
+        });
+      }
+    }
 
     await updateLatestConversationHandoff(params.supabase, {
       clienteId,

@@ -1,6 +1,8 @@
 const GRAPH_API_VERSION = "v23.0";
 const DEFAULT_WELCOME_TEMPLATE_NAME = "beltrami_benvenuto_v1";
-const DEFAULT_NOTIFY_TEMPLATE_NAME = "beltrami_reply_v1";
+export const BELTRAMI_NOTIFY_TEMPLATE_NAME = "bel_reply_done_v1";
+export const BELTRAMI_NOTIFY_FALLBACK_TEMPLATE_NAME = "beltrami_reply_v1";
+const DEFAULT_NOTIFY_TEMPLATE_NAME = BELTRAMI_NOTIFY_TEMPLATE_NAME;
 const WELCOME_TEMPLATE_LANGUAGE = "it";
 const NOTIFY_TEMPLATE_LANGUAGE = "it";
 
@@ -145,12 +147,16 @@ export async function sendBeltramiNotifyMessage(params: {
   telefonoCliente: string;
   messaggioCliente: string;
   replyUrl: string;
+  markDoneUrl?: string;
+  templateName?: string;
 }): Promise<BeltramiNotifySendResult> {
   const accessToken = process.env.BELTRAMI_WHATSAPP_ACCESS_TOKEN;
   const phoneNumberId = process.env.BELTRAMI_WHATSAPP_PHONE_NUMBER_ID;
   const notifyTo = process.env.BELTRAMI_WHATSAPP_NOTIFY_TO_PHONE;
   const templateName =
-    process.env.BELTRAMI_WHATSAPP_NOTIFY_TEMPLATE_NAME || DEFAULT_NOTIFY_TEMPLATE_NAME;
+    params.templateName ||
+    process.env.BELTRAMI_WHATSAPP_NOTIFY_TEMPLATE_NAME ||
+    DEFAULT_NOTIFY_TEMPLATE_NAME;
 
   if (!accessToken || !phoneNumberId || !notifyTo) {
     return {
@@ -176,6 +182,58 @@ export async function sendBeltramiNotifyMessage(params: {
     };
   }
 
+  const bodyParameters =
+    templateName === BELTRAMI_NOTIFY_FALLBACK_TEMPLATE_NAME
+      ? [
+          {
+            type: "text",
+            parameter_name: "cliente_nome",
+            text: compactTemplateText(params.clienteNome, 120),
+          },
+          {
+            type: "text",
+            parameter_name: "cliente_telefono",
+            text: compactTemplateText(params.telefonoCliente, 60),
+          },
+          {
+            type: "text",
+            parameter_name: "messaggio_cliente",
+            text: compactTemplateText(params.messaggioCliente, 320),
+          },
+          {
+            type: "text",
+            parameter_name: "link_risposta",
+            text: compactTemplateText(params.replyUrl, 500),
+          },
+        ]
+      : [
+          {
+            type: "text",
+            parameter_name: "cliente_nome",
+            text: compactTemplateText(params.clienteNome, 120),
+          },
+          {
+            type: "text",
+            parameter_name: "cliente_telefono",
+            text: compactTemplateText(params.telefonoCliente, 60),
+          },
+          {
+            type: "text",
+            parameter_name: "messaggio_cliente",
+            text: compactTemplateText(params.messaggioCliente, 320),
+          },
+          {
+            type: "text",
+            parameter_name: "link_risposta",
+            text: compactTemplateText(params.replyUrl, 500),
+          },
+          {
+            type: "text",
+            parameter_name: "link_chiusura",
+            text: compactTemplateText(params.markDoneUrl ?? "", 500),
+          },
+        ];
+
   try {
     const response = await fetch(
       `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`,
@@ -197,28 +255,7 @@ export async function sendBeltramiNotifyMessage(params: {
             components: [
               {
                 type: "body",
-                parameters: [
-                  {
-                    type: "text",
-                    parameter_name: "cliente_nome",
-                    text: compactTemplateText(params.clienteNome, 120),
-                  },
-                  {
-                    type: "text",
-                    parameter_name: "cliente_telefono",
-                    text: compactTemplateText(params.telefonoCliente, 60),
-                  },
-                  {
-                    type: "text",
-                    parameter_name: "messaggio_cliente",
-                    text: compactTemplateText(params.messaggioCliente, 320),
-                  },
-                  {
-                    type: "text",
-                    parameter_name: "link_risposta",
-                    text: compactTemplateText(params.replyUrl, 500),
-                  },
-                ],
+                parameters: bodyParameters,
               },
             ],
           },

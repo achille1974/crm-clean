@@ -112,3 +112,45 @@ export async function createHandoffRequest(params: {
   };
 }
 
+export async function updateHandoffNotification(params: {
+  supabase: SupabaseClient;
+  tableName: HandoffTableName;
+  id: number | string;
+  notificationWhatsappMessageId?: string | null;
+  metadata?: JsonRecord;
+}) {
+  const updates: JsonRecord = {
+    updated_at: new Date().toISOString(),
+  };
+
+  if (params.notificationWhatsappMessageId) {
+    updates.notification_whatsapp_message_id = params.notificationWhatsappMessageId;
+  }
+
+  if (params.metadata) {
+    updates.metadata = params.metadata;
+  }
+
+  const { error } = await params.supabase
+    .from(params.tableName)
+    .update(updates)
+    .eq("id", params.id);
+
+  if (error) throw error;
+}
+
+export async function markHandoffNotificationFailed(params: {
+  supabase: SupabaseClient;
+  tableName: HandoffTableName;
+  id: number | string;
+}) {
+  const { error } = await params.supabase
+    .from(params.tableName)
+    .update({
+      status: "ignored",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", params.id);
+
+  if (error) throw error;
+}

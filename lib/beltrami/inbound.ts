@@ -1,8 +1,18 @@
 import "server-only";
 
 import { createBeltramiSupabaseAdmin } from "./supabase";
-import { sendBeltramiNotifyMessage, type BeltramiNotifySendResult } from "./whatsapp";
-import { createHandoffRequest } from "@/lib/handoff/create-request";
+import {
+  BELTRAMI_NOTIFY_FALLBACK_TEMPLATE_NAME,
+  BELTRAMI_NOTIFY_TEMPLATE_NAME,
+  sendBeltramiNotifyMessage,
+  type BeltramiNotifySendResult,
+} from "./whatsapp";
+import {
+  createHandoffRequest,
+  markHandoffNotificationFailed,
+  updateHandoffNotification,
+  type CreateHandoffRequestResult,
+} from "@/lib/handoff/create-request";
 
 const LAST_TOUCH_WINDOW_DAYS = 14;
 
@@ -327,13 +337,12 @@ async function createBeltramiHandoffRequest(params: {
   supabase: BeltramiSupabaseAdmin;
   cliente: BeltramiClienteRow | null;
   inbound: RouteBeltramiInboundParams;
-  notifyResult: BeltramiNotifySendResult;
   replyUrl: string;
   notificationKey: string | null;
-  beltramiWhatsappNotifyId: number | string | null;
-}) {
-  if (params.notifyResult.status !== "sent" || !params.notifyResult.toPhone) {
-    return;
+  destinazionePhone: string | null;
+}): Promise<CreateHandoffRequestResult | null> {
+  if (!params.destinazionePhone) {
+    return null;
   }
 
   const clientePhone =
@@ -350,15 +359,13 @@ async function createBeltramiHandoffRequest(params: {
       clientePhone,
       clienteNome: getFullName(params.cliente),
       destinazioneNome: "Beltrami 1876",
-      destinazionePhone: params.notifyResult.toPhone,
+      destinazionePhone: params.destinazionePhone,
       inboundMessageId: params.inbound.inboundMessageId,
       inboundBody: params.inbound.body,
-      notificationWhatsappMessageId: params.notifyResult.whatsappMessageId,
       replyLink: params.replyUrl,
       metadata: {
         source: "meta_whatsapp_inbound",
         notification_key: params.notificationKey,
-        beltrami_whatsapp_notify_id: params.beltramiWhatsappNotifyId,
         context_message_id: params.inbound.contextMessageId,
       },
     });
@@ -368,11 +375,14 @@ async function createBeltramiHandoffRequest(params: {
       clienteId: params.cliente?.id ?? null,
       dueAt: result.dueAt,
     });
+
+    return result;
   } catch (error) {
     console.error("Errore creazione handoff Beltrami:", {
       clienteId: params.cliente?.id ?? null,
       message: error instanceof Error ? error.message : "errore sconosciuto",
     });
+    return null;
   }
 }
 
@@ -399,12 +409,40 @@ async function notifyBeltramiIfNeeded(params: {
     publicBaseUrl: params.inbound.publicBaseUrl,
     telefonoCliente,
   });
-  const notifyResult = await sendBeltramiNotifyMessage({
+  const handoffRequest = await createBeltramiHandoffRequest({
+    supabase: params.supabase,
+    cliente: params.cliente,
+    inbound: params.inbound,
+    replyUrl,
+    notificationKey,
+    destinazionePhone: process.env.BELTRAMI_WHATSAPP_NOTIFY_TO_PHONE ?? null,
+  });
+  let notifyResult = await sendBeltramiNotifyMessage({
     clienteNome: getFullName(params.cliente),
     telefonoCliente,
     messaggioCliente: params.inbound.body,
     replyUrl,
+    markDoneUrl: handoffRequest?.markDoneUrl,
+    templateName: handoffRequest
+      ? BELTRAMI_NOTIFY_TEMPLATE_NAME
+      : BELTRAMI_NOTIFY_FALLBACK_TEMPLATE_NAME,
   });
+
+  if (notifyResult.status !== "sent" && handoffRequest) {
+    console.error("Errore invio template handoff Beltrami primario:", {
+      status: notifyResult.status,
+      reason: notifyResult.reason,
+      templateName: notifyResult.templateName,
+    });
+
+    notifyResult = await sendBeltramiNotifyMessage({
+      clienteNome: getFullName(params.cliente),
+      telefonoCliente,
+      messaggioCliente: params.inbound.body,
+      replyUrl,
+      templateName: BELTRAMI_NOTIFY_FALLBACK_TEMPLATE_NAME,
+    });
+  }
 
   const beltramiWhatsappNotifyId = await saveNotificationOutbound({
     supabase: params.supabase,
@@ -414,15 +452,41 @@ async function notifyBeltramiIfNeeded(params: {
     replyUrl,
     notificationKey,
   });
-  await createBeltramiHandoffRequest({
-    supabase: params.supabase,
-    cliente: params.cliente,
-    inbound: params.inbound,
-    notifyResult,
-    replyUrl,
-    notificationKey,
-    beltramiWhatsappNotifyId,
-  });
+
+  if (handoffRequest && notifyResult.status === "sent") {
+    try {
+      await updateHandoffNotification({
+        supabase: params.supabase,
+        tableName: "beltrami_handoff_richieste",
+        id: handoffRequest.id,
+        notificationWhatsappMessageId: notifyResult.whatsappMessageId,
+        metadata: {
+          source: "meta_whatsapp_inbound",
+          notification_key: notificationKey,
+          beltrami_whatsapp_notify_id: beltramiWhatsappNotifyId,
+          context_message_id: params.inbound.contextMessageId,
+        },
+      });
+    } catch (error) {
+      console.error("Errore update handoff Beltrami notificato:", {
+        handoffId: handoffRequest.id,
+        message: error instanceof Error ? error.message : "errore sconosciuto",
+      });
+    }
+  } else if (handoffRequest) {
+    try {
+      await markHandoffNotificationFailed({
+        supabase: params.supabase,
+        tableName: "beltrami_handoff_richieste",
+        id: handoffRequest.id,
+      });
+    } catch (error) {
+      console.error("Errore update handoff Beltrami fallito:", {
+        handoffId: handoffRequest.id,
+        message: error instanceof Error ? error.message : "errore sconosciuto",
+      });
+    }
+  }
 }
 
 function resolveLastTouchReason(params: {
