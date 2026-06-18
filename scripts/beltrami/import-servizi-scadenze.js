@@ -19,6 +19,8 @@ const FILE_STABILITY_WAIT_MS = 3000;
 const BELTRAMI_PRIVACY_VERSION = "beltrami_privacy_v1";
 const BELTRAMI_EXCEL_QR_ID = "beltrami_1876_excel";
 const BELTRAMI_EXCEL_SOURCE = "excel_beltrami_servizi";
+const BELTRAMI_TEST_NOTE_MARKER = "TEST_DRY_RUN_BELTRAMI_NON_IMPORTARE";
+const BELTRAMI_TEST_SERVICE_MARKER = "Test Scadenza Beltrami";
 const BELTRAMI_ENV_KEYS = [
   "BELTRAMI_SUPABASE_URL",
   "BELTRAMI_SUPABASE_SERVICE_ROLE_KEY",
@@ -109,6 +111,17 @@ function normalizeCodiceFiscale(value) {
 
 function normalizeHeader(value) {
   return compactSpaces(value).toLowerCase();
+}
+
+function normalizeMarkerText(value) {
+  return compactSpaces(value).toLowerCase();
+}
+
+function hasBeltramiTestMarkerValues(values) {
+  return (
+    normalizeMarkerText(values.note) === normalizeMarkerText(BELTRAMI_TEST_NOTE_MARKER) ||
+    normalizeMarkerText(values.servizio) === normalizeMarkerText(BELTRAMI_TEST_SERVICE_MARKER)
+  );
 }
 
 function normalizeDurationText(value) {
@@ -643,6 +656,10 @@ function normalizeRow(raw, sourceRowIndex) {
   const durataServizio = normalizeOptionalText(raw.durata_servizio);
   const parsedDuration = parseDurationService(durataServizio);
 
+  if (hasBeltramiTestMarkerValues({ servizio, note })) {
+    warnings.push("riga test rilevata: verra bloccata in modalita --apply");
+  }
+
   if (!nome) errors.push("nome obbligatorio");
   if (!cognome) errors.push("cognome obbligatorio");
   if (!telefono) errors.push("telefono obbligatorio");
@@ -976,6 +993,27 @@ function findKnownExampleRows(result) {
       source_row_index: row.normalized.source_row_index,
       nome: row.normalized.nome || row.raw?.nome || "",
       cognome: row.normalized.cognome || row.raw?.cognome || "",
+    }));
+}
+
+function hasBeltramiTestMarkerRow(row) {
+  const normalized = row.normalized || {};
+
+  return hasBeltramiTestMarkerValues({
+    servizio: normalized.servizio || row.raw?.servizio,
+    note: normalized.note || row.raw?.note,
+  });
+}
+
+function findBeltramiTestMarkerRows(result) {
+  return [...result.validRows, ...result.errorRows]
+    .filter(hasBeltramiTestMarkerRow)
+    .map((row) => ({
+      source_row_index: row.normalized.source_row_index,
+      nome: row.normalized.nome || row.raw?.nome || "",
+      cognome: row.normalized.cognome || row.raw?.cognome || "",
+      servizio: row.normalized.servizio || row.raw?.servizio || "",
+      note: row.normalized.note || row.raw?.note || "",
     }));
 }
 
@@ -1552,6 +1590,13 @@ async function runApply(args) {
     console.log("Righe esempio rilevate:");
     console.log(JSON.stringify(exampleRows, null, 2));
     throw new Error("File LIVE contiene ancora righe esempio: import annullato, nessuna scrittura DB.");
+  }
+
+  const testRows = findBeltramiTestMarkerRows(result);
+  if (testRows.length > 0) {
+    console.log("Righe test rilevate:");
+    console.log(JSON.stringify(testRows, null, 2));
+    throw new Error("File LIVE contiene righe test: rimuoverle prima dell'import reale.");
   }
 
   if (result.totalRows === 0 || result.validRows.length === 0) {
