@@ -9,7 +9,9 @@
     "lint": "eslint",
     "beltrami:servizi:dry-run": "node scripts/beltrami/import-servizi-scadenze.js --dry-run",
     "beltrami:servizi:dry-run:live": "node scripts/beltrami/import-servizi-scadenze.js --dry-run --live",
-    "beltrami:servizi:apply:live": "node scripts/beltrami/import-servizi-scadenze.js --apply --live"
+    "beltrami:servizi:apply:live": "node scripts/beltrami/import-servizi-scadenze.js --apply --live",
+    "handoff:reminders:dry-run": "node scripts/handoff/send-reminders.js --dry-run",
+    "handoff:reminders:apply": "node scripts/handoff/send-reminders.js --apply"
   },
   "dependencies": {
     "@supabase/ssr": "^0.10.3",
