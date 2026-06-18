@@ -153,10 +153,7 @@ export async function sendBeltramiNotifyMessage(params: {
   const accessToken = process.env.BELTRAMI_WHATSAPP_ACCESS_TOKEN;
   const phoneNumberId = process.env.BELTRAMI_WHATSAPP_PHONE_NUMBER_ID;
   const notifyTo = process.env.BELTRAMI_WHATSAPP_NOTIFY_TO_PHONE;
-  const templateName =
-    params.templateName ||
-    process.env.BELTRAMI_WHATSAPP_NOTIFY_TEMPLATE_NAME ||
-    DEFAULT_NOTIFY_TEMPLATE_NAME;
+  const templateName = params.templateName || DEFAULT_NOTIFY_TEMPLATE_NAME;
 
   if (!accessToken || !phoneNumberId || !notifyTo) {
     return {
