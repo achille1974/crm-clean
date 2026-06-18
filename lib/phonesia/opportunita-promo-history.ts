@@ -10,14 +10,20 @@ const WHATSAPP_PROMO_SEND_MODES = new Set([
 
 export const DAILY_WHATSAPP_PROMO_SKIP_REASON =
   "Promo WhatsApp già inviata oggi";
+export const DUPLICATE_PROMO_SKIP_REASON =
+  "Promo già inviata a questo cliente";
 
 export type PromoOpportunityHistoryRow = {
   cliente_id: number | null;
+  opportunita_code?: string | null;
   channel?: string | null;
   sent_at?: string | null;
   created_at?: string | null;
   send_mode?: string | null;
   inviato_at?: string | null;
+  messaggio?: string | null;
+  attachment_public_url?: string | null;
+  attachment_file_name?: string | null;
   metadata?: Record<string, unknown> | null;
 };
 
@@ -26,8 +32,177 @@ export type PromoSendSummary = {
   sentToday: boolean;
 };
 
+export type PromoKeyInput = {
+  templateName?: string | null;
+  sendMode?: string | null;
+  standardService?: string | null;
+  messageText?: string | null;
+  customMessage?: string | null;
+  attachmentPublicUrl?: string | null;
+  attachmentFileName?: string | null;
+  mediaUrl?: string | null;
+  title?: string | null;
+};
+
 function normalizeText(value?: string | null): string {
   return String(value ?? "").trim();
+}
+
+function normalizePromoText(value?: string | null): string {
+  return String(value ?? "")
+    .normalize("NFKC")
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizePromoToken(value?: string | null): string {
+  return normalizePromoText(value).toLowerCase();
+}
+
+function getMetadataString(
+  metadata: Record<string, unknown> | null | undefined,
+  key: string,
+): string | null {
+  const value = metadata?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(",")}]`;
+  }
+
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
+    .join(",")}}`;
+}
+
+function fnv1aHash(value: string): string {
+  let hash = 0x811c9dc5;
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function stablePromoHash(value: string): string {
+  return `${fnv1aHash(`promo:a:${value}`)}${fnv1aHash(`promo:b:${value}`)}`;
+}
+
+export function buildPromoKey(input: PromoKeyInput): string {
+  const payload = {
+    version: 1,
+    template_name: normalizePromoToken(input.templateName),
+    send_mode: normalizePromoToken(input.sendMode),
+    standard_service: normalizePromoToken(input.standardService),
+    title: normalizePromoText(input.title),
+    message: normalizePromoText(input.messageText ?? input.customMessage),
+    media_url: normalizePromoToken(input.mediaUrl ?? input.attachmentPublicUrl),
+    attachment_file_name: normalizePromoToken(input.attachmentFileName),
+  };
+
+  return `promo_${stablePromoHash(stableStringify(payload))}`;
+}
+
+export function getPromoKeyFromHistoryRow(
+  row: PromoOpportunityHistoryRow,
+): string | null {
+  if (!isWhatsAppPromoOpportunity(row)) return null;
+
+  const savedPromoKey = getMetadataString(row.metadata, "promo_key");
+  if (savedPromoKey) return savedPromoKey;
+
+  const sendMode =
+    normalizeText(row.send_mode) ||
+    getMetadataString(row.metadata, "send_mode") ||
+    getMetadataString(row.metadata, "tipo_invio");
+  const opportunityCode = normalizeText(row.opportunita_code);
+  const standardService =
+    getMetadataString(row.metadata, "standard_service") ||
+    (opportunityCode.toUpperCase().startsWith("CUSTOM_MESSAGE")
+      ? null
+      : opportunityCode);
+  const templateName =
+    getMetadataString(row.metadata, "template_name") ||
+    getMetadataString(row.metadata, "template_usato");
+  const isCustomPromo =
+    normalizeText(sendMode).startsWith("custom_message") ||
+    opportunityCode.toUpperCase().startsWith("CUSTOM_MESSAGE");
+  const isStandardPromo =
+    Boolean(standardService) && !isCustomPromo;
+  const customMessage =
+    getMetadataString(row.metadata, "custom_message") ||
+    getMetadataString(row.metadata, "messaggio_personalizzato") ||
+    normalizeText(row.messaggio);
+  const attachmentPublicUrl =
+    normalizeText(row.attachment_public_url) ||
+    getMetadataString(row.metadata, "attachment_public_url") ||
+    getMetadataString(row.metadata, "media_url");
+  const attachmentFileName =
+    normalizeText(row.attachment_file_name) ||
+    getMetadataString(row.metadata, "attachment_file_name");
+
+  return buildPromoKey({
+    templateName,
+    sendMode,
+    standardService: isStandardPromo ? standardService : null,
+    messageText: isStandardPromo ? null : customMessage,
+    customMessage: isStandardPromo ? null : customMessage,
+    attachmentPublicUrl: isStandardPromo ? attachmentPublicUrl : null,
+    attachmentFileName,
+  });
+}
+
+export function buildPromoKeysByCliente(
+  rows: PromoOpportunityHistoryRow[],
+): Map<number, string[]> {
+  const keysByCliente = new Map<number, Set<string>>();
+
+  for (const row of rows) {
+    const clienteId = Number(row.cliente_id);
+    if (!Number.isFinite(clienteId)) continue;
+
+    const promoKey = getPromoKeyFromHistoryRow(row);
+    if (!promoKey) continue;
+
+    const current = keysByCliente.get(clienteId) ?? new Set<string>();
+    current.add(promoKey);
+    keysByCliente.set(clienteId, current);
+  }
+
+  return new Map(
+    [...keysByCliente.entries()].map(([clienteId, keys]) => [
+      clienteId,
+      [...keys].sort(),
+    ]),
+  );
+}
+
+export function buildDuplicatePromoClienteIds(
+  rows: PromoOpportunityHistoryRow[],
+  promoKey: string,
+): Set<number> {
+  const duplicateIds = new Set<number>();
+
+  for (const row of rows) {
+    const clienteId = Number(row.cliente_id);
+    if (!Number.isFinite(clienteId)) continue;
+    if (getPromoKeyFromHistoryRow(row) === promoKey) {
+      duplicateIds.add(clienteId);
+    }
+  }
+
+  return duplicateIds;
 }
 
 function getDateTimeParts(date: Date, timeZone: string) {

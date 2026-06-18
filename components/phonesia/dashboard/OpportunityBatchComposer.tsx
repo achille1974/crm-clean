@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { createClient } from "@supabase/supabase-js";
+import { buildPromoKey } from "@/lib/phonesia/opportunita-promo-history";
 import { sanitizeWhatsAppTemplateText } from "@/lib/phonesia/whatsapp-template-payload";
 
 const SERVICE_COLUMNS = [
@@ -25,6 +26,7 @@ type Recipient = {
   whatsappActive: boolean;
   marketingConsented: boolean;
   sentOpportunityCodes?: string[];
+  sentPromoKeys?: string[];
   promoSentToday?: boolean;
   lastPromoSentAt?: string | null;
   lastPromoSentAtLabel?: string | null;
@@ -49,6 +51,7 @@ type SendResultRow = {
   bodyParameterNames?: string[];
   telefonoMascherato?: string | null;
   mediaUrl?: string | null;
+  skipped_reason?: string | null;
 };
 
 type SendResponse =
@@ -61,6 +64,7 @@ type SendResponse =
       errorCount: number;
       failedCount?: number;
       skippedCount?: number;
+      skipped_duplicate_promo?: number;
       results: SendResultRow[];
       failedResults?: SendResultRow[];
       skippedResults?: SendResultRow[];
@@ -100,6 +104,10 @@ const MAX_IMAGE_ATTACHMENT_SIZE_BYTES = 5 * 1024 * 1024;
 const MAX_DOCUMENT_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024;
 const MAX_CUSTOM_MESSAGE_LENGTH = 320;
 const MARKETING_MESSAGE_COST_EUR = 0.0522;
+const STANDARD_TEMPLATE_NAME = "phonesia_opportunita_marketing_v2";
+const CUSTOM_TEXT_TEMPLATE_NAME = "ph_msg_txt2_v1";
+const CUSTOM_IMAGE_TEMPLATE_NAME = "ph_msg_img_v1";
+const CUSTOM_DOCUMENT_TEMPLATE_NAME = "ph_msg_doc_v1";
 
 function serviceLabel(service: ServiceFamily): string {
   switch (service) {
@@ -369,63 +377,109 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
   const [attachmentInputKey, setAttachmentInputKey] = useState(0);
   const [isSending, setIsSending] = useState(false);
   const [sendResponse, setSendResponse] = useState<SendResponse | null>(null);
+  const [excludedDuplicateIds, setExcludedDuplicateIds] = useState<Set<number>>(
+    () => new Set(),
+  );
+
+  const normalizedCustomMessage = sanitizeWhatsAppTemplateText(customMessage);
+  const customMessageWasSanitized = customMessage !== normalizedCustomMessage;
+  const trimmedCustomMessage = normalizedCustomMessage;
+  const selectedFileName = selectedFile?.name ?? null;
+
+  const currentPromoKey = useMemo(() => {
+    if (messageMode === "standard") {
+      return buildPromoKey({
+        templateName: STANDARD_TEMPLATE_NAME,
+        sendMode: "standard",
+        standardService,
+      });
+    }
+
+    const templateName =
+      customMessageMode === "image"
+        ? CUSTOM_IMAGE_TEMPLATE_NAME
+        : customMessageMode === "document"
+          ? CUSTOM_DOCUMENT_TEMPLATE_NAME
+          : CUSTOM_TEXT_TEMPLATE_NAME;
+    const sendMode =
+      customMessageMode === "image"
+        ? "custom_message_image"
+        : customMessageMode === "document"
+          ? "custom_message_document"
+          : "custom_message";
+
+    return buildPromoKey({
+      templateName,
+      sendMode,
+      customMessage: trimmedCustomMessage,
+      attachmentFileName:
+        customMessageMode === "text" ? null : selectedFileName,
+    });
+  }, [customMessageMode, messageMode, selectedFileName, standardService, trimmedCustomMessage]);
+
+  useEffect(() => {
+    setExcludedDuplicateIds(new Set());
+  }, [currentPromoKey]);
+
+  const visibleRecipients = useMemo(
+    () => recipients.filter((recipient) => !excludedDuplicateIds.has(recipient.id)),
+    [excludedDuplicateIds, recipients],
+  );
 
   const eligibleRecipients = useMemo(
     () =>
-      recipients.filter(
+      visibleRecipients.filter(
         (recipient) =>
           recipient.whatsappActive &&
           recipient.marketingConsented &&
           !recipient.promoSentToday,
       ),
-    [recipients],
+    [visibleRecipients],
   );
 
   const alreadySentTodayRecipients = useMemo(
-    () => recipients.filter((recipient) => recipient.promoSentToday),
-    [recipients],
+    () => visibleRecipients.filter((recipient) => recipient.promoSentToday),
+    [visibleRecipients],
   );
 
   const blockedRecipients = useMemo(
     () =>
-      recipients.filter(
+      visibleRecipients.filter(
         (recipient) =>
           !recipient.promoSentToday &&
           (!recipient.whatsappActive || !recipient.marketingConsented),
       ),
-    [recipients],
+    [visibleRecipients],
   );
 
-  const alreadySentRecipients = useMemo(
+  const duplicatePromoRecipients = useMemo(
     () =>
-      messageMode === "standard"
-        ? eligibleRecipients.filter((recipient) =>
-            (recipient.sentOpportunityCodes ?? []).includes(standardService),
-          )
-        : [],
-    [eligibleRecipients, messageMode, standardService],
+      eligibleRecipients.filter((recipient) => {
+        const hasCurrentPromoKey = (recipient.sentPromoKeys ?? []).includes(currentPromoKey);
+        const hasLegacyStandardMatch =
+          messageMode === "standard" &&
+          (recipient.sentOpportunityCodes ?? []).includes(standardService);
+
+        return hasCurrentPromoKey || hasLegacyStandardMatch;
+      }),
+    [currentPromoKey, eligibleRecipients, messageMode, standardService],
+  );
+
+  const duplicatePromoIds = useMemo(
+    () => new Set(duplicatePromoRecipients.map((recipient) => recipient.id)),
+    [duplicatePromoRecipients],
   );
 
   const sendableRecipients = useMemo(
-    () =>
-      messageMode === "standard"
-        ? eligibleRecipients.filter(
-            (recipient) =>
-              !(recipient.sentOpportunityCodes ?? []).includes(standardService),
-          )
-        : eligibleRecipients,
-    [eligibleRecipients, messageMode, standardService],
+    () => eligibleRecipients.filter((recipient) => !duplicatePromoIds.has(recipient.id)),
+    [duplicatePromoIds, eligibleRecipients],
   );
 
   const excludedBeforeSendCount =
     blockedRecipients.length +
     alreadySentTodayRecipients.length +
-    alreadySentRecipients.length;
+    duplicatePromoRecipients.length;
   const estimatedCost = sendableRecipients.length * MARKETING_MESSAGE_COST_EUR;
-
-  const normalizedCustomMessage = sanitizeWhatsAppTemplateText(customMessage);
-  const customMessageWasSanitized = customMessage !== normalizedCustomMessage;
-  const trimmedCustomMessage = normalizedCustomMessage;
 
   const previewText =
     messageMode === "standard"
@@ -433,7 +487,7 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
       : trimmedCustomMessage || "Nessun messaggio personalizzato inserito.";
 
   const canSend =
-    recipients.length > 0 &&
+    visibleRecipients.length > 0 &&
     sendableRecipients.length > 0 &&
     !isSending &&
     (messageMode === "standard" ||
@@ -549,7 +603,7 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
           : null;
       const formData = new FormData();
 
-      for (const recipient of recipients) {
+      for (const recipient of visibleRecipients) {
         formData.append("clienti", String(recipient.id));
       }
 
@@ -614,7 +668,7 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
         </div>
 
         <div className="grid gap-4 md:grid-cols-4">
-          <StatCard label="Selezionati" value={String(recipients.length)} />
+          <StatCard label="Selezionati" value={String(visibleRecipients.length)} />
           <StatCard label="Idonei all’invio" value={String(eligibleRecipients.length)} />
           <StatCard
             label="Già inviati oggi"
@@ -622,6 +676,44 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
           />
           <StatCard label="Bloccati" value={String(blockedRecipients.length)} />
         </div>
+
+        {duplicatePromoRecipients.length > 0 ? (
+          <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-950">
+            <div className="font-semibold">
+              Attenzione: questa promo risulta già inviata a{" "}
+              {duplicatePromoRecipients.length} clienti selezionati.
+            </div>
+            <div className="mt-3 grid gap-3 sm:grid-cols-4">
+              <CompactStat
+                label="Selezionati"
+                value={String(visibleRecipients.length)}
+              />
+              <CompactStat
+                label="Già raggiunti"
+                value={String(duplicatePromoRecipients.length)}
+              />
+              <CompactStat
+                label="Da inviare"
+                value={String(sendableRecipients.length)}
+              />
+              <CompactStat
+                label="Costo stimato"
+                value={formatCurrency(estimatedCost)}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() =>
+                setExcludedDuplicateIds(
+                  new Set(duplicatePromoRecipients.map((recipient) => recipient.id)),
+                )
+              }
+              className="mt-3 inline-flex items-center justify-center rounded-2xl border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-900 transition hover:border-amber-400 hover:bg-amber-100"
+            >
+              Escludi già raggiunti
+            </button>
+          </div>
+        ) : null}
 
         <div className="mt-5 overflow-hidden rounded-3xl border border-slate-200">
           <div className="overflow-x-auto">
@@ -638,7 +730,7 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
               </thead>
 
               <tbody>
-                {recipients.map((recipient) => (
+                {visibleRecipients.map((recipient) => (
                   <tr key={recipient.id} className="border-b border-slate-100">
                     <td className="px-4 py-4 font-semibold text-slate-950">
                       {recipient.nomeCompleto}
@@ -656,7 +748,10 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
                       </Badge>
                     </td>
                     <td className="px-4 py-4">
-                      <PromoStatusBadge recipient={recipient} />
+                      <PromoStatusBadge
+                        recipient={recipient}
+                        alreadyReceivedCurrentPromo={duplicatePromoIds.has(recipient.id)}
+                      />
                     </td>
                   </tr>
                 ))}
@@ -889,7 +984,7 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
                 <CompactStat
                   label="Clienti selezionati"
-                  value={String(recipients.length)}
+                  value={String(visibleRecipients.length)}
                 />
                 <CompactStat
                   label="Già inviati/esclusi"
@@ -959,7 +1054,8 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
 
                 <p className="text-xs text-slate-500">
                   I clienti senza consenso marketing, senza WhatsApp attivo o con
-                  promo già inviata oggi verranno saltati automaticamente.
+                  promo già inviata oggi o già raggiunti dalla stessa promo verranno
+                  saltati automaticamente.
                 </p>
               </div>
             </section>
@@ -1086,11 +1182,25 @@ function Badge({
   );
 }
 
-function PromoStatusBadge({ recipient }: { recipient: Recipient }) {
+function PromoStatusBadge({
+  recipient,
+  alreadyReceivedCurrentPromo,
+}: {
+  recipient: Recipient;
+  alreadyReceivedCurrentPromo: boolean;
+}) {
   if (recipient.promoSentToday) {
     return (
       <span className="inline-flex rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-xs font-semibold text-orange-700">
         Promo inviata oggi
+      </span>
+    );
+  }
+
+  if (alreadyReceivedCurrentPromo) {
+    return (
+      <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+        Già ricevuta questa promo
       </span>
     );
   }

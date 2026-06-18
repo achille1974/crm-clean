@@ -7,9 +7,12 @@ import {
   type CustomTemplateHeaderMedia,
 } from "@/lib/phonesia/whatsapp-template-payload";
 import {
+  buildDuplicatePromoClienteIds,
+  buildPromoKey,
   buildPromoSendSummaries,
   buildTodayPromoDateFilter,
   DAILY_WHATSAPP_PROMO_SKIP_REASON,
+  DUPLICATE_PROMO_SKIP_REASON,
   type PromoOpportunityHistoryRow,
 } from "@/lib/phonesia/opportunita-promo-history";
 
@@ -73,6 +76,7 @@ type SendResultRow = {
   bodyParameterNames?: string[];
   telefonoMascherato?: string | null;
   mediaUrl?: string | null;
+  skipped_reason?: string | null;
 };
 
 type MarketingRow = {
@@ -1172,6 +1176,7 @@ async function logOpportunitySend(
     metaMessages: Record<string, unknown>[];
     attachmentPublicUrl: string | null;
     attachmentFileName: string | null;
+    promoKey: string;
   },
 ) {
   try {
@@ -1190,6 +1195,7 @@ async function logOpportunitySend(
       metadata: {
         batch_id: params.batchId,
         negozio_contatto: params.negozioContatto,
+        promo_key: params.promoKey,
         template_name: params.templateName,
         template_usato: params.templateName,
         tipo_invio: params.sendMode,
@@ -1238,6 +1244,7 @@ async function logBatchSkipped(
     parameterFormat: "NAMED" | "POSITIONAL" | null;
     bodyParameterNames: string[];
     mediaUrl: string | null;
+    promoKey: string;
   },
 ) {
   try {
@@ -1256,6 +1263,7 @@ async function logBatchSkipped(
       metadata: {
         batch_id: params.batchId,
         negozio_contatto: params.negozioContatto,
+        promo_key: params.promoKey,
         template_name: params.templateName,
         template_usato: params.templateName,
         tipo_invio: params.sendMode,
@@ -1299,6 +1307,7 @@ async function saveOpportunitySentRow(
     negozioContatto: string;
     whatsappUrl: string;
     mapsUrl: string;
+    promoKey: string;
   },
 ) {
   const customPrefix =
@@ -1330,6 +1339,7 @@ async function saveOpportunitySentRow(
     negozio_contatto: params.negozioContatto,
     metadata: {
       template_name: params.templateName,
+      promo_key: params.promoKey,
       template_usato: params.templateName,
       tipo_invio: params.sendMode,
       send_mode: params.sendMode,
@@ -1561,6 +1571,20 @@ export async function POST(request: NextRequest) {
       globalSkipReason = "Carica un allegato compatibile con il template selezionato.";
     }
 
+    const requestedPromoKey =
+      messageMode === "custom"
+        ? buildPromoKey({
+            templateName: customTemplateConfig.templateName,
+            sendMode: customTemplateConfig.sendMode,
+            customMessage,
+            attachmentFileName: attachmentFileName || null,
+          })
+        : buildPromoKey({
+            templateName: WHATSAPP_TEMPLATE_OPPORTUNITA_NAME,
+            sendMode: "standard",
+            standardService,
+          });
+
     const mediaPreflight =
       messageMode === "custom" &&
       customTemplateConfig.headerKind &&
@@ -1593,6 +1617,7 @@ export async function POST(request: NextRequest) {
       { data: contrattiData, error: contrattiError },
       { data: alreadySentRows, error: alreadySentError },
       { data: todayPromoRows, error: todayPromoError },
+      { data: promoHistoryRows, error: promoHistoryError },
     ] = await Promise.all([
       supabase
         .from("phonesia_clienti")
@@ -1624,6 +1649,13 @@ export async function POST(request: NextRequest) {
         .in("cliente_id", clienteIds)
         .or(buildTodayPromoDateFilter())
         .limit(Math.max(100, clienteIds.length * 5)),
+      supabase
+        .from("phonesia_opportunita_inviate")
+        .select(
+          "cliente_id, opportunita_code, channel, sent_at, created_at, send_mode, inviato_at, messaggio, attachment_public_url, attachment_file_name, metadata",
+        )
+        .in("cliente_id", clienteIds)
+        .limit(Math.max(1000, clienteIds.length * 20)),
     ]);
 
     if (clientiError) {
@@ -1646,12 +1678,20 @@ export async function POST(request: NextRequest) {
       throw new Error(`Errore lettura promo già inviate oggi: ${todayPromoError.message}`);
     }
 
+    if (promoHistoryError) {
+      throw new Error(`Errore lettura storico promo WhatsApp: ${promoHistoryError.message}`);
+    }
+
     const clienti = (clientiData ?? []) as ClienteRow[];
     const contratti = (contrattiData ?? []) as ContrattoRow[];
     const marketingData = (marketingRows ?? []) as MarketingRow[];
     const alreadySentData = (alreadySentRows ?? []) as AlreadySentRow[];
     const todayPromoSummaries = buildPromoSendSummaries(
       (todayPromoRows ?? []) as PromoOpportunityHistoryRow[],
+    );
+    const duplicatePromoSentIds = buildDuplicatePromoClienteIds(
+      (promoHistoryRows ?? []) as PromoOpportunityHistoryRow[],
+      requestedPromoKey,
     );
 
     const clientiMap = new Map<number, ClienteRow>();
@@ -1708,6 +1748,7 @@ export async function POST(request: NextRequest) {
             messageMode === "custom" ? [...CUSTOM_MESSAGE_BODY_PARAMETER_NAMES] : [],
           telefonoMascherato: null,
           mediaUrl: null,
+          skipped_reason: "Cliente non trovato.",
         });
         continue;
       }
@@ -1803,6 +1844,7 @@ export async function POST(request: NextRequest) {
           parameterFormat,
           bodyParameterNames,
           mediaUrl,
+          promoKey: requestedPromoKey,
         });
 
         results.push({
@@ -1818,12 +1860,8 @@ export async function POST(request: NextRequest) {
           bodyParameterNames,
           telefonoMascherato: maskedPhone,
           mediaUrl,
+          skipped_reason: reason,
         });
-      }
-
-      if (todayPromoSentIds.has(clienteCorrente.id)) {
-        await pushSkipped(DAILY_WHATSAPP_PROMO_SKIP_REASON);
-        continue;
       }
 
       if (!marketingIds.has(clienteCorrente.id)) {
@@ -1838,6 +1876,16 @@ export async function POST(request: NextRequest) {
 
       if (!clienteCorrente.telefono) {
         await pushSkipped("Telefono mancante o non valido.");
+        continue;
+      }
+
+      if (todayPromoSentIds.has(clienteCorrente.id)) {
+        await pushSkipped(DAILY_WHATSAPP_PROMO_SKIP_REASON);
+        continue;
+      }
+
+      if (duplicatePromoSentIds.has(clienteCorrente.id)) {
+        await pushSkipped(DUPLICATE_PROMO_SKIP_REASON);
         continue;
       }
 
@@ -1973,6 +2021,7 @@ export async function POST(request: NextRequest) {
           negozioContatto: contactStore.label,
           whatsappUrl,
           mapsUrl: contactStore.mapsUrl,
+          promoKey: requestedPromoKey,
         });
 
         await logOpportunitySend(supabase, {
@@ -1990,6 +2039,7 @@ export async function POST(request: NextRequest) {
           metaMessages: metaSendResult.metaMessages,
           attachmentPublicUrl: messageMode === "custom" ? attachmentPublicUrl || null : null,
           attachmentFileName: messageMode === "custom" ? attachmentFileName || null : null,
+          promoKey: requestedPromoKey,
         });
 
         results.push({
@@ -2038,6 +2088,9 @@ export async function POST(request: NextRequest) {
     const sentCount = results.filter((row) => row.status === "sent").length;
     const failedCount = results.filter((row) => row.status === "failed").length;
     const skippedCount = results.filter((row) => row.status === "skipped").length;
+    const skippedDuplicatePromo = results.filter(
+      (row) => row.status === "skipped" && row.reason === DUPLICATE_PROMO_SKIP_REASON,
+    ).length;
 
     return NextResponse.json({
       ok: true,
@@ -2046,6 +2099,7 @@ export async function POST(request: NextRequest) {
       sentCount,
       failedCount,
       skippedCount,
+      skipped_duplicate_promo: skippedDuplicatePromo,
       blockedCount: skippedCount,
       errorCount: failedCount,
       results,

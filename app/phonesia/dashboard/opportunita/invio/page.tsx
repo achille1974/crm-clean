@@ -4,6 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 
 import OpportunityBatchComposer from "@/components/phonesia/dashboard/OpportunityBatchComposer";
 import {
+  buildPromoKeysByCliente,
   buildPromoSendSummaries,
   formatPromoSentAtRome,
   type PromoOpportunityHistoryRow,
@@ -140,7 +141,9 @@ export default async function DashboardOpportunitySendPage({ searchParams }: Pro
       .in("cliente_id", clienteIds),
     supabase
       .from("phonesia_opportunita_inviate")
-      .select("cliente_id, channel, sent_at, created_at, send_mode, inviato_at, metadata")
+      .select(
+        "cliente_id, opportunita_code, channel, sent_at, created_at, send_mode, inviato_at, messaggio, attachment_public_url, attachment_file_name, metadata",
+      )
       .in("cliente_id", clienteIds)
       .order("inviato_at", { ascending: false })
       .limit(5000),
@@ -166,6 +169,9 @@ export default async function DashboardOpportunitySendPage({ searchParams }: Pro
   if (clienti.length === 0) notFound();
 
   const promoSummaries = buildPromoSendSummaries(
+    (promoHistoryRows ?? []) as PromoOpportunityHistoryRow[],
+  );
+  const promoKeysByCliente = buildPromoKeysByCliente(
     (promoHistoryRows ?? []) as PromoOpportunityHistoryRow[],
   );
 
@@ -212,6 +218,7 @@ export default async function DashboardOpportunitySendPage({ searchParams }: Pro
         whatsappActive: recipient.whatsappActive,
         marketingConsented: recipient.marketingConsented,
         sentOpportunityCodes: recipient.sentOpportunityCodes,
+        sentPromoKeys: promoKeysByCliente.get(recipient.id) ?? [],
         promoSentToday: summary?.sentToday === true,
         lastPromoSentAt: summary?.lastSentAt ?? null,
         lastPromoSentAtLabel: summary?.lastSentAt

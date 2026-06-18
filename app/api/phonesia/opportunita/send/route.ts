@@ -7,6 +7,8 @@ import {
   type CustomTemplateHeaderMedia,
 } from "@/lib/phonesia/whatsapp-template-payload";
 import {
+  buildDuplicatePromoClienteIds,
+  buildPromoKey,
   buildPromoSendSummaries,
   buildTodayPromoDateFilter,
   DAILY_WHATSAPP_PROMO_SKIP_REASON,
@@ -1109,6 +1111,7 @@ async function logOpportunitySend(
     metaMessages: Record<string, unknown>[];
     attachmentPublicUrl: string | null;
     attachmentFileName: string | null;
+    promoKey: string;
   },
 ) {
   try {
@@ -1129,6 +1132,7 @@ async function logOpportunitySend(
       metadata: {
         servizi: params.services,
         negozio_contatto: params.negozioContatto,
+        promo_key: params.promoKey,
         template_name: params.templateName,
         template_usato: params.templateName,
         tipo_invio: params.sendMode,
@@ -1174,6 +1178,7 @@ async function saveSentOpportunities(
     metaMessages: Record<string, unknown>[];
     attachmentPublicUrl: string | null;
     attachmentFileName: string | null;
+    promoKey: string;
   },
 ) {
   const rows: OpportunityInsertRow[] = params.services.map((service) => ({
@@ -1190,6 +1195,7 @@ async function saveSentOpportunities(
     metadata: {
       services: params.services,
       maps_url: params.mapsUrl,
+      promo_key: params.promoKey,
       template_name: params.templateName,
       template_usato: params.templateName,
       tipo_invio: params.sendMode,
@@ -1254,6 +1260,7 @@ async function saveCustomMessageOpportunity(
     metaSendAttempts: MetaTemplateSendAttempt[];
     whatsappMessageId: string | null;
     metaMessages: Record<string, unknown>[];
+    promoKey: string;
   },
 ) {
   const codePrefix =
@@ -1276,6 +1283,7 @@ async function saveCustomMessageOpportunity(
     negozio_contatto: params.negozioContatto,
     metadata: {
       maps_url: params.mapsUrl,
+      promo_key: params.promoKey,
       template_name: params.templateName,
       template_usato: params.templateName,
       tipo_invio: params.sendMode,
@@ -1573,6 +1581,7 @@ export async function POST(request: NextRequest) {
       { data: contrattiData, error: contrattiError },
       { data: alreadySentData, error: alreadySentError },
       { data: todayPromoRows, error: todayPromoError },
+      { data: promoHistoryRows, error: promoHistoryError },
     ] = await Promise.all([
       supabase
         .from("phonesia_clienti")
@@ -1608,6 +1617,13 @@ export async function POST(request: NextRequest) {
         .eq("cliente_id", clienteId)
         .or(buildTodayPromoDateFilter())
         .limit(50),
+      supabase
+        .from("phonesia_opportunita_inviate")
+        .select(
+          "cliente_id, opportunita_code, channel, sent_at, created_at, send_mode, inviato_at, messaggio, attachment_public_url, attachment_file_name, metadata",
+        )
+        .eq("cliente_id", clienteId)
+        .limit(1000),
     ]);
 
     if (clienteError) {
@@ -1636,28 +1652,24 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (promoHistoryError) {
+      throw new Error(
+        `Errore lettura storico promo WhatsApp: ${promoHistoryError.message}`,
+      );
+    }
+
     const cliente = clienteData as ClienteRow | null;
     const contratti = (contrattiData ?? []) as ContrattoRow[];
     const alreadySentRows = (alreadySentData ?? []) as AlreadySentRow[];
     const todayPromoSummaries = buildPromoSendSummaries(
       (todayPromoRows ?? []) as PromoOpportunityHistoryRow[],
     );
+    const promoHistory = (promoHistoryRows ?? []) as PromoOpportunityHistoryRow[];
 
     if (!cliente) {
       return NextResponse.json(
         { ok: false, error: "cliente_non_trovato" },
         { status: 404 },
-      );
-    }
-
-    if (todayPromoSummaries.get(clienteId)?.sentToday) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "promo_whatsapp_gia_inviata_oggi",
-          message: `${DAILY_WHATSAPP_PROMO_SKIP_REASON} a questo cliente.`,
-        },
-        { status: 409 },
       );
     }
 
@@ -1689,6 +1701,59 @@ export async function POST(request: NextRequest) {
           ok: false,
           error: "telefono_mancante",
           message: "Il cliente non ha un numero di telefono valido.",
+        },
+        { status: 409 },
+      );
+    }
+
+    const metaRecipient = toMetaRecipient(cliente.telefono);
+
+    if (!metaRecipient) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "telefono_non_valido",
+          message: "Il numero di telefono del cliente non è valido per WhatsApp.",
+        },
+        { status: 409 },
+      );
+    }
+
+    if (todayPromoSummaries.get(clienteId)?.sentToday) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "promo_whatsapp_gia_inviata_oggi",
+          message: `${DAILY_WHATSAPP_PROMO_SKIP_REASON} a questo cliente.`,
+        },
+        { status: 409 },
+      );
+    }
+
+    const requestedPromoKey =
+      messageMode === "custom"
+        ? buildPromoKey({
+            templateName: customTemplateConfig.templateName,
+            sendMode: customTemplateConfig.sendMode,
+            customMessage,
+            attachmentFileName,
+          })
+        : buildPromoKey({
+            templateName: attachmentPublicUrl
+              ? WHATSAPP_TEMPLATE_OPPORTUNITA_MEDIA_NAME
+              : WHATSAPP_TEMPLATE_OPPORTUNITA_NAME,
+            sendMode: attachmentPublicUrl ? "standard_media" : "standard",
+            standardService: [...services].sort().join("|"),
+            attachmentPublicUrl,
+            attachmentFileName,
+          });
+
+    if (buildDuplicatePromoClienteIds(promoHistory, requestedPromoKey).has(clienteId)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "promo_gia_inviata",
+          message: "Questa promo è già stata inviata a questo cliente.",
         },
         { status: 409 },
       );
@@ -1730,19 +1795,6 @@ export async function POST(request: NextRequest) {
       sanitizeWhatsAppTemplateText(cliente.nome ?? "") || "cliente";
 
     const offerText = buildOfferText(servicesToSend);
-
-    const metaRecipient = toMetaRecipient(cliente.telefono);
-
-    if (!metaRecipient) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "telefono_non_valido",
-          message: "Il numero di telefono del cliente non è valido per WhatsApp.",
-        },
-        { status: 409 },
-      );
-    }
 
     if (messageMode === "custom") {
       let metaSendResult: MetaTemplateSendResult;
@@ -1896,6 +1948,7 @@ export async function POST(request: NextRequest) {
         metaSendAttempts: metaSendResult.attempts,
         whatsappMessageId: metaSendResult.whatsappMessageId,
         metaMessages: metaSendResult.metaMessages,
+        promoKey: requestedPromoKey,
       });
 
       await logOpportunitySend(supabase, {
@@ -1912,6 +1965,7 @@ export async function POST(request: NextRequest) {
         metaMessages: metaSendResult.metaMessages,
         attachmentPublicUrl,
         attachmentFileName,
+        promoKey: requestedPromoKey,
       });
 
       return NextResponse.json({
@@ -2033,6 +2087,7 @@ export async function POST(request: NextRequest) {
       metaMessages: metaSendResult.metaMessages,
       attachmentPublicUrl,
       attachmentFileName,
+      promoKey: requestedPromoKey,
     });
 
     await logOpportunitySend(supabase, {
@@ -2047,6 +2102,7 @@ export async function POST(request: NextRequest) {
       metaMessages: metaSendResult.metaMessages,
       attachmentPublicUrl,
       attachmentFileName,
+      promoKey: requestedPromoKey,
     });
 
     return NextResponse.json({
