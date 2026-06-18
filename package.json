@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "beltrami:servizi:dry-run": "node scripts/beltrami/import-servizi-scadenze.js --dry-run"
+    "beltrami:servizi:dry-run": "node scripts/beltrami/import-servizi-scadenze.js --dry-run",
+    "beltrami:servizi:dry-run:live": "node scripts/beltrami/import-servizi-scadenze.js --dry-run --live"
   },
   "dependencies": {
     "@supabase/ssr": "^0.10.3",

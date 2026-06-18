@@ -6,8 +6,15 @@ const xlsx = require("xlsx");
 const DRIVE_ROOT =
   "/Users/archimede/Il mio Drive/CRM_IMPORT/BELTRAMI_1876/SERVIZI_SCADENZE";
 const INBOX_DIR = path.join(DRIVE_ROOT, "inbox");
+const LIVE_FILE = path.join(DRIVE_ROOT, "beltrami_1876_servizi_scadenze_LIVE.xlsx");
+const SNAPSHOTS_DIR = path.join(DRIVE_ROOT, "snapshots");
+const REPORTS_DIR = path.join(DRIVE_ROOT, "reports");
+const LOCAL_STATE_DIR =
+  "/Users/archimede/CRM_LOCAL_NON_COMMITTARE/beltrami-import-servizi";
+const LIVE_STATE_FILE = path.join(LOCAL_STATE_DIR, "beltrami_servizi_live_state.json");
 const SHEET_NAME = "SERVIZI_SCADENZE";
 const UPCOMING_REMINDER_DAYS = 7;
+const FILE_STABILITY_WAIT_MS = 3000;
 
 const EXPECTED_HEADERS = [
   "nome",
@@ -30,6 +37,8 @@ function parseArgs(argv) {
   const args = {
     dryRun: false,
     file: null,
+    live: false,
+    force: false,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -37,6 +46,10 @@ function parseArgs(argv) {
 
     if (arg === "--dry-run") {
       args.dryRun = true;
+    } else if (arg === "--live") {
+      args.live = true;
+    } else if (arg === "--force") {
+      args.force = true;
     } else if (arg === "--file") {
       args.file = argv[++i];
     } else if (arg.startsWith("--file=")) {
@@ -48,6 +61,9 @@ function parseArgs(argv) {
 
   if (!args.dryRun) {
     throw new Error("Per ora lo script supporta solo --dry-run.");
+  }
+  if (args.live && args.file) {
+    throw new Error("Usa --live oppure --file, non entrambi.");
   }
 
   return args;
@@ -108,6 +124,130 @@ function isEmptyRow(row) {
 
 function sha256Buffer(buffer) {
   return crypto.createHash("sha256").update(buffer).digest("hex");
+}
+
+function sha256File(filePath) {
+  return sha256Buffer(fs.readFileSync(filePath));
+}
+
+function ensureDir(dir) {
+  fs.mkdirSync(dir, { recursive: true });
+}
+
+function pad2(value) {
+  return String(value).padStart(2, "0");
+}
+
+function timestampForFile(date = new Date()) {
+  return [
+    date.getFullYear(),
+    pad2(date.getMonth() + 1),
+    pad2(date.getDate()),
+    "_",
+    pad2(date.getHours()),
+    pad2(date.getMinutes()),
+    pad2(date.getSeconds()),
+  ].join("");
+}
+
+function readJsonFile(filePath) {
+  if (!fs.existsSync(filePath)) return null;
+
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function writeJsonFile(filePath, value) {
+  ensureDir(path.dirname(filePath));
+  fs.writeFileSync(`${filePath}.tmp`, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  fs.renameSync(`${filePath}.tmp`, filePath);
+}
+
+function getFileState(filePath) {
+  const stat = fs.statSync(filePath);
+  return {
+    size: stat.size,
+    mtimeMs: stat.mtimeMs,
+  };
+}
+
+function isSameFileState(left, right) {
+  return left.size === right.size && left.mtimeMs === right.mtimeMs;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function waitForStableFile(filePath) {
+  const before = getFileState(filePath);
+  await sleep(FILE_STABILITY_WAIT_MS);
+  const after = getFileState(filePath);
+
+  return {
+    stable: isSameFileState(before, after),
+    before,
+    after,
+  };
+}
+
+function findLatestSnapshotForHash(fileHash) {
+  if (!fs.existsSync(SNAPSHOTS_DIR)) return null;
+
+  const hash8 = fileHash.slice(0, 8);
+  const snapshots = fs
+    .readdirSync(SNAPSHOTS_DIR)
+    .filter((entry) => entry.endsWith(`_${hash8}.xlsx`))
+    .map((entry) => {
+      const filePath = path.join(SNAPSHOTS_DIR, entry);
+      return {
+        filePath,
+        mtimeMs: fs.statSync(filePath).mtimeMs,
+      };
+    })
+    .sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+  return snapshots[0]?.filePath ?? null;
+}
+
+function createLiveSnapshot(filePath, fileHash, force) {
+  ensureDir(SNAPSHOTS_DIR);
+
+  const existingSnapshot = force ? null : findLatestSnapshotForHash(fileHash);
+  if (existingSnapshot) {
+    return {
+      path: existingSnapshot,
+      created: false,
+    };
+  }
+
+  const hash8 = fileHash.slice(0, 8);
+  const timestamp = timestampForFile();
+  let snapshotPath = path.join(
+    SNAPSHOTS_DIR,
+    `beltrami_1876_servizi_scadenze_${timestamp}_${hash8}.xlsx`,
+  );
+  let suffix = 2;
+
+  while (fs.existsSync(snapshotPath)) {
+    snapshotPath = path.join(
+      SNAPSHOTS_DIR,
+      `beltrami_1876_servizi_scadenze_${timestamp}_${hash8}_${suffix}.xlsx`,
+    );
+    suffix += 1;
+  }
+
+  fs.copyFileSync(filePath, snapshotPath, fs.constants.COPYFILE_EXCL);
+
+  return {
+    path: snapshotPath,
+    created: true,
+  };
 }
 
 function stableJson(value) {
@@ -392,9 +532,8 @@ function isImportableXlsx(filePath) {
   return baseName.toLowerCase().endsWith(".xlsx") && !baseName.startsWith("~$");
 }
 
-function analyzeFile(filePath) {
-  const buffer = fs.readFileSync(filePath);
-  const fileHash = sha256Buffer(buffer);
+function analyzeFile(filePath, metadata = {}) {
+  const fileHash = sha256File(filePath);
   const workbook = xlsx.readFile(filePath, {
     cellDates: true,
     raw: true,
@@ -418,6 +557,9 @@ function analyzeFile(filePath) {
   if (headerErrors.length > 0) {
     return {
       filePath,
+      inputFilePath: metadata.inputFilePath || filePath,
+      snapshotPath: metadata.snapshotPath || null,
+      snapshotCreated: Boolean(metadata.snapshotCreated),
       fileName: path.basename(filePath),
       fileHash,
       headerErrors,
@@ -466,6 +608,9 @@ function analyzeFile(filePath) {
 
   return {
     filePath,
+    inputFilePath: metadata.inputFilePath || filePath,
+    snapshotPath: metadata.snapshotPath || null,
+    snapshotCreated: Boolean(metadata.snapshotCreated),
     fileName: path.basename(filePath),
     fileHash,
     headerErrors: [],
@@ -504,7 +649,16 @@ function summarize(results) {
 
 function printResult(result) {
   console.log("");
-  console.log(`File: ${result.filePath}`);
+  if (result.inputFilePath !== result.filePath) {
+    console.log(`File LIVE: ${result.inputFilePath}`);
+    console.log(`Snapshot letto: ${result.filePath}`);
+  } else {
+    console.log(`File: ${result.filePath}`);
+  }
+  if (result.snapshotPath) {
+    console.log(`Snapshot: ${result.snapshotPath}`);
+    console.log(`Snapshot creato: ${result.snapshotCreated ? "si" : "no, riusato snapshot esistente"}`);
+  }
   console.log(`Hash file SHA256: ${result.fileHash}`);
 
   if (result.headerErrors.length > 0) {
@@ -542,8 +696,187 @@ function printResult(result) {
   }
 }
 
-function main() {
+function countResultErrors(result) {
+  return result.errorRows.length + (result.headerErrors.length > 0 ? 1 : 0);
+}
+
+function buildReport({ mode, force, liveFilePath, snapshot, results, summary }) {
+  const lines = [
+    "DRY-RUN BELTRAMI 1876 - SERVIZI E SCADENZE",
+    "",
+    `Modalita: ${mode}`,
+    `Force: ${force ? "si" : "no"}`,
+    `Creato il: ${new Date().toISOString()}`,
+    "",
+  ];
+
+  if (liveFilePath) {
+    lines.push(`File LIVE letto: ${liveFilePath}`);
+  }
+  if (snapshot) {
+    lines.push(`Snapshot: ${snapshot.path}`);
+    lines.push(`Snapshot creato: ${snapshot.created ? "si" : "no, riusato snapshot esistente"}`);
+  }
+
+  lines.push("");
+  lines.push("Riepilogo:");
+  lines.push(`- file analizzati: ${summary.files}`);
+  lines.push(`- righe totali: ${summary.totalRows}`);
+  lines.push(`- righe valide: ${summary.validRows}`);
+  lines.push(`- righe errore: ${summary.errorRows}`);
+  lines.push(`- righe ignorate: ${summary.skippedRows}`);
+  lines.push(`- prossime scadenze entro ${UPCOMING_REMINDER_DAYS} giorni: ${summary.upcomingExpiries}`);
+  lines.push(`- righe senza consenso non verificabile in dry-run: ${summary.consentNotVerifiableRows}`);
+
+  for (const result of results) {
+    lines.push("");
+    lines.push(`File: ${result.inputFilePath}`);
+    if (result.snapshotPath) {
+      lines.push(`Snapshot letto: ${result.snapshotPath}`);
+    }
+    lines.push(`Hash file: ${result.fileHash}`);
+    lines.push(`Righe totali: ${result.totalRows}`);
+    lines.push(`Righe valide: ${result.validRows.length}`);
+    lines.push(`Righe errore: ${countResultErrors(result)}`);
+    lines.push(`Righe ignorate: ${result.skippedRows}`);
+    lines.push(`Prossime scadenze entro ${UPCOMING_REMINDER_DAYS} giorni: ${result.upcomingExpiries.length}`);
+    lines.push(`Righe senza consenso non verificabile in dry-run: ${result.consentNotVerifiableRows}`);
+
+    if (result.upcomingExpiries.length > 0) {
+      lines.push("");
+      lines.push("Prossime scadenze:");
+      for (const row of result.upcomingExpiries) {
+        lines.push(
+          `- riga ${row.source_row_index}: ${row.nome} ${row.cognome}, ${row.servizio}, ${row.data_scadenza}`,
+        );
+      }
+    }
+
+    if (result.headerErrors.length > 0 || result.errorRows.length > 0) {
+      lines.push("");
+      lines.push("Errori:");
+
+      for (const error of result.headerErrors) {
+        lines.push(
+          `- header colonna ${error.column}: atteso "${error.expected}", trovato "${error.actual}"`,
+        );
+      }
+
+      for (const row of result.errorRows) {
+        lines.push(`- riga ${row.normalized.source_row_index}: ${row.errors.join("; ")}`);
+      }
+    } else {
+      lines.push("");
+      lines.push("Errori: nessuno");
+    }
+  }
+
+  lines.push("");
+  return `${lines.join("\n")}\n`;
+}
+
+function writeReport(params) {
+  ensureDir(REPORTS_DIR);
+  const reportPath = path.join(
+    REPORTS_DIR,
+    `dry_run_beltrami_servizi_${timestampForFile()}.txt`,
+  );
+
+  fs.writeFileSync(reportPath, buildReport(params), "utf8");
+  return reportPath;
+}
+
+function updateLiveState(state) {
+  writeJsonFile(LIVE_STATE_FILE, {
+    last_file_hash: state.last_file_hash,
+    last_checked_at: state.last_checked_at,
+    last_snapshot_path: state.last_snapshot_path,
+    last_valid_rows: state.last_valid_rows,
+    last_error_rows: state.last_error_rows,
+  });
+}
+
+async function runLiveDryRun(args) {
+  if (!fs.existsSync(LIVE_FILE)) {
+    throw new Error(`File LIVE non trovato: ${LIVE_FILE}`);
+  }
+
+  console.log("DRY-RUN LIVE: nessuna scrittura su Supabase, nessun invio WhatsApp, nessuno spostamento file.");
+  console.log(`Root Drive: ${DRIVE_ROOT}`);
+  console.log(`File LIVE: ${LIVE_FILE}`);
+  console.log(`Controllo stabilita file: ${FILE_STABILITY_WAIT_MS}ms`);
+
+  const stability = await waitForStableFile(LIVE_FILE);
+
+  if (!stability.stable) {
+    console.log("file ancora in aggiornamento: size/mtime cambiati durante il controllo stabilita.");
+    console.log(JSON.stringify(stability, null, 2));
+    return;
+  }
+
+  const fileHash = sha256File(LIVE_FILE);
+  const previousState = readJsonFile(LIVE_STATE_FILE);
+  const checkedAt = new Date().toISOString();
+
+  if (!args.force && previousState?.last_file_hash === fileHash) {
+    updateLiveState({
+      ...previousState,
+      last_file_hash: fileHash,
+      last_checked_at: checkedAt,
+      last_snapshot_path: previousState.last_snapshot_path || null,
+      last_valid_rows: previousState.last_valid_rows ?? 0,
+      last_error_rows: previousState.last_error_rows ?? 0,
+    });
+    console.log("nessuna modifica rilevata: hash file invariato.");
+    console.log(`Hash file SHA256: ${fileHash}`);
+    console.log("Snapshot creato: no");
+    console.log("Report creato: no");
+    return;
+  }
+
+  const snapshot = createLiveSnapshot(LIVE_FILE, fileHash, args.force);
+  const result = analyzeFile(snapshot.path, {
+    inputFilePath: LIVE_FILE,
+    snapshotPath: snapshot.path,
+    snapshotCreated: snapshot.created,
+  });
+  const results = [result];
+  const summary = summarize(results);
+  const reportPath = writeReport({
+    mode: "live",
+    force: args.force,
+    liveFilePath: LIVE_FILE,
+    snapshot,
+    results,
+    summary,
+  });
+
+  console.log(`Foglio atteso: ${SHEET_NAME}`);
+  console.log("File analizzati: 1");
+  results.forEach(printResult);
+
+  console.log("");
+  console.log("Riepilogo dry-run:");
+  console.log(JSON.stringify(summary, null, 2));
+  console.log(`Report dry-run: ${reportPath}`);
+
+  updateLiveState({
+    last_file_hash: fileHash,
+    last_checked_at: checkedAt,
+    last_snapshot_path: snapshot.path,
+    last_valid_rows: result.validRows.length,
+    last_error_rows: countResultErrors(result),
+  });
+}
+
+async function main() {
   const args = parseArgs(process.argv.slice(2));
+
+  if (args.live) {
+    await runLiveDryRun(args);
+    return;
+  }
+
   const files = listInputFiles(args);
 
   console.log("DRY-RUN: nessuna scrittura su Supabase, nessun invio WhatsApp, nessuno spostamento file.");
@@ -567,7 +900,10 @@ function main() {
 }
 
 try {
-  main();
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : error);
+    process.exit(1);
+  });
 } catch (error) {
   console.error(error instanceof Error ? error.message : error);
   process.exit(1);
