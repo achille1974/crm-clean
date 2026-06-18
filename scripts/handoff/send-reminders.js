@@ -408,6 +408,12 @@ async function main() {
   const phonesiaDbKeys = ["NEXT_PUBLIC_SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"];
   const beltramiDbKeys = ["BELTRAMI_SUPABASE_URL", "BELTRAMI_SUPABASE_SERVICE_ROLE_KEY"];
 
+  if (args.apply && env.HANDOFF_REMINDERS_APPLY_ENABLED !== "true") {
+    console.error("Apply reminder disabilitato: template o autorizzazione non pronti.");
+    process.exitCode = 1;
+    return;
+  }
+
   if (args.apply) {
     requireEnv(env, phonesiaDbKeys, "Phonesia DB");
     requireEnv(env, beltramiDbKeys, "Beltrami DB");
