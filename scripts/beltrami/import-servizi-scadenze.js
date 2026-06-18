@@ -25,6 +25,19 @@ const EXPECTED_HEADERS = [
   "servizio",
   "data_attivazione",
   "data_scadenza",
+  "durata_servizio",
+  "note",
+];
+
+const LEGACY_HEADERS = [
+  "nome",
+  "cognome",
+  "telefono",
+  "email",
+  "codice_fiscale",
+  "servizio",
+  "data_attivazione",
+  "data_scadenza",
   "durata_valore",
   "durata_unita",
   "note",
@@ -94,6 +107,13 @@ function normalizeHeader(value) {
   return compactSpaces(value).toLowerCase();
 }
 
+function normalizeDurationText(value) {
+  return compactSpaces(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
 function normalizeItalianWhatsappPhone(value) {
   let digits = String(value ?? "").replace(/\D/g, "");
 
@@ -118,8 +138,8 @@ function isEmptyCell(value) {
   return value === null || value === undefined || compactSpaces(value) === "";
 }
 
-function isEmptyRow(row) {
-  return EXPECTED_HEADERS.every((_, index) => isEmptyCell(row[index]));
+function isEmptyRow(row, headers = EXPECTED_HEADERS) {
+  return headers.every((_, index) => isEmptyCell(row[index]));
 }
 
 function sha256Buffer(buffer) {
@@ -284,6 +304,106 @@ function parseInteger(value) {
   return number;
 }
 
+function formatDurationLabel(value, unit) {
+  if (value === null || value === undefined || value === "") return null;
+
+  if (unit === "years") {
+    return value === 1 ? "1 anno" : `${value} anni`;
+  }
+  if (unit === "months") {
+    return value === 1 ? "1 mese" : `${value} mesi`;
+  }
+  if (unit === "days") {
+    return value === 1 ? "1 giorno" : `${value} giorni`;
+  }
+
+  return null;
+}
+
+function normalizeLegacyDurationUnit(value) {
+  const unit = normalizeDurationText(value);
+
+  if (unit === "year" || unit === "years" || unit === "anno" || unit === "anni") {
+    return "years";
+  }
+  if (unit === "month" || unit === "months" || unit === "mese" || unit === "mesi") {
+    return "months";
+  }
+  if (unit === "day" || unit === "days" || unit === "giorno" || unit === "giorni") {
+    return "days";
+  }
+
+  return unit || null;
+}
+
+function buildLegacyDurationService(value, unit) {
+  const durationValue = parseInteger(value);
+  const durationUnit = normalizeLegacyDurationUnit(unit);
+  return formatDurationLabel(durationValue, durationUnit);
+}
+
+function parseDurationService(value) {
+  const raw = compactSpaces(value);
+  if (!raw) {
+    return {
+      raw: null,
+      value: null,
+      unit: null,
+      ok: false,
+      reason: "durata_servizio vuota",
+    };
+  }
+
+  const normalized = normalizeDurationText(raw);
+  const presets = {
+    annuale: { value: 1, unit: "years" },
+    biennale: { value: 2, unit: "years" },
+    semestrale: { value: 6, unit: "months" },
+  };
+
+  if (presets[normalized]) {
+    return {
+      raw,
+      ...presets[normalized],
+      ok: true,
+      reason: null,
+    };
+  }
+
+  const match = normalized.match(/^(\d+)\s*(anno|anni|year|years|mese|mesi|month|months|giorno|giorni|day|days)$/);
+
+  if (!match) {
+    return {
+      raw,
+      value: null,
+      unit: null,
+      ok: false,
+      reason: "durata_servizio non interpretabile",
+    };
+  }
+
+  const durationValue = Number(match[1]);
+  const durationUnit = normalizeLegacyDurationUnit(match[2]);
+
+  if (!Number.isInteger(durationValue) || durationValue <= 0 || !DURATION_UNITS.has(durationUnit)) {
+    return {
+      raw,
+      value: null,
+      unit: null,
+      ok: false,
+      reason: "durata_servizio non valida",
+    };
+  }
+
+  return {
+    raw,
+    value: durationValue,
+    unit: durationUnit,
+    ok: true,
+    reason: null,
+  };
+}
+
 function parseDate(value) {
   if (isEmptyCell(value)) return null;
 
@@ -398,15 +518,39 @@ function isWithinNextDays(dateString, days) {
   return date >= today && date <= end;
 }
 
-function validateHeaders(headerRow) {
+function matchHeaderFormat(headerRow, expectedHeaders) {
+  const actual = expectedHeaders.map((_, index) => normalizeHeader(headerRow[index]));
+  const expected = expectedHeaders.map(normalizeHeader);
+
+  return expected.every((header, index) => actual[index] === header);
+}
+
+function detectHeaderFormat(headerRow) {
+  if (matchHeaderFormat(headerRow, EXPECTED_HEADERS)) {
+    return {
+      ok: true,
+      headers: EXPECTED_HEADERS,
+      format: "durata_servizio",
+      errors: [],
+    };
+  }
+
+  if (matchHeaderFormat(headerRow, LEGACY_HEADERS)) {
+    return {
+      ok: true,
+      headers: LEGACY_HEADERS,
+      format: "legacy_durata_valore_unita",
+      errors: [],
+    };
+  }
+
   const actual = EXPECTED_HEADERS.map((_, index) => normalizeHeader(headerRow[index]));
   const expected = EXPECTED_HEADERS.map(normalizeHeader);
-
-  const mismatches = [];
+  const errors = [];
 
   for (let i = 0; i < expected.length; i += 1) {
     if (actual[i] !== expected[i]) {
-      mismatches.push({
+      errors.push({
         column: i + 1,
         expected: EXPECTED_HEADERS[i],
         actual: headerRow[i] === undefined ? "" : String(headerRow[i]),
@@ -414,11 +558,16 @@ function validateHeaders(headerRow) {
     }
   }
 
-  return mismatches;
+  return {
+    ok: false,
+    headers: EXPECTED_HEADERS,
+    format: null,
+    errors,
+  };
 }
 
-function rowToObject(row) {
-  return EXPECTED_HEADERS.reduce((acc, header, index) => {
+function rowToObject(row, headers = EXPECTED_HEADERS) {
+  return headers.reduce((acc, header, index) => {
     acc[header] = row[index] ?? "";
     return acc;
   }, {});
@@ -426,6 +575,7 @@ function rowToObject(row) {
 
 function normalizeRow(raw, sourceRowIndex) {
   const errors = [];
+  const warnings = [];
   const nome = normalizeOptionalText(raw.nome);
   const cognome = normalizeOptionalText(raw.cognome);
   const telefono = normalizeOptionalText(raw.telefono);
@@ -436,8 +586,13 @@ function normalizeRow(raw, sourceRowIndex) {
   const note = normalizeOptionalText(raw.note);
   const dataAttivazione = parseDate(raw.data_attivazione);
   const dataScadenzaInput = parseDate(raw.data_scadenza);
-  const durataValore = parseInteger(raw.durata_valore);
-  const durataUnita = normalizeOptionalText(raw.durata_unita)?.toLowerCase() ?? null;
+  const legacyDurationService = buildLegacyDurationService(raw.durata_valore, raw.durata_unita);
+  const durataServizio = normalizeOptionalText(raw.durata_servizio) || legacyDurationService;
+  const parsedDuration = parseDurationService(durataServizio);
+  const durataValore = parsedDuration.ok ? parsedDuration.value : parseInteger(raw.durata_valore);
+  const durataUnita = parsedDuration.ok
+    ? parsedDuration.unit
+    : normalizeLegacyDurationUnit(raw.durata_unita);
 
   if (!nome) errors.push("nome obbligatorio");
   if (!cognome) errors.push("cognome obbligatorio");
@@ -453,26 +608,35 @@ function normalizeRow(raw, sourceRowIndex) {
     errors.push("data_scadenza non valida");
   }
 
-  if (!isEmptyCell(raw.durata_valore) && durataValore === null) {
-    errors.push("durata_valore deve essere un numero intero");
-  }
-
-  if (durataValore !== null && durataValore <= 0) {
-    errors.push("durata_valore deve essere maggiore di zero");
-  }
-
-  if (durataUnita && !DURATION_UNITS.has(durataUnita)) {
-    errors.push("durata_unita deve essere days, months oppure years");
+  if (durataServizio && !parsedDuration.ok) {
+    const message = parsedDuration.reason || "durata_servizio non interpretabile";
+    if (dataScadenzaInput) {
+      warnings.push(message);
+    } else {
+      errors.push(message);
+    }
   }
 
   let dataScadenza = dataScadenzaInput;
+  let dataScadenzaTeorica = null;
 
   if (!dataScadenza) {
-    if (!dataAttivazione || durataValore === null || !durataUnita || !DURATION_UNITS.has(durataUnita)) {
-      errors.push("scadenza mancante: indicare data_scadenza oppure data_attivazione + durata");
-    } else if (durataValore > 0) {
+    if (!dataAttivazione || !parsedDuration.ok) {
+      errors.push(
+        "scadenza mancante: indicare data_scadenza oppure data_attivazione + durata_servizio interpretabile",
+      );
+    } else {
       const calculated = addDuration(parseDateString(dataAttivazione), durataValore, durataUnita);
       dataScadenza = calculated ? formatDate(calculated) : null;
+    }
+  } else if (dataAttivazione && parsedDuration.ok) {
+    const calculated = addDuration(parseDateString(dataAttivazione), durataValore, durataUnita);
+    dataScadenzaTeorica = calculated ? formatDate(calculated) : null;
+
+    if (dataScadenzaTeorica && dataScadenzaTeorica !== dataScadenza) {
+      warnings.push(
+        `data_scadenza diversa da scadenza teorica calcolata da durata_servizio (${dataScadenzaTeorica})`,
+      );
     }
   }
 
@@ -487,6 +651,8 @@ function normalizeRow(raw, sourceRowIndex) {
     servizio,
     data_attivazione: dataAttivazione,
     data_scadenza: dataScadenza,
+    data_scadenza_teorica: dataScadenzaTeorica,
+    durata_servizio: durataServizio,
     durata_valore: durataValore,
     durata_unita: durataUnita,
     note,
@@ -495,6 +661,7 @@ function normalizeRow(raw, sourceRowIndex) {
   return {
     ok: errors.length === 0,
     errors,
+    warnings,
     normalized,
     raw,
     row_hash: sha256Buffer(Buffer.from(stableJson(raw), "utf8")),
@@ -552,9 +719,9 @@ function analyzeFile(filePath, metadata = {}) {
   });
 
   const headerRow = rows[0] || [];
-  const headerErrors = validateHeaders(headerRow);
+  const headerCheck = detectHeaderFormat(headerRow);
 
-  if (headerErrors.length > 0) {
+  if (!headerCheck.ok) {
     return {
       filePath,
       inputFilePath: metadata.inputFilePath || filePath,
@@ -562,11 +729,13 @@ function analyzeFile(filePath, metadata = {}) {
       snapshotCreated: Boolean(metadata.snapshotCreated),
       fileName: path.basename(filePath),
       fileHash,
-      headerErrors,
+      headerErrors: headerCheck.errors,
+      headerFormat: null,
       totalRows: 0,
       validRows: [],
       errorRows: [],
       skippedRows: 0,
+      warningRows: [],
       upcomingExpiries: [],
       consentNotVerifiableRows: 0,
     };
@@ -579,13 +748,13 @@ function analyzeFile(filePath, metadata = {}) {
   for (let index = 1; index < rows.length; index += 1) {
     const row = rows[index] || [];
 
-    if (isEmptyRow(row)) {
+    if (isEmptyRow(row, headerCheck.headers)) {
       skippedRows += 1;
       continue;
     }
 
     const sourceRowIndex = index + 1;
-    const raw = rowToObject(row);
+    const raw = rowToObject(row, headerCheck.headers);
     const result = normalizeRow(raw, sourceRowIndex);
 
     if (result.ok) {
@@ -595,6 +764,7 @@ function analyzeFile(filePath, metadata = {}) {
     }
   }
 
+  const warningRows = validRows.filter((row) => row.warnings.length > 0);
   const upcomingExpiries = validRows
     .filter((row) => isWithinNextDays(row.normalized.data_scadenza, UPCOMING_REMINDER_DAYS))
     .map((row) => ({
@@ -614,10 +784,12 @@ function analyzeFile(filePath, metadata = {}) {
     fileName: path.basename(filePath),
     fileHash,
     headerErrors: [],
+    headerFormat: headerCheck.format,
     totalRows: validRows.length + errorRows.length,
     validRows,
     errorRows,
     skippedRows,
+    warningRows,
     upcomingExpiries,
     consentNotVerifiableRows: validRows.length,
   };
@@ -631,6 +803,7 @@ function summarize(results) {
       acc.validRows += result.validRows.length;
       acc.errorRows += result.errorRows.length + (result.headerErrors.length > 0 ? 1 : 0);
       acc.skippedRows += result.skippedRows;
+      acc.warningRows += result.warningRows.length;
       acc.upcomingExpiries += result.upcomingExpiries.length;
       acc.consentNotVerifiableRows += result.consentNotVerifiableRows;
       return acc;
@@ -641,6 +814,7 @@ function summarize(results) {
       validRows: 0,
       errorRows: 0,
       skippedRows: 0,
+      warningRows: 0,
       upcomingExpiries: 0,
       consentNotVerifiableRows: 0,
     },
@@ -668,16 +842,32 @@ function printResult(result) {
   }
 
   console.log("Header: OK");
+  console.log(`Formato header: ${result.headerFormat}`);
   console.log(`Righe totali: ${result.totalRows}`);
   console.log(`Righe valide: ${result.validRows.length}`);
   console.log(`Righe errore: ${result.errorRows.length}`);
   console.log(`Righe ignorate: ${result.skippedRows}`);
+  console.log(`Righe con warning: ${result.warningRows.length}`);
   console.log(`Prossime scadenze entro ${UPCOMING_REMINDER_DAYS} giorni: ${result.upcomingExpiries.length}`);
   console.log(`Righe con consenso mancante non verificabile in dry-run: ${result.consentNotVerifiableRows}`);
 
   if (result.upcomingExpiries.length > 0) {
     console.log("Scadenze prossime:");
     console.log(JSON.stringify(result.upcomingExpiries, null, 2));
+  }
+
+  if (result.warningRows.length > 0) {
+    console.log("Warning righe:");
+    console.log(
+      JSON.stringify(
+        result.warningRows.map((row) => ({
+          source_row_index: row.normalized.source_row_index,
+          warnings: row.warnings,
+        })),
+        null,
+        2,
+      ),
+    );
   }
 
   if (result.errorRows.length > 0) {
@@ -725,6 +915,7 @@ function buildReport({ mode, force, liveFilePath, snapshot, results, summary }) 
   lines.push(`- righe valide: ${summary.validRows}`);
   lines.push(`- righe errore: ${summary.errorRows}`);
   lines.push(`- righe ignorate: ${summary.skippedRows}`);
+  lines.push(`- righe con warning: ${summary.warningRows}`);
   lines.push(`- prossime scadenze entro ${UPCOMING_REMINDER_DAYS} giorni: ${summary.upcomingExpiries}`);
   lines.push(`- righe senza consenso non verificabile in dry-run: ${summary.consentNotVerifiableRows}`);
 
@@ -735,10 +926,12 @@ function buildReport({ mode, force, liveFilePath, snapshot, results, summary }) 
       lines.push(`Snapshot letto: ${result.snapshotPath}`);
     }
     lines.push(`Hash file: ${result.fileHash}`);
+    lines.push(`Formato header: ${result.headerFormat || "non valido"}`);
     lines.push(`Righe totali: ${result.totalRows}`);
     lines.push(`Righe valide: ${result.validRows.length}`);
     lines.push(`Righe errore: ${countResultErrors(result)}`);
     lines.push(`Righe ignorate: ${result.skippedRows}`);
+    lines.push(`Righe con warning: ${result.warningRows.length}`);
     lines.push(`Prossime scadenze entro ${UPCOMING_REMINDER_DAYS} giorni: ${result.upcomingExpiries.length}`);
     lines.push(`Righe senza consenso non verificabile in dry-run: ${result.consentNotVerifiableRows}`);
 
@@ -749,6 +942,14 @@ function buildReport({ mode, force, liveFilePath, snapshot, results, summary }) 
         lines.push(
           `- riga ${row.source_row_index}: ${row.nome} ${row.cognome}, ${row.servizio}, ${row.data_scadenza}`,
         );
+      }
+    }
+
+    if (result.warningRows.length > 0) {
+      lines.push("");
+      lines.push("Warning:");
+      for (const row of result.warningRows) {
+        lines.push(`- riga ${row.normalized.source_row_index}: ${row.warnings.join("; ")}`);
       }
     }
 

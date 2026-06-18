@@ -17,6 +17,7 @@ create table if not exists public.beltrami_servizi_cliente (
   servizio text not null,
   data_attivazione date,
   data_scadenza date not null,
+  durata_servizio text,
   durata_valore integer,
   durata_unita text,
   stato text not null default 'attivo',
@@ -90,3 +91,8 @@ alter table public.beltrami_servizi_cliente enable row level security;
 alter table public.beltrami_import_batches enable row level security;
 alter table public.beltrami_import_rows enable row level security;
 alter table public.beltrami_reminder_invii enable row level security;
+
+-- Migrazione idempotente per installazioni create prima della semplificazione Excel.
+-- Non applicare automaticamente: eseguire manualmente solo dopo revisione.
+alter table public.beltrami_servizi_cliente
+  add column if not exists durata_servizio text;
