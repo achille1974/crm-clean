@@ -6,7 +6,7 @@ const { createClient } = require("@supabase/supabase-js");
 
 const DEFAULT_APP_URL = "https://app.crm-supreme.it";
 const GRAPH_API_VERSION = "v23.0";
-const PHONESIA_REMINDER_TEMPLATE_NAME = "ph_rem_24h_v1";
+const PHONESIA_REMINDER_TEMPLATE_NAME = "ph_rem_24h_v2";
 const BELTRAMI_REMINDER_TEMPLATE_NAME = "bel_rem_24h_v1";
 const TEMPLATE_LANGUAGE = "it";
 const MAX_ROWS_PER_AREA = 200;
