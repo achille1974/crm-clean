@@ -80,16 +80,24 @@ export type BeltramiNotifySendResult = {
   whatsappMessageId: string | null;
   templateName: string;
   toPhone: string | null;
+  parameterFormat: BeltramiNotifyParameterFormat | null;
   errorDetails: BeltramiMetaErrorDetails | null;
+  initialErrorDetails: BeltramiMetaErrorDetails | null;
   rawJson: BeltramiMetaErrorRawJson | null;
 };
 
 type BeltramiNotifyTemplateParameterName =
   (typeof BELTRAMI_NOTIFY_TEMPLATE_PARAMETER_NAMES)[number];
+type BeltramiNotifyParameterFormat = "named" | "positional";
 
 type BeltramiNamedTextParameter = {
   type: "text";
   parameter_name: BeltramiNotifyTemplateParameterName;
+  text: string;
+};
+
+type BeltramiPositionalTextParameter = {
+  type: "text";
   text: string;
 };
 
@@ -105,7 +113,7 @@ type BeltramiNotifyTemplatePayload = {
     components: [
       {
         type: "body";
-        parameters: BeltramiNamedTextParameter[];
+        parameters: Array<BeltramiNamedTextParameter | BeltramiPositionalTextParameter>;
       },
     ];
   };
@@ -143,15 +151,41 @@ function buildNamedTextParameter(
   };
 }
 
+function buildPositionalTextParameter(
+  value: string,
+  maxLength: number,
+): BeltramiPositionalTextParameter {
+  return {
+    type: "text",
+    text: compactTemplateText(value, maxLength),
+  };
+}
+
 function buildBeltramiNotifyTemplatePayload(params: {
   to: string;
   languageCode: string;
+  parameterFormat: BeltramiNotifyParameterFormat;
   clienteNome: string;
   telefonoCliente: string;
   messaggioCliente: string;
   replyUrl: string;
   markDoneUrl: string;
 }): BeltramiNotifyTemplatePayload {
+  const namedParameters: BeltramiNamedTextParameter[] = [
+    buildNamedTextParameter(PARAM_CLIENTE_NOME, params.clienteNome, 120),
+    buildNamedTextParameter(PARAM_CLIENTE_TELEFONO, params.telefonoCliente, 60),
+    buildNamedTextParameter(PARAM_MESSAGGIO_CLIENTE, params.messaggioCliente, 320),
+    buildNamedTextParameter(PARAM_LINK_RISPOSTA, params.replyUrl, 500),
+    buildNamedTextParameter(PARAM_LINK_CHIUSURA, params.markDoneUrl, 500),
+  ];
+  const positionalParameters: BeltramiPositionalTextParameter[] = [
+    buildPositionalTextParameter(params.clienteNome, 120),
+    buildPositionalTextParameter(params.telefonoCliente, 60),
+    buildPositionalTextParameter(params.messaggioCliente, 320),
+    buildPositionalTextParameter(params.replyUrl, 500),
+    buildPositionalTextParameter(params.markDoneUrl, 500),
+  ];
+
   return {
     messaging_product: "whatsapp",
     to: params.to,
@@ -164,25 +198,23 @@ function buildBeltramiNotifyTemplatePayload(params: {
       components: [
         {
           type: "body",
-          parameters: [
-            buildNamedTextParameter(PARAM_CLIENTE_NOME, params.clienteNome, 120),
-            buildNamedTextParameter(
-              PARAM_CLIENTE_TELEFONO,
-              params.telefonoCliente,
-              60,
-            ),
-            buildNamedTextParameter(
-              PARAM_MESSAGGIO_CLIENTE,
-              params.messaggioCliente,
-              320,
-            ),
-            buildNamedTextParameter(PARAM_LINK_RISPOSTA, params.replyUrl, 500),
-            buildNamedTextParameter(PARAM_LINK_CHIUSURA, params.markDoneUrl, 500),
-          ],
+          parameters:
+            params.parameterFormat === "named"
+              ? namedParameters
+              : positionalParameters,
         },
       ],
     },
   };
+}
+
+function isParameterFormatMismatch(details: BeltramiMetaErrorDetails) {
+  return (
+    details.code === 132012 ||
+    String(details.message ?? "")
+      .toLowerCase()
+      .includes("parameter format does not match")
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -410,7 +442,9 @@ export async function sendBeltramiNotifyMessage(params: {
       whatsappMessageId: null,
       templateName,
       toPhone: notifyTo ?? null,
+      parameterFormat: null,
       errorDetails: null,
+      initialErrorDetails: null,
       rawJson: null,
     };
   }
@@ -425,16 +459,20 @@ export async function sendBeltramiNotifyMessage(params: {
       whatsappMessageId: null,
       templateName,
       toPhone: notifyTo,
+      parameterFormat: null,
       errorDetails: null,
+      initialErrorDetails: null,
       rawJson: null,
     };
   }
 
-  const payload = buildBeltramiNotifyTemplatePayload({
+  const languageCode =
+    process.env.BELTRAMI_WHATSAPP_NOTIFY_TEMPLATE_LANGUAGE ||
+    NOTIFY_TEMPLATE_LANGUAGE;
+  const namedPayload = buildBeltramiNotifyTemplatePayload({
     to,
-    languageCode:
-      process.env.BELTRAMI_WHATSAPP_NOTIFY_TEMPLATE_LANGUAGE ||
-      NOTIFY_TEMPLATE_LANGUAGE,
+    languageCode,
+    parameterFormat: "named",
     clienteNome: params.clienteNome,
     telefonoCliente: params.telefonoCliente,
     messaggioCliente: params.messaggioCliente,
@@ -443,20 +481,67 @@ export async function sendBeltramiNotifyMessage(params: {
   });
 
   try {
-    const response = await fetch(
-      `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`,
-      {
+    const sendPayload = (payload: BeltramiNotifyTemplatePayload) =>
+      fetch(`https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify(payload),
-      },
-    );
+      });
+    const response = await sendPayload(namedPayload);
 
     if (!response.ok) {
-      const metaError = await readMetaErrorResponse(response);
+      const namedMetaError = await readMetaErrorResponse(response);
+
+      if (isParameterFormatMismatch(namedMetaError.errorDetails)) {
+        const positionalPayload = buildBeltramiNotifyTemplatePayload({
+          to,
+          languageCode,
+          parameterFormat: "positional",
+          clienteNome: params.clienteNome,
+          telefonoCliente: params.telefonoCliente,
+          messaggioCliente: params.messaggioCliente,
+          replyUrl: params.replyUrl,
+          markDoneUrl: params.markDoneUrl,
+        });
+        const positionalResponse = await sendPayload(positionalPayload);
+
+        if (positionalResponse.ok) {
+          const result = (await positionalResponse
+            .json()
+            .catch(() => null)) as MetaMessageResponse | null;
+
+          return {
+            status: "sent",
+            reason: "sent",
+            error: null,
+            whatsappMessageId: result?.messages?.[0]?.id ?? null,
+            templateName,
+            toPhone: to,
+            parameterFormat: "positional",
+            errorDetails: null,
+            initialErrorDetails: namedMetaError.errorDetails,
+            rawJson: null,
+          };
+        }
+
+        const positionalMetaError = await readMetaErrorResponse(positionalResponse);
+
+        return {
+          status: "failed",
+          reason: "meta_rejected",
+          error: "meta_send_failed",
+          whatsappMessageId: null,
+          templateName,
+          toPhone: to,
+          parameterFormat: "positional",
+          errorDetails: positionalMetaError.errorDetails,
+          initialErrorDetails: namedMetaError.errorDetails,
+          rawJson: positionalMetaError.rawJson,
+        };
+      }
 
       return {
         status: "failed",
@@ -465,8 +550,10 @@ export async function sendBeltramiNotifyMessage(params: {
         whatsappMessageId: null,
         templateName,
         toPhone: to,
-        errorDetails: metaError.errorDetails,
-        rawJson: metaError.rawJson,
+        parameterFormat: "named",
+        errorDetails: namedMetaError.errorDetails,
+        initialErrorDetails: null,
+        rawJson: namedMetaError.rawJson,
       };
     }
 
@@ -479,7 +566,9 @@ export async function sendBeltramiNotifyMessage(params: {
       whatsappMessageId: result?.messages?.[0]?.id ?? null,
       templateName,
       toPhone: to,
+      parameterFormat: "named",
       errorDetails: null,
+      initialErrorDetails: null,
       rawJson: null,
     };
   } catch {
@@ -490,7 +579,9 @@ export async function sendBeltramiNotifyMessage(params: {
       whatsappMessageId: null,
       templateName,
       toPhone: to,
+      parameterFormat: null,
       errorDetails: null,
+      initialErrorDetails: null,
       rawJson: null,
     };
   }

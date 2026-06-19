@@ -339,6 +339,8 @@ async function saveNotificationOutbound(params: {
         reply_url: params.replyUrl,
         mark_done_url: params.markDoneUrl,
         notify_error: params.notifyResult.error,
+        parameter_format: params.notifyResult.parameterFormat,
+        initial_meta_error_details: params.notifyResult.initialErrorDetails,
         meta_error_details: params.notifyResult.errorDetails,
       },
     })
@@ -451,7 +453,9 @@ async function notifyBeltramiIfNeeded(params: {
         whatsappMessageId: null,
         templateName: BELTRAMI_NOTIFY_TEMPLATE_NAME,
         toPhone: process.env.BELTRAMI_WHATSAPP_NOTIFY_TO_PHONE ?? null,
+        parameterFormat: null,
         errorDetails: null,
+        initialErrorDetails: null,
         rawJson: null,
       };
 
