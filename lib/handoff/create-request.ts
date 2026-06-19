@@ -6,6 +6,7 @@ import type { HandoffTableName } from "./mark-done";
 import { generateHandoffToken, hashHandoffToken } from "./tokens";
 
 type HandoffBusinessArea = "phonesia" | "beltrami";
+const CANONICAL_WHATSAPP_BASE_URL = "https://app.crm-supreme.it";
 
 export type CreateHandoffRequestResult = {
   id: number | string;
@@ -16,7 +17,7 @@ export type CreateHandoffRequestResult = {
 type JsonRecord = Record<string, unknown>;
 
 function getPublicBaseUrl() {
-  return (process.env.NEXT_PUBLIC_APP_URL || "https://app.crm-supreme.it").replace(/\/+$/, "");
+  return CANONICAL_WHATSAPP_BASE_URL;
 }
 
 function addHours(date: Date, hours: number) {

@@ -135,8 +135,8 @@ function toMetaRecipient(rawPhone) {
   return /^\d+$/.test(numeric) ? numeric : null;
 }
 
-function getPublicBaseUrl(env) {
-  return String(env.NEXT_PUBLIC_APP_URL || DEFAULT_APP_URL).replace(/\/+$/, "");
+function getPublicBaseUrl() {
+  return DEFAULT_APP_URL;
 }
 
 function toAbsoluteUrl(value, baseUrl) {
@@ -404,7 +404,7 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   const env = loadEnv();
   const nowIso = new Date().toISOString();
-  const baseUrl = getPublicBaseUrl(env);
+  const baseUrl = getPublicBaseUrl();
   const graphApiVersion = env.WHATSAPP_GRAPH_API_VERSION || GRAPH_API_VERSION;
   const phonesiaDbKeys = ["NEXT_PUBLIC_SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"];
   const beltramiDbKeys = ["BELTRAMI_SUPABASE_URL", "BELTRAMI_SUPABASE_SERVICE_ROLE_KEY"];

@@ -15,7 +15,7 @@ const WHATSAPP_WELCOME_TEMPLATE_LANGUAGE =
   process.env.WHATSAPP_WELCOME_TEMPLATE_LANGUAGE || "it";
 
 const WELCOME_HEADER_IMAGE_URL =
-  "https://crm-clean.vercel.app/phonesia/welcome-header.jpg";
+  "https://app.crm-supreme.it/phonesia/welcome-header.jpg";
 
 const STORE_CONTACTS: Record<number, { label: string; mapsUrl: string }> = {
   1: {
@@ -45,15 +45,6 @@ const STORE_CONTACTS: Record<number, { label: string; mapsUrl: string }> = {
   },
 };
 
-type ClienteRow = {
-  id: number;
-  telefono: string | null;
-  negozio_id: number | null;
-  whatsapp_active: boolean | null;
-  whatsapp_activated_at: string | null;
-  welcome_sent_at: string | null;
-};
-
 function getSupabaseAdmin() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -78,8 +69,6 @@ async function sendTemplate(params: {
   mapsUrl: string;
   clienteId: number;
 }) {
-  const feedbackUrl = `https://crm-clean.vercel.app/phonesia/feedback?cliente_id=${params.clienteId}`;
-
   const response = await fetch(
     `https://graph.facebook.com/${GRAPH_API_VERSION}/${WHATSAPP_PHONE_NUMBER_ID}/messages`,
     {

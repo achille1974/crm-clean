@@ -18,7 +18,7 @@ const WHATSAPP_ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN;
 const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
 const WHATSAPP_WEBHOOK_VERIFY_TOKEN = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
 const PHONESIA_AGENT_SHARED_SECRET = process.env.PHONESIA_AGENT_SHARED_SECRET;
-const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || "https://crm-clean.vercel.app";
+const BASE_URL = "https://app.crm-supreme.it";
 
 const WHATSAPP_STORE_HANDOFF_TEMPLATE_NAME = "ph_reply_done_v1";
 const WHATSAPP_STORE_HANDOFF_FALLBACK_TEMPLATE_NAME = "ph_notif_negozio_reply_v1";
@@ -1492,7 +1492,7 @@ export async function POST(request: Request) {
         crmPhone: inbound.crmPhone,
         crmPhoneNumberId: inbound.crmPhoneNumberId,
         rawMessage: inbound.rawMessage,
-        publicBaseUrl: origin,
+        publicBaseUrl: BASE_URL,
         hasPhonesiaMatch: Boolean(cliente),
       });
 

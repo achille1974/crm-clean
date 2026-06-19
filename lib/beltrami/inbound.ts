@@ -2,7 +2,6 @@ import "server-only";
 
 import { createBeltramiSupabaseAdmin } from "./supabase";
 import {
-  BELTRAMI_NOTIFY_FALLBACK_TEMPLATE_NAME,
   BELTRAMI_NOTIFY_TEMPLATE_NAME,
   sendBeltramiNotifyMessage,
   type BeltramiNotifySendResult,
@@ -15,6 +14,7 @@ import {
 } from "@/lib/handoff/create-request";
 
 const LAST_TOUCH_WINDOW_DAYS = 14;
+const CANONICAL_WHATSAPP_BASE_URL = "https://app.crm-supreme.it";
 
 type BeltramiSupabaseAdmin = ReturnType<typeof createBeltramiSupabaseAdmin>;
 
@@ -124,10 +124,6 @@ function isRecentTimestamp(value: string | null | undefined): boolean {
   return Number.isFinite(timestamp) && timestamp >= getLastTouchCutoff();
 }
 
-function getPublicBaseUrl(value: string) {
-  return String(value || "https://app.crm-supreme.it").replace(/\/+$/, "");
-}
-
 function normalizeMetaId(value: string | null | undefined): string | null {
   const text = String(value ?? "").trim();
   return text || null;
@@ -147,11 +143,10 @@ function isDedicatedBeltramiPhoneNumberId(value: string | null | undefined): boo
 }
 
 function buildBeltramiReplyUrl(params: {
-  publicBaseUrl: string;
   telefonoCliente: string;
 }): string {
   const telefono = normalizePhoneForMeta(params.telefonoCliente) || params.telefonoCliente;
-  const url = new URL(`/beltrami/w/${telefono}`, getPublicBaseUrl(params.publicBaseUrl));
+  const url = new URL(`/beltrami/w/${telefono}`, CANONICAL_WHATSAPP_BASE_URL);
   return url.toString();
 }
 
@@ -321,6 +316,7 @@ async function saveNotificationOutbound(params: {
   inbound: RouteBeltramiInboundParams;
   notifyResult: BeltramiNotifySendResult;
   replyUrl: string;
+  markDoneUrl: string | null;
   notificationKey: string | null;
 }): Promise<number | string | null> {
   const { data, error } = await params.supabase
@@ -337,10 +333,13 @@ async function saveNotificationOutbound(params: {
       status: params.notifyResult.status,
       status_reason: params.notifyResult.reason,
       notification_key: params.notificationKey,
+      raw_json: params.notifyResult.rawJson,
       metadata: {
         source: "meta_whatsapp_inbound",
         reply_url: params.replyUrl,
+        mark_done_url: params.markDoneUrl,
         notify_error: params.notifyResult.error,
+        meta_error_details: params.notifyResult.errorDetails,
       },
     })
     .select("id")
@@ -426,7 +425,6 @@ async function notifyBeltramiIfNeeded(params: {
     normalizePhoneForMeta(params.inbound.waId) ||
     params.inbound.waId;
   const replyUrl = buildBeltramiReplyUrl({
-    publicBaseUrl: params.inbound.publicBaseUrl,
     telefonoCliente,
   });
   const handoffRequest = await createBeltramiHandoffRequest({
@@ -437,30 +435,33 @@ async function notifyBeltramiIfNeeded(params: {
     notificationKey,
     destinazionePhone: process.env.BELTRAMI_WHATSAPP_NOTIFY_TO_PHONE ?? null,
   });
-  let notifyResult = await sendBeltramiNotifyMessage({
-    clienteNome: getFullName(params.cliente),
-    telefonoCliente,
-    messaggioCliente: params.inbound.body,
-    replyUrl,
-    markDoneUrl: handoffRequest?.markDoneUrl,
-    templateName: handoffRequest
-      ? BELTRAMI_NOTIFY_TEMPLATE_NAME
-      : BELTRAMI_NOTIFY_FALLBACK_TEMPLATE_NAME,
-  });
 
-  if (notifyResult.status !== "sent" && handoffRequest) {
-    console.error("Errore invio template handoff Beltrami primario:", {
+  const notifyResult: BeltramiNotifySendResult = handoffRequest
+    ? await sendBeltramiNotifyMessage({
+        clienteNome: getFullName(params.cliente),
+        telefonoCliente,
+        messaggioCliente: params.inbound.body,
+        replyUrl,
+        markDoneUrl: handoffRequest.markDoneUrl,
+        templateName: BELTRAMI_NOTIFY_TEMPLATE_NAME,
+      })
+    : {
+        status: "skipped",
+        reason: "handoff_unavailable",
+        error: "handoff_request_unavailable",
+        whatsappMessageId: null,
+        templateName: BELTRAMI_NOTIFY_TEMPLATE_NAME,
+        toPhone: process.env.BELTRAMI_WHATSAPP_NOTIFY_TO_PHONE ?? null,
+        errorDetails: null,
+        rawJson: null,
+      };
+
+  if (notifyResult.status !== "sent") {
+    console.error("Errore invio template handoff Beltrami:", {
       status: notifyResult.status,
       reason: notifyResult.reason,
       templateName: notifyResult.templateName,
-    });
-
-    notifyResult = await sendBeltramiNotifyMessage({
-      clienteNome: getFullName(params.cliente),
-      telefonoCliente,
-      messaggioCliente: params.inbound.body,
-      replyUrl,
-      templateName: BELTRAMI_NOTIFY_FALLBACK_TEMPLATE_NAME,
+      metaError: notifyResult.errorDetails,
     });
   }
 
@@ -470,6 +471,7 @@ async function notifyBeltramiIfNeeded(params: {
     inbound: params.inbound,
     notifyResult,
     replyUrl,
+    markDoneUrl: handoffRequest?.markDoneUrl ?? null,
     notificationKey,
   });
 

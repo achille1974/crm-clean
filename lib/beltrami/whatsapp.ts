@@ -4,7 +4,6 @@ const WELCOME_FALLBACK_TEMPLATE_NAME = "beltrami_benvenuto_v1";
 const DEFAULT_WELCOME_IMAGE_URL =
   "https://app.crm-supreme.it/beltrami/logo-whatsapp.jpg";
 export const BELTRAMI_NOTIFY_TEMPLATE_NAME = "bel_reply_done_v1";
-export const BELTRAMI_NOTIFY_FALLBACK_TEMPLATE_NAME = "beltrami_reply_v1";
 const DEFAULT_NOTIFY_TEMPLATE_NAME = BELTRAMI_NOTIFY_TEMPLATE_NAME;
 const WELCOME_TEMPLATE_LANGUAGE = "it";
 const NOTIFY_TEMPLATE_LANGUAGE = "it";
@@ -61,12 +60,15 @@ export type BeltramiNotifySendResult = {
     | "sent"
     | "missing_configuration"
     | "invalid_phone"
+    | "handoff_unavailable"
     | "meta_rejected"
     | "network_error";
   error: string | null;
   whatsappMessageId: string | null;
   templateName: string;
   toPhone: string | null;
+  errorDetails: BeltramiMetaErrorDetails | null;
+  rawJson: BeltramiMetaErrorRawJson | null;
 };
 
 function toMetaRecipient(rawPhone: string): string | null {
@@ -299,7 +301,7 @@ export async function sendBeltramiNotifyMessage(params: {
   telefonoCliente: string;
   messaggioCliente: string;
   replyUrl: string;
-  markDoneUrl?: string;
+  markDoneUrl: string;
   templateName?: string;
 }): Promise<BeltramiNotifySendResult> {
   const accessToken = process.env.BELTRAMI_WHATSAPP_ACCESS_TOKEN;
@@ -315,6 +317,8 @@ export async function sendBeltramiNotifyMessage(params: {
       whatsappMessageId: null,
       templateName,
       toPhone: notifyTo ?? null,
+      errorDetails: null,
+      rawJson: null,
     };
   }
 
@@ -328,60 +332,38 @@ export async function sendBeltramiNotifyMessage(params: {
       whatsappMessageId: null,
       templateName,
       toPhone: notifyTo,
+      errorDetails: null,
+      rawJson: null,
     };
   }
 
-  const bodyParameters =
-    templateName === BELTRAMI_NOTIFY_FALLBACK_TEMPLATE_NAME
-      ? [
-          {
-            type: "text",
-            parameter_name: "cliente_nome",
-            text: compactTemplateText(params.clienteNome, 120),
-          },
-          {
-            type: "text",
-            parameter_name: "cliente_telefono",
-            text: compactTemplateText(params.telefonoCliente, 60),
-          },
-          {
-            type: "text",
-            parameter_name: "messaggio_cliente",
-            text: compactTemplateText(params.messaggioCliente, 320),
-          },
-          {
-            type: "text",
-            parameter_name: "link_risposta",
-            text: compactTemplateText(params.replyUrl, 500),
-          },
-        ]
-      : [
-          {
-            type: "text",
-            parameter_name: "cliente_nome",
-            text: compactTemplateText(params.clienteNome, 120),
-          },
-          {
-            type: "text",
-            parameter_name: "cliente_telefono",
-            text: compactTemplateText(params.telefonoCliente, 60),
-          },
-          {
-            type: "text",
-            parameter_name: "messaggio_cliente",
-            text: compactTemplateText(params.messaggioCliente, 320),
-          },
-          {
-            type: "text",
-            parameter_name: "link_risposta",
-            text: compactTemplateText(params.replyUrl, 500),
-          },
-          {
-            type: "text",
-            parameter_name: "link_chiusura",
-            text: compactTemplateText(params.markDoneUrl ?? "", 500),
-          },
-        ];
+  const bodyParameters = [
+    {
+      type: "text",
+      parameter_name: "cliente_nome",
+      text: compactTemplateText(params.clienteNome, 120),
+    },
+    {
+      type: "text",
+      parameter_name: "cliente_telefono",
+      text: compactTemplateText(params.telefonoCliente, 60),
+    },
+    {
+      type: "text",
+      parameter_name: "messaggio_cliente",
+      text: compactTemplateText(params.messaggioCliente, 320),
+    },
+    {
+      type: "text",
+      parameter_name: "link_risposta",
+      text: compactTemplateText(params.replyUrl, 500),
+    },
+    {
+      type: "text",
+      parameter_name: "link_chiusura",
+      text: compactTemplateText(params.markDoneUrl, 500),
+    },
+  ];
 
   try {
     const response = await fetch(
@@ -413,6 +395,8 @@ export async function sendBeltramiNotifyMessage(params: {
     );
 
     if (!response.ok) {
+      const metaError = await readMetaErrorResponse(response);
+
       return {
         status: "failed",
         reason: "meta_rejected",
@@ -420,6 +404,8 @@ export async function sendBeltramiNotifyMessage(params: {
         whatsappMessageId: null,
         templateName,
         toPhone: to,
+        errorDetails: metaError.errorDetails,
+        rawJson: metaError.rawJson,
       };
     }
 
@@ -432,6 +418,8 @@ export async function sendBeltramiNotifyMessage(params: {
       whatsappMessageId: result?.messages?.[0]?.id ?? null,
       templateName,
       toPhone: to,
+      errorDetails: null,
+      rawJson: null,
     };
   } catch {
     return {
@@ -441,6 +429,8 @@ export async function sendBeltramiNotifyMessage(params: {
       whatsappMessageId: null,
       templateName,
       toPhone: to,
+      errorDetails: null,
+      rawJson: null,
     };
   }
 }

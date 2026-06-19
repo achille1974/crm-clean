@@ -55,7 +55,7 @@ const WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_DOCUMENT_NAME = "ph_msg_doc_v1";
 const MAX_CUSTOM_MESSAGE_LENGTH = 320;
 
 const OPPORTUNITA_HEADER_IMAGE_URL =
-  "https://crm-clean.vercel.app/phonesia/welcome-header.jpg";
+  "https://app.crm-supreme.it/phonesia/welcome-header.jpg";
 
 type ServiceFamily = (typeof SERVICE_COLUMNS)[number];
 
