@@ -1,11 +1,17 @@
 const GRAPH_API_VERSION = "v23.0";
 const DEFAULT_WELCOME_TEMPLATE_NAME = "bel_welcome_img_v1";
 const WELCOME_FALLBACK_TEMPLATE_NAME = "beltrami_benvenuto_v1";
+const CANONICAL_WHATSAPP_BASE_URL = "https://app.crm-supreme.it";
 const DEFAULT_WELCOME_IMAGE_URL =
   "https://app.crm-supreme.it/beltrami/logo-whatsapp.jpg";
 export const BELTRAMI_NOTIFY_TEMPLATE_NAME = "bel_reply_done_v1";
 const WELCOME_TEMPLATE_LANGUAGE = "it";
 const NOTIFY_TEMPLATE_LANGUAGE = "it";
+const BELTRAMI_NOTIFY_TEMPLATE_BODY_PARAMETER_NAMES = [
+  "cliente_nome",
+  "cliente_telefono",
+  "messaggio_cliente",
+] as const;
 const BELTRAMI_NOTIFY_TEMPLATE_PARAMETER_NAMES = [
   "cliente_nome",
   "cliente_telefono",
@@ -88,7 +94,11 @@ export type BeltramiNotifySendResult = {
 
 type BeltramiNotifyTemplateParameterName =
   (typeof BELTRAMI_NOTIFY_TEMPLATE_PARAMETER_NAMES)[number];
-type BeltramiNotifyParameterFormat = "named" | "positional";
+type BeltramiNotifyParameterFormat =
+  | "named"
+  | "positional"
+  | "named_url_buttons"
+  | "positional_url_buttons";
 
 type BeltramiNamedTextParameter = {
   type: "text";
@@ -110,12 +120,20 @@ type BeltramiNotifyTemplatePayload = {
     language: {
       code: string;
     };
-    components: [
-      {
-        type: "body";
-        parameters: Array<BeltramiNamedTextParameter | BeltramiPositionalTextParameter>;
-      },
-    ];
+    components: Array<
+      | {
+          type: "body";
+          parameters: Array<
+            BeltramiNamedTextParameter | BeltramiPositionalTextParameter
+          >;
+        }
+      | {
+          type: "button";
+          sub_type: "url";
+          index: "0" | "1";
+          parameters: [BeltramiPositionalTextParameter];
+        }
+    >;
   };
 };
 
@@ -161,6 +179,44 @@ function buildPositionalTextParameter(
   };
 }
 
+function usesNamedBodyParameters(format: BeltramiNotifyParameterFormat) {
+  return format === "named" || format === "named_url_buttons";
+}
+
+function usesUrlButtonParameters(format: BeltramiNotifyParameterFormat) {
+  return format === "named_url_buttons" || format === "positional_url_buttons";
+}
+
+function stripUrlButtonPrefix(value: string, prefixes: string[]): string {
+  const normalized = (() => {
+    try {
+      return new URL(value).toString();
+    } catch {
+      return value;
+    }
+  })();
+
+  for (const prefix of prefixes) {
+    if (normalized.startsWith(prefix)) {
+      return normalized.slice(prefix.length);
+    }
+  }
+
+  return normalized;
+}
+
+function toReplyUrlButtonParameter(value: string): string {
+  return stripUrlButtonPrefix(value, [
+    `${CANONICAL_WHATSAPP_BASE_URL}/beltrami/w/`,
+  ]);
+}
+
+function toMarkDoneUrlButtonParameter(value: string): string {
+  return stripUrlButtonPrefix(value, [
+    `${CANONICAL_WHATSAPP_BASE_URL}/beltrami/handoff/`,
+  ]);
+}
+
 function buildBeltramiNotifyTemplatePayload(params: {
   to: string;
   languageCode: string;
@@ -171,20 +227,87 @@ function buildBeltramiNotifyTemplatePayload(params: {
   replyUrl: string;
   markDoneUrl: string;
 }): BeltramiNotifyTemplatePayload {
-  const namedParameters: BeltramiNamedTextParameter[] = [
-    buildNamedTextParameter(PARAM_CLIENTE_NOME, params.clienteNome, 120),
-    buildNamedTextParameter(PARAM_CLIENTE_TELEFONO, params.telefonoCliente, 60),
-    buildNamedTextParameter(PARAM_MESSAGGIO_CLIENTE, params.messaggioCliente, 320),
-    buildNamedTextParameter(PARAM_LINK_RISPOSTA, params.replyUrl, 500),
-    buildNamedTextParameter(PARAM_LINK_CHIUSURA, params.markDoneUrl, 500),
+  const namedTextByParameterName: Record<
+    BeltramiNotifyTemplateParameterName,
+    BeltramiNamedTextParameter
+  > = {
+    cliente_nome: buildNamedTextParameter(
+      PARAM_CLIENTE_NOME,
+      params.clienteNome,
+      120,
+    ),
+    cliente_telefono: buildNamedTextParameter(
+      PARAM_CLIENTE_TELEFONO,
+      params.telefonoCliente,
+      60,
+    ),
+    messaggio_cliente: buildNamedTextParameter(
+      PARAM_MESSAGGIO_CLIENTE,
+      params.messaggioCliente,
+      320,
+    ),
+    link_risposta: buildNamedTextParameter(
+      PARAM_LINK_RISPOSTA,
+      params.replyUrl,
+      500,
+    ),
+    link_chiusura: buildNamedTextParameter(
+      PARAM_LINK_CHIUSURA,
+      params.markDoneUrl,
+      500,
+    ),
+  };
+  const positionalTextByParameterName: Record<
+    BeltramiNotifyTemplateParameterName,
+    BeltramiPositionalTextParameter
+  > = {
+    cliente_nome: buildPositionalTextParameter(params.clienteNome, 120),
+    cliente_telefono: buildPositionalTextParameter(params.telefonoCliente, 60),
+    messaggio_cliente: buildPositionalTextParameter(params.messaggioCliente, 320),
+    link_risposta: buildPositionalTextParameter(params.replyUrl, 500),
+    link_chiusura: buildPositionalTextParameter(params.markDoneUrl, 500),
+  };
+  const bodyParameterNames = usesUrlButtonParameters(params.parameterFormat)
+    ? BELTRAMI_NOTIFY_TEMPLATE_BODY_PARAMETER_NAMES
+    : BELTRAMI_NOTIFY_TEMPLATE_PARAMETER_NAMES;
+  const bodyParameters = bodyParameterNames.map((parameterName) =>
+    usesNamedBodyParameters(params.parameterFormat)
+      ? namedTextByParameterName[parameterName]
+      : positionalTextByParameterName[parameterName],
+  );
+  const components: BeltramiNotifyTemplatePayload["template"]["components"] = [
+    {
+      type: "body",
+      parameters: bodyParameters,
+    },
   ];
-  const positionalParameters: BeltramiPositionalTextParameter[] = [
-    buildPositionalTextParameter(params.clienteNome, 120),
-    buildPositionalTextParameter(params.telefonoCliente, 60),
-    buildPositionalTextParameter(params.messaggioCliente, 320),
-    buildPositionalTextParameter(params.replyUrl, 500),
-    buildPositionalTextParameter(params.markDoneUrl, 500),
-  ];
+
+  if (usesUrlButtonParameters(params.parameterFormat)) {
+    components.push(
+      {
+        type: "button",
+        sub_type: "url",
+        index: "0",
+        parameters: [
+          buildPositionalTextParameter(
+            toReplyUrlButtonParameter(params.replyUrl),
+            500,
+          ),
+        ],
+      },
+      {
+        type: "button",
+        sub_type: "url",
+        index: "1",
+        parameters: [
+          buildPositionalTextParameter(
+            toMarkDoneUrlButtonParameter(params.markDoneUrl),
+            500,
+          ),
+        ],
+      },
+    );
+  }
 
   return {
     messaging_product: "whatsapp",
@@ -195,15 +318,7 @@ function buildBeltramiNotifyTemplatePayload(params: {
       language: {
         code: params.languageCode,
       },
-      components: [
-        {
-          type: "body",
-          parameters:
-            params.parameterFormat === "named"
-              ? namedParameters
-              : positionalParameters,
-        },
-      ],
+      components,
     },
   };
 }
@@ -214,6 +329,14 @@ function isParameterFormatMismatch(details: BeltramiMetaErrorDetails) {
     String(details.message ?? "")
       .toLowerCase()
       .includes("parameter format does not match")
+  );
+}
+
+function isTemplateParameterShapeError(details: BeltramiMetaErrorDetails) {
+  return (
+    isParameterFormatMismatch(details) ||
+    details.code === 100 ||
+    String(details.message ?? "").toLowerCase().includes("invalid parameter")
   );
 }
 
@@ -469,16 +592,12 @@ export async function sendBeltramiNotifyMessage(params: {
   const languageCode =
     process.env.BELTRAMI_WHATSAPP_NOTIFY_TEMPLATE_LANGUAGE ||
     NOTIFY_TEMPLATE_LANGUAGE;
-  const namedPayload = buildBeltramiNotifyTemplatePayload({
-    to,
-    languageCode,
-    parameterFormat: "named",
-    clienteNome: params.clienteNome,
-    telefonoCliente: params.telefonoCliente,
-    messaggioCliente: params.messaggioCliente,
-    replyUrl: params.replyUrl,
-    markDoneUrl: params.markDoneUrl,
-  });
+  const parameterFormats: BeltramiNotifyParameterFormat[] = [
+    "named",
+    "named_url_buttons",
+    "positional",
+    "positional_url_buttons",
+  ];
 
   try {
     const sendPayload = (payload: BeltramiNotifyTemplatePayload) =>
@@ -490,86 +609,71 @@ export async function sendBeltramiNotifyMessage(params: {
         },
         body: JSON.stringify(payload),
       });
-    const response = await sendPayload(namedPayload);
-
-    if (!response.ok) {
-      const namedMetaError = await readMetaErrorResponse(response);
-
-      if (isParameterFormatMismatch(namedMetaError.errorDetails)) {
-        const positionalPayload = buildBeltramiNotifyTemplatePayload({
-          to,
-          languageCode,
-          parameterFormat: "positional",
-          clienteNome: params.clienteNome,
-          telefonoCliente: params.telefonoCliente,
-          messaggioCliente: params.messaggioCliente,
-          replyUrl: params.replyUrl,
-          markDoneUrl: params.markDoneUrl,
-        });
-        const positionalResponse = await sendPayload(positionalPayload);
-
-        if (positionalResponse.ok) {
-          const result = (await positionalResponse
-            .json()
-            .catch(() => null)) as MetaMessageResponse | null;
-
-          return {
-            status: "sent",
-            reason: "sent",
-            error: null,
-            whatsappMessageId: result?.messages?.[0]?.id ?? null,
-            templateName,
-            toPhone: to,
-            parameterFormat: "positional",
-            errorDetails: null,
-            initialErrorDetails: namedMetaError.errorDetails,
-            rawJson: null,
-          };
+    let initialErrorDetails: BeltramiMetaErrorDetails | null = null;
+    let lastFailure:
+      | {
+          parameterFormat: BeltramiNotifyParameterFormat;
+          metaError: Awaited<ReturnType<typeof readMetaErrorResponse>>;
         }
+      | null = null;
+    let attemptCount = 0;
 
-        const positionalMetaError = await readMetaErrorResponse(positionalResponse);
+    for (const parameterFormat of parameterFormats) {
+      const payload = buildBeltramiNotifyTemplatePayload({
+        to,
+        languageCode,
+        parameterFormat,
+        clienteNome: params.clienteNome,
+        telefonoCliente: params.telefonoCliente,
+        messaggioCliente: params.messaggioCliente,
+        replyUrl: params.replyUrl,
+        markDoneUrl: params.markDoneUrl,
+      });
+      const response = await sendPayload(payload);
+      attemptCount += 1;
+
+      if (response.ok) {
+        const result = (await response
+          .json()
+          .catch(() => null)) as MetaMessageResponse | null;
 
         return {
-          status: "failed",
-          reason: "meta_rejected",
-          error: "meta_send_failed",
-          whatsappMessageId: null,
+          status: "sent",
+          reason: "sent",
+          error: null,
+          whatsappMessageId: result?.messages?.[0]?.id ?? null,
           templateName,
           toPhone: to,
-          parameterFormat: "positional",
-          errorDetails: positionalMetaError.errorDetails,
-          initialErrorDetails: namedMetaError.errorDetails,
-          rawJson: positionalMetaError.rawJson,
+          parameterFormat,
+          errorDetails: null,
+          initialErrorDetails: attemptCount > 1 ? initialErrorDetails : null,
+          rawJson: null,
         };
       }
 
-      return {
-        status: "failed",
-        reason: "meta_rejected",
-        error: "meta_send_failed",
-        whatsappMessageId: null,
-        templateName,
-        toPhone: to,
-        parameterFormat: "named",
-        errorDetails: namedMetaError.errorDetails,
-        initialErrorDetails: null,
-        rawJson: namedMetaError.rawJson,
+      const metaError = await readMetaErrorResponse(response);
+      initialErrorDetails ??= metaError.errorDetails;
+      lastFailure = {
+        parameterFormat,
+        metaError,
       };
+
+      if (!isTemplateParameterShapeError(metaError.errorDetails)) {
+        break;
+      }
     }
 
-    const result = (await response.json().catch(() => null)) as MetaMessageResponse | null;
-
     return {
-      status: "sent",
-      reason: "sent",
-      error: null,
-      whatsappMessageId: result?.messages?.[0]?.id ?? null,
+      status: "failed",
+      reason: "meta_rejected",
+      error: "meta_send_failed",
+      whatsappMessageId: null,
       templateName,
       toPhone: to,
-      parameterFormat: "named",
-      errorDetails: null,
-      initialErrorDetails: null,
-      rawJson: null,
+      parameterFormat: lastFailure?.parameterFormat ?? null,
+      errorDetails: lastFailure?.metaError.errorDetails ?? null,
+      initialErrorDetails: attemptCount > 1 ? initialErrorDetails : null,
+      rawJson: lastFailure?.metaError.rawJson ?? null,
     };
   } catch {
     return {
