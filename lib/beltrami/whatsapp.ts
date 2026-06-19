@@ -111,6 +111,13 @@ type BeltramiPositionalTextParameter = {
   text: string;
 };
 
+type BeltramiImageParameter = {
+  type: "image";
+  image: {
+    link: string;
+  };
+};
+
 type BeltramiNotifyTemplatePayload = {
   messaging_product: "whatsapp";
   to: string;
@@ -121,6 +128,10 @@ type BeltramiNotifyTemplatePayload = {
       code: string;
     };
     components: Array<
+      | {
+          type: "header";
+          parameters: [BeltramiImageParameter];
+        }
       | {
           type: "body";
           parameters: Array<
@@ -226,6 +237,7 @@ function buildBeltramiNotifyTemplatePayload(params: {
   messaggioCliente: string;
   replyUrl: string;
   markDoneUrl: string;
+  headerImageUrl: string;
 }): BeltramiNotifyTemplatePayload {
   const namedTextByParameterName: Record<
     BeltramiNotifyTemplateParameterName,
@@ -276,6 +288,17 @@ function buildBeltramiNotifyTemplatePayload(params: {
       : positionalTextByParameterName[parameterName],
   );
   const components: BeltramiNotifyTemplatePayload["template"]["components"] = [
+    {
+      type: "header",
+      parameters: [
+        {
+          type: "image",
+          image: {
+            link: params.headerImageUrl,
+          },
+        },
+      ],
+    },
     {
       type: "body",
       parameters: bodyParameters,
@@ -596,6 +619,8 @@ export async function sendBeltramiNotifyMessage(params: {
   const languageCode =
     process.env.BELTRAMI_WHATSAPP_NOTIFY_TEMPLATE_LANGUAGE ||
     NOTIFY_TEMPLATE_LANGUAGE;
+  const notifyImageUrl =
+    process.env.BELTRAMI_WHATSAPP_NOTIFY_IMAGE_URL || DEFAULT_WELCOME_IMAGE_URL;
   const parameterFormats: BeltramiNotifyParameterFormat[] = [
     "named",
     "positional",
@@ -632,6 +657,7 @@ export async function sendBeltramiNotifyMessage(params: {
         messaggioCliente: params.messaggioCliente,
         replyUrl: params.replyUrl,
         markDoneUrl: params.markDoneUrl,
+        headerImageUrl: notifyImageUrl,
       });
       const response = await sendPayload(payload);
       attemptCount += 1;
