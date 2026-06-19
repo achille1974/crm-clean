@@ -4,9 +4,22 @@ const WELCOME_FALLBACK_TEMPLATE_NAME = "beltrami_benvenuto_v1";
 const DEFAULT_WELCOME_IMAGE_URL =
   "https://app.crm-supreme.it/beltrami/logo-whatsapp.jpg";
 export const BELTRAMI_NOTIFY_TEMPLATE_NAME = "bel_reply_done_v1";
-const DEFAULT_NOTIFY_TEMPLATE_NAME = BELTRAMI_NOTIFY_TEMPLATE_NAME;
 const WELCOME_TEMPLATE_LANGUAGE = "it";
 const NOTIFY_TEMPLATE_LANGUAGE = "it";
+const BELTRAMI_NOTIFY_TEMPLATE_PARAMETER_NAMES = [
+  "cliente_nome",
+  "cliente_telefono",
+  "messaggio_cliente",
+  "link_risposta",
+  "link_chiusura",
+] as const;
+const [
+  PARAM_CLIENTE_NOME,
+  PARAM_CLIENTE_TELEFONO,
+  PARAM_MESSAGGIO_CLIENTE,
+  PARAM_LINK_RISPOSTA,
+  PARAM_LINK_CHIUSURA,
+] = BELTRAMI_NOTIFY_TEMPLATE_PARAMETER_NAMES;
 
 type MetaMessageResponse = {
   messages?: Array<{
@@ -71,6 +84,33 @@ export type BeltramiNotifySendResult = {
   rawJson: BeltramiMetaErrorRawJson | null;
 };
 
+type BeltramiNotifyTemplateParameterName =
+  (typeof BELTRAMI_NOTIFY_TEMPLATE_PARAMETER_NAMES)[number];
+
+type BeltramiNamedTextParameter = {
+  type: "text";
+  parameter_name: BeltramiNotifyTemplateParameterName;
+  text: string;
+};
+
+type BeltramiNotifyTemplatePayload = {
+  messaging_product: "whatsapp";
+  to: string;
+  type: "template";
+  template: {
+    name: typeof BELTRAMI_NOTIFY_TEMPLATE_NAME;
+    language: {
+      code: string;
+    };
+    components: [
+      {
+        type: "body";
+        parameters: BeltramiNamedTextParameter[];
+      },
+    ];
+  };
+};
+
 function toMetaRecipient(rawPhone: string): string | null {
   const cleaned = rawPhone.trim().replace(/[^\d+]/g, "");
   const numeric = cleaned.startsWith("+") ? cleaned.slice(1) : cleaned;
@@ -89,6 +129,60 @@ function compactTemplateText(value: string, maxLength: number): string {
   }
 
   return text.slice(0, maxLength - 1).trimEnd();
+}
+
+function buildNamedTextParameter(
+  parameterName: BeltramiNotifyTemplateParameterName,
+  value: string,
+  maxLength: number,
+): BeltramiNamedTextParameter {
+  return {
+    type: "text",
+    parameter_name: parameterName,
+    text: compactTemplateText(value, maxLength),
+  };
+}
+
+function buildBeltramiNotifyTemplatePayload(params: {
+  to: string;
+  languageCode: string;
+  clienteNome: string;
+  telefonoCliente: string;
+  messaggioCliente: string;
+  replyUrl: string;
+  markDoneUrl: string;
+}): BeltramiNotifyTemplatePayload {
+  return {
+    messaging_product: "whatsapp",
+    to: params.to,
+    type: "template",
+    template: {
+      name: BELTRAMI_NOTIFY_TEMPLATE_NAME,
+      language: {
+        code: params.languageCode,
+      },
+      components: [
+        {
+          type: "body",
+          parameters: [
+            buildNamedTextParameter(PARAM_CLIENTE_NOME, params.clienteNome, 120),
+            buildNamedTextParameter(
+              PARAM_CLIENTE_TELEFONO,
+              params.telefonoCliente,
+              60,
+            ),
+            buildNamedTextParameter(
+              PARAM_MESSAGGIO_CLIENTE,
+              params.messaggioCliente,
+              320,
+            ),
+            buildNamedTextParameter(PARAM_LINK_RISPOSTA, params.replyUrl, 500),
+            buildNamedTextParameter(PARAM_LINK_CHIUSURA, params.markDoneUrl, 500),
+          ],
+        },
+      ],
+    },
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -302,12 +396,11 @@ export async function sendBeltramiNotifyMessage(params: {
   messaggioCliente: string;
   replyUrl: string;
   markDoneUrl: string;
-  templateName?: string;
 }): Promise<BeltramiNotifySendResult> {
   const accessToken = process.env.BELTRAMI_WHATSAPP_ACCESS_TOKEN;
   const phoneNumberId = process.env.BELTRAMI_WHATSAPP_PHONE_NUMBER_ID;
   const notifyTo = process.env.BELTRAMI_WHATSAPP_NOTIFY_TO_PHONE;
-  const templateName = params.templateName || DEFAULT_NOTIFY_TEMPLATE_NAME;
+  const templateName = BELTRAMI_NOTIFY_TEMPLATE_NAME;
 
   if (!accessToken || !phoneNumberId || !notifyTo) {
     return {
@@ -337,33 +430,17 @@ export async function sendBeltramiNotifyMessage(params: {
     };
   }
 
-  const bodyParameters = [
-    {
-      type: "text",
-      parameter_name: "cliente_nome",
-      text: compactTemplateText(params.clienteNome, 120),
-    },
-    {
-      type: "text",
-      parameter_name: "cliente_telefono",
-      text: compactTemplateText(params.telefonoCliente, 60),
-    },
-    {
-      type: "text",
-      parameter_name: "messaggio_cliente",
-      text: compactTemplateText(params.messaggioCliente, 320),
-    },
-    {
-      type: "text",
-      parameter_name: "link_risposta",
-      text: compactTemplateText(params.replyUrl, 500),
-    },
-    {
-      type: "text",
-      parameter_name: "link_chiusura",
-      text: compactTemplateText(params.markDoneUrl, 500),
-    },
-  ];
+  const payload = buildBeltramiNotifyTemplatePayload({
+    to,
+    languageCode:
+      process.env.BELTRAMI_WHATSAPP_NOTIFY_TEMPLATE_LANGUAGE ||
+      NOTIFY_TEMPLATE_LANGUAGE,
+    clienteNome: params.clienteNome,
+    telefonoCliente: params.telefonoCliente,
+    messaggioCliente: params.messaggioCliente,
+    replyUrl: params.replyUrl,
+    markDoneUrl: params.markDoneUrl,
+  });
 
   try {
     const response = await fetch(
@@ -374,23 +451,7 @@ export async function sendBeltramiNotifyMessage(params: {
           Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          messaging_product: "whatsapp",
-          to,
-          type: "template",
-          template: {
-            name: templateName,
-            language: {
-              code: process.env.BELTRAMI_WHATSAPP_NOTIFY_TEMPLATE_LANGUAGE || NOTIFY_TEMPLATE_LANGUAGE,
-            },
-            components: [
-              {
-                type: "body",
-                parameters: bodyParameters,
-              },
-            ],
-          },
-        }),
+        body: JSON.stringify(payload),
       },
     );
 

@@ -443,7 +443,6 @@ async function notifyBeltramiIfNeeded(params: {
         messaggioCliente: params.inbound.body,
         replyUrl,
         markDoneUrl: handoffRequest.markDoneUrl,
-        templateName: BELTRAMI_NOTIFY_TEMPLATE_NAME,
       })
     : {
         status: "skipped",
