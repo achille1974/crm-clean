@@ -335,7 +335,11 @@ function isParameterFormatMismatch(details: BeltramiMetaErrorDetails) {
 function isTemplateParameterShapeError(details: BeltramiMetaErrorDetails) {
   return (
     isParameterFormatMismatch(details) ||
+    details.code === 132000 ||
     details.code === 100 ||
+    String(details.message ?? "")
+      .toLowerCase()
+      .includes("number of parameters does not match") ||
     String(details.message ?? "").toLowerCase().includes("invalid parameter")
   );
 }
@@ -594,8 +598,8 @@ export async function sendBeltramiNotifyMessage(params: {
     NOTIFY_TEMPLATE_LANGUAGE;
   const parameterFormats: BeltramiNotifyParameterFormat[] = [
     "named",
-    "named_url_buttons",
     "positional",
+    "named_url_buttons",
     "positional_url_buttons",
   ];
 
