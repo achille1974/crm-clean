@@ -18,6 +18,8 @@ type TrackWelcomeResult = {
   clienteUpdated: boolean;
 };
 
+type JsonRecord = Record<string, unknown>;
+
 function logTrackingWarning(stage: string, error: unknown) {
   const message = error instanceof Error ? error.message : "errore sconosciuto";
   console.warn("Beltrami WhatsApp tracking non completato:", {
@@ -26,13 +28,18 @@ function logTrackingWarning(stage: string, error: unknown) {
   });
 }
 
-function buildWelcomeMetadata(result: BeltramiWelcomeSendResult) {
+function buildWelcomeMetadata(result: BeltramiWelcomeSendResult): JsonRecord {
   return {
     source: "qr_registration",
     tracking_version: "beltrami_whatsapp_v1",
     welcome_status: result.status,
     welcome_reason: result.reason,
     welcome_error: result.error,
+    ...(result.errorDetails
+      ? {
+          meta_error_details: result.errorDetails,
+        }
+      : {}),
   };
 }
 
@@ -47,6 +54,7 @@ async function insertWelcomeOutboundMessage(params: TrackWelcomeParams) {
     whatsapp_message_id: params.welcomeResult.whatsappMessageId,
     status: params.welcomeResult.status,
     status_reason: params.welcomeResult.reason,
+    raw_json: params.welcomeResult.rawJson,
     metadata: buildWelcomeMetadata(params.welcomeResult),
   });
 

@@ -15,6 +15,31 @@ type MetaMessageResponse = {
   }>;
 };
 
+export type BeltramiMetaErrorDetails = {
+  message: string | null;
+  type: string | null;
+  code: number | string | null;
+  error_subcode: number | string | null;
+  fbtrace_id: string | null;
+  http_status: number;
+  response_status: string | null;
+};
+
+export type BeltramiMetaErrorRawJson = {
+  response: {
+    http_status: number;
+    response_status: string | null;
+  };
+  error?: {
+    message?: string;
+    type?: string;
+    code?: number | string;
+    error_subcode?: number | string;
+    fbtrace_id?: string;
+  };
+  raw_text?: string;
+};
+
 export type BeltramiWelcomeSendResult = {
   status: "sent" | "skipped" | "failed";
   reason:
@@ -26,6 +51,8 @@ export type BeltramiWelcomeSendResult = {
   error: string | null;
   whatsappMessageId: string | null;
   templateName: string;
+  errorDetails: BeltramiMetaErrorDetails | null;
+  rawJson: BeltramiMetaErrorRawJson | null;
 };
 
 export type BeltramiNotifySendResult = {
@@ -60,6 +87,92 @@ function compactTemplateText(value: string, maxLength: number): string {
   }
 
   return text.slice(0, maxLength - 1).trimEnd();
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function redactSensitiveText(value: string): string {
+  return value
+    .replace(/(access_token=)[^&\s"']+/gi, "$1[redacted]")
+    .replace(/(Bearer\s+)[^\s"']+/gi, "$1[redacted]")
+    .replace(/([?&]token=)[^&\s"']+/gi, "$1[redacted]");
+}
+
+function toSafeText(value: unknown, maxLength = 1000): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const text = redactSensitiveText(value).trim();
+  if (!text) {
+    return null;
+  }
+
+  return text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
+}
+
+function toSafeCode(value: unknown): number | string | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    return toSafeText(value, 120);
+  }
+
+  return null;
+}
+
+function buildSanitizedMetaRawJson(
+  details: BeltramiMetaErrorDetails,
+  rawText: string | null,
+): BeltramiMetaErrorRawJson {
+  const error: NonNullable<BeltramiMetaErrorRawJson["error"]> = {};
+
+  if (details.message) error.message = details.message;
+  if (details.type) error.type = details.type;
+  if (details.code !== null) error.code = details.code;
+  if (details.error_subcode !== null) error.error_subcode = details.error_subcode;
+  if (details.fbtrace_id) error.fbtrace_id = details.fbtrace_id;
+
+  return {
+    response: {
+      http_status: details.http_status,
+      response_status: details.response_status,
+    },
+    ...(Object.keys(error).length > 0 ? { error } : {}),
+    ...(rawText ? { raw_text: rawText } : {}),
+  };
+}
+
+async function readMetaErrorResponse(response: Response): Promise<{
+  errorDetails: BeltramiMetaErrorDetails;
+  rawJson: BeltramiMetaErrorRawJson;
+}> {
+  const responseText = await response.text().catch(() => "");
+  const safeRawText = toSafeText(responseText, 2000);
+  const parsed = responseText
+    ? await Promise.resolve()
+        .then(() => JSON.parse(responseText) as unknown)
+        .catch(() => null)
+    : null;
+  const metaError = isRecord(parsed) && isRecord(parsed.error) ? parsed.error : {};
+  const details: BeltramiMetaErrorDetails = {
+    message: toSafeText(metaError.message),
+    type: toSafeText(metaError.type, 120),
+    code: toSafeCode(metaError.code),
+    error_subcode: toSafeCode(metaError.error_subcode),
+    fbtrace_id: toSafeText(metaError.fbtrace_id, 120),
+    http_status: response.status,
+    response_status: toSafeText(response.statusText, 120),
+  };
+
+  return {
+    errorDetails: details,
+    rawJson: buildSanitizedMetaRawJson(details, parsed ? null : safeRawText),
+  };
 }
 
 export async function sendBeltramiWelcomeMessage(params: {
@@ -100,6 +213,8 @@ export async function sendBeltramiWelcomeMessage(params: {
       error: "configuration_missing",
       whatsappMessageId: null,
       templateName,
+      errorDetails: null,
+      rawJson: null,
     };
   }
 
@@ -112,6 +227,8 @@ export async function sendBeltramiWelcomeMessage(params: {
       error: "invalid_phone",
       whatsappMessageId: null,
       templateName,
+      errorDetails: null,
+      rawJson: null,
     };
   }
 
@@ -140,12 +257,16 @@ export async function sendBeltramiWelcomeMessage(params: {
     );
 
     if (!response.ok) {
+      const metaError = await readMetaErrorResponse(response);
+
       return {
         status: "failed",
         reason: "meta_rejected",
         error: "meta_send_failed",
         whatsappMessageId: null,
         templateName,
+        errorDetails: metaError.errorDetails,
+        rawJson: metaError.rawJson,
       };
     }
 
@@ -157,6 +278,8 @@ export async function sendBeltramiWelcomeMessage(params: {
       error: null,
       whatsappMessageId: result?.messages?.[0]?.id ?? null,
       templateName,
+      errorDetails: null,
+      rawJson: null,
     };
   } catch {
     return {
@@ -165,6 +288,8 @@ export async function sendBeltramiWelcomeMessage(params: {
       error: "network_error",
       whatsappMessageId: null,
       templateName,
+      errorDetails: null,
+      rawJson: null,
     };
   }
 }
