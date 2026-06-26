@@ -24,6 +24,7 @@ export type PromoOpportunityHistoryRow = {
   messaggio?: string | null;
   attachment_public_url?: string | null;
   attachment_file_name?: string | null;
+  promo_key?: string | null;
   metadata?: Record<string, unknown> | null;
 };
 
@@ -119,7 +120,8 @@ export function getPromoKeyFromHistoryRow(
 ): string | null {
   if (!isWhatsAppPromoOpportunity(row)) return null;
 
-  const savedPromoKey = getMetadataString(row.metadata, "promo_key");
+  const savedPromoKey =
+    normalizeText(row.promo_key) || getMetadataString(row.metadata, "promo_key");
   if (savedPromoKey) return savedPromoKey;
 
   const sendMode =

@@ -142,7 +142,7 @@ export default async function DashboardOpportunitySendPage({ searchParams }: Pro
     supabase
       .from("phonesia_opportunita_inviate")
       .select(
-        "cliente_id, opportunita_code, channel, sent_at, created_at, send_mode, inviato_at, messaggio, attachment_public_url, attachment_file_name, metadata",
+        "cliente_id, opportunita_code, channel, sent_at, created_at, send_mode, inviato_at, messaggio, attachment_public_url, attachment_file_name, promo_key, metadata",
       )
       .in("cliente_id", clienteIds)
       .order("inviato_at", { ascending: false })

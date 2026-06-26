@@ -1652,7 +1652,7 @@ export async function POST(request: NextRequest) {
       supabase
         .from("phonesia_opportunita_inviate")
         .select(
-          "cliente_id, opportunita_code, channel, sent_at, created_at, send_mode, inviato_at, messaggio, attachment_public_url, attachment_file_name, metadata",
+          "cliente_id, opportunita_code, channel, sent_at, created_at, send_mode, inviato_at, messaggio, attachment_public_url, attachment_file_name, promo_key, metadata",
         )
         .in("cliente_id", clienteIds)
         .limit(Math.max(1000, clienteIds.length * 20)),

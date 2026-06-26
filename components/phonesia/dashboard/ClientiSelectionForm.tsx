@@ -86,7 +86,8 @@ export default function ClientiSelectionForm({
 
             <button
               type="submit"
-              className="inline-flex h-[50px] items-center justify-center rounded-2xl bg-orange-500 px-5 text-sm font-semibold text-white transition hover:bg-orange-600"
+              disabled={selectedCount === 0}
+              className="inline-flex h-[50px] items-center justify-center rounded-2xl bg-orange-500 px-5 text-sm font-semibold text-white transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Crea invio opportunità
             </button>

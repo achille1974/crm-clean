@@ -1,6 +1,12 @@
 import Link from "next/link";
 import { createClient } from "@supabase/supabase-js";
 import ClientiSelectionForm from "@/components/phonesia/dashboard/ClientiSelectionForm";
+import {
+  formatPromoSentAtRome,
+  getPromoKeyFromHistoryRow,
+  getPromoOpportunitySentAt,
+  type PromoOpportunityHistoryRow,
+} from "@/lib/phonesia/opportunita-promo-history";
 
 export const dynamic = "force-dynamic";
 
@@ -57,6 +63,19 @@ type MarketingConsentRow = {
   cliente_id: number | null;
 };
 
+type PromoFilterOption = {
+  key: string;
+  label: string;
+  description: string;
+  negozioLabel: string;
+  attachmentFileName: string | null;
+  sentClientCount: number;
+  sentRowCount: number;
+  firstSentAt: string | null;
+  lastSentAt: string | null;
+  messagePreview: string | null;
+};
+
 const NEGOZI: Record<number, string> = {
   1: "Floridia",
   2: "Augusta",
@@ -64,6 +83,8 @@ const NEGOZI: Record<number, string> = {
   4: "Avola",
   5: "Tabacchino Floridia",
 };
+
+const ROME_TIME_ZONE = "Europe/Rome";
 
 function getSupabaseAdmin() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -88,6 +109,18 @@ function getSingleValue(value: string | string[] | undefined): string {
 
 function normalizeText(value?: string | null): string {
   return String(value ?? "").trim();
+}
+
+function normalizePreviewText(value?: string | null): string {
+  return normalizeText(value).replace(/\s+/g, " ");
+}
+
+function getMetadataString(
+  metadata: Record<string, unknown> | null | undefined,
+  key: string,
+): string | null {
+  const value = metadata?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 function buildSearchBlob(cliente: ClienteRow): string {
@@ -167,6 +200,203 @@ function CellFlag({ active }: { active: boolean }) {
   );
 }
 
+function formatPromoDateRome(value: string | null): string {
+  if (!value) return "";
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+
+  return new Intl.DateTimeFormat("it-IT", {
+    timeZone: ROME_TIME_ZONE,
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(date);
+}
+
+function getPromoSourceText(row: PromoOpportunityHistoryRow): string {
+  return (
+    normalizePreviewText(row.messaggio) ||
+    normalizePreviewText(getMetadataString(row.metadata, "custom_message")) ||
+    normalizePreviewText(getMetadataString(row.metadata, "messaggio_personalizzato")) ||
+    normalizePreviewText(row.opportunita_code)
+  );
+}
+
+function cleanPromoPhrase(value: string): string {
+  return value
+    .replace(/\s*,?\s*(anticipo zero|salvo approvazione|ti aspettiamo).*$/i, "")
+    .replace(/\s+/g, " ")
+    .replace(/\s+([,.;:])/g, "$1")
+    .trim();
+}
+
+function extractPromoDescription(row: PromoOpportunityHistoryRow): string | null {
+  const text = getPromoSourceText(row);
+  if (!text) return null;
+
+  const operatorMatch = text.match(/\b(TIM|Vodafone|WINDTRE|WindTre|Iliad|Fastweb|Kena|Very)\b/i);
+  const operator = operatorMatch?.[1]
+    ? operatorMatch[1].toUpperCase() === "WINDTRE"
+      ? "WINDTRE"
+      : operatorMatch[1].toUpperCase()
+    : null;
+  const purchaseMatch = text.match(/puoi acquistare\s+(.+?)(?:[,.]|$)/i);
+  const offerMatch = text.match(/promo\s+[A-Z0-9]+\s*:\s*(.+?)(?:[,.]|$)/i);
+  const service = normalizeText(row.opportunita_code)
+    .replace(/^CUSTOM_MESSAGE(?:_IMAGE|_DOCUMENT)?:/i, "")
+    .replace(/[-_]+/g, " ");
+  const rawPhrase = purchaseMatch?.[1] || offerMatch?.[1] || "";
+  const phrase = cleanPromoPhrase(rawPhrase);
+
+  if (operator && phrase) return `${operator} ${phrase}`;
+  if (operator) return `Promo ${operator}`;
+  if (phrase) return phrase;
+
+  if (service && !/^[0-9a-f]{8}/i.test(service)) {
+    return service.length > 80 ? `${service.slice(0, 77)}...` : service;
+  }
+
+  return null;
+}
+
+function getPromoMessagePreview(row: PromoOpportunityHistoryRow): string | null {
+  const message = getPromoSourceText(row);
+
+  if (!message) return null;
+  return message.length > 90 ? `${message.slice(0, 87)}...` : message;
+}
+
+function getPromoAttachmentFileName(row: PromoOpportunityHistoryRow): string | null {
+  return (
+    normalizeText(row.attachment_file_name) ||
+    getMetadataString(row.metadata, "attachment_file_name") ||
+    null
+  );
+}
+
+function inferNegozioLabelFromText(value: string): string | null {
+  const text = value.toLowerCase();
+  const match = Object.values(NEGOZI).find((label) =>
+    text.includes(label.toLowerCase()),
+  );
+
+  return match ?? null;
+}
+
+function buildPromoFilterOptions(
+  rows: PromoOpportunityHistoryRow[],
+  negozioLabelByClienteId: Map<number, string>,
+) {
+  const groups = new Map<
+    string,
+    {
+      key: string;
+      sentRowCount: number;
+      sentClientIds: Set<number>;
+      negozioCounts: Map<string, number>;
+      firstSentAt: string | null;
+      lastSentAt: string | null;
+      description: string | null;
+      attachmentFileName: string | null;
+      messagePreview: string | null;
+    }
+  >();
+
+  for (const row of rows) {
+    const promoKey = getPromoKeyFromHistoryRow(row);
+    if (!promoKey) continue;
+
+    const group =
+      groups.get(promoKey) ??
+      {
+        key: promoKey,
+        sentRowCount: 0,
+        sentClientIds: new Set<number>(),
+        negozioCounts: new Map<string, number>(),
+        firstSentAt: null,
+        lastSentAt: null,
+        description: null,
+        attachmentFileName: null,
+        messagePreview: null,
+      };
+
+    group.sentRowCount += 1;
+
+    const clienteId = Number(row.cliente_id);
+    if (Number.isFinite(clienteId)) {
+      group.sentClientIds.add(clienteId);
+      const rowNegozioLabel =
+        negozioLabelByClienteId.get(clienteId) ??
+        inferNegozioLabelFromText(getPromoSourceText(row));
+
+      if (rowNegozioLabel) {
+        group.negozioCounts.set(
+          rowNegozioLabel,
+          (group.negozioCounts.get(rowNegozioLabel) ?? 0) + 1,
+        );
+      }
+    }
+
+    const sentAt = getPromoOpportunitySentAt(row);
+    const sentAtMs = sentAt ? Date.parse(sentAt) : NaN;
+    const firstSentAtMs = group.firstSentAt ? Date.parse(group.firstSentAt) : NaN;
+    const lastSentAtMs = group.lastSentAt ? Date.parse(group.lastSentAt) : NaN;
+
+    if (Number.isFinite(sentAtMs)) {
+      if (!Number.isFinite(firstSentAtMs) || sentAtMs < firstSentAtMs) {
+        group.firstSentAt = sentAt;
+      }
+
+      if (!Number.isFinite(lastSentAtMs) || sentAtMs > lastSentAtMs) {
+        group.lastSentAt = sentAt;
+      }
+    }
+
+    group.description ||= extractPromoDescription(row);
+    group.attachmentFileName ||= getPromoAttachmentFileName(row);
+    group.messagePreview ||= getPromoMessagePreview(row);
+    groups.set(promoKey, group);
+  }
+
+  return [...groups.values()]
+    .map((group): PromoFilterOption => {
+      const dateLabel = formatPromoDateRome(group.firstSentAt);
+      const negozioWinner = [...group.negozioCounts.entries()].sort(
+        (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]),
+      )[0]?.[0];
+      const negozioLabel = negozioWinner ?? "Negozio non disponibile";
+      const description = group.description ?? "Promo WhatsApp";
+      const attachmentPart = group.attachmentFileName
+        ? ` - ${group.attachmentFileName}`
+        : "";
+      const label = [
+        dateLabel || "Data non disponibile",
+        negozioLabel,
+        `${description}${attachmentPart}`,
+        `${group.sentClientIds.size} clienti`,
+      ].join(" - ");
+
+      return {
+        key: group.key,
+        label,
+        description,
+        negozioLabel,
+        attachmentFileName: group.attachmentFileName,
+        sentClientCount: group.sentClientIds.size,
+        sentRowCount: group.sentRowCount,
+        firstSentAt: group.firstSentAt,
+        lastSentAt: group.lastSentAt,
+        messagePreview: group.messagePreview,
+      };
+    })
+    .sort((a, b) => {
+      const bTime = b.lastSentAt ? Date.parse(b.lastSentAt) : 0;
+      const aTime = a.lastSentAt ? Date.parse(a.lastSentAt) : 0;
+      return bTime - aTime || b.sentClientCount - a.sentClientCount;
+    });
+}
+
 function MarketingConsentBadge({ active }: { active: boolean }) {
   return (
     <span
@@ -188,6 +418,7 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
   const q = getSingleValue(resolvedParams.q).trim();
   const negozio = getSingleValue(resolvedParams.negozio).trim();
   const onlyMarketingConsent = getSingleValue(resolvedParams.solo_marketing) === "1";
+  const requestedPromoKey = getSingleValue(resolvedParams.promo_key).trim();
 
   const supabase = getSupabaseAdmin();
 
@@ -219,12 +450,14 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
   const serviziByCliente = new Map<number, ServizioRow[]>();
   const contrattiByCliente = new Map<number, ContrattoRow[]>();
   let marketingConsentedIds = new Set<number>();
+  let promoHistoryRows: PromoOpportunityHistoryRow[] = [];
 
   if (clienteIds.length > 0) {
     const [
       { data: serviziData, error: serviziError },
       { data: contrattiData, error: contrattiError },
       { data: marketingConsentData, error: marketingConsentError },
+      { data: promoHistoryData, error: promoHistoryError },
     ] =
       await Promise.all([
         supabase
@@ -244,6 +477,14 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
           .select("cliente_id")
           .eq("tipo_evento", "marketing_accepted")
           .in("cliente_id", clienteIds),
+        supabase
+          .from("phonesia_opportunita_inviate")
+          .select(
+            "cliente_id, opportunita_code, channel, sent_at, created_at, send_mode, inviato_at, messaggio, attachment_public_url, attachment_file_name, promo_key, metadata",
+          )
+          .in("cliente_id", clienteIds)
+          .order("inviato_at", { ascending: false })
+          .limit(5000),
       ]);
 
     if (serviziError) {
@@ -258,6 +499,10 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
       throw new Error(
         `Errore lettura consensi marketing: ${marketingConsentError.message}`,
       );
+    }
+
+    if (promoHistoryError) {
+      throw new Error(`Errore lettura storico promo: ${promoHistoryError.message}`);
     }
 
     for (const row of (serviziData ?? []) as ServizioRow[]) {
@@ -279,6 +524,34 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
         .map((row) => Number(row.cliente_id))
         .filter((value): value is number => Number.isFinite(value)),
     );
+
+    promoHistoryRows = (promoHistoryData ?? []) as PromoOpportunityHistoryRow[];
+  }
+
+  const negozioLabelByClienteId = new Map<number, string>(
+    clienti.map((cliente) => [
+      cliente.id,
+      cliente.negozio_id ? NEGOZI[cliente.negozio_id] ?? `Negozio ${cliente.negozio_id}` : "Non assegnato",
+    ]),
+  );
+  const promoOptions = buildPromoFilterOptions(
+    promoHistoryRows,
+    negozioLabelByClienteId,
+  );
+  const selectedPromoOption =
+    promoOptions.find((option) => option.key === requestedPromoKey) ?? null;
+  const selectedPromoKey = selectedPromoOption?.key ?? "";
+  const selectedPromoSentClientIds = new Set<number>();
+
+  if (selectedPromoKey) {
+    for (const row of promoHistoryRows) {
+      const clienteId = Number(row.cliente_id);
+      if (!Number.isFinite(clienteId)) continue;
+
+      if (getPromoKeyFromHistoryRow(row) === selectedPromoKey) {
+        selectedPromoSentClientIds.add(clienteId);
+      }
+    }
   }
 
   let rows = clienti.map((cliente) => {
@@ -301,13 +574,24 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
       operatore: resolveOperatore(servizi, contratti),
       activeFamilies,
       marketingConsented: marketingConsentedIds.has(cliente.id),
+      selectedPromoAlreadySent: selectedPromoSentClientIds.has(cliente.id),
     };
   });
+  if (selectedPromoKey) {
+    rows = rows.filter(
+      (row) => row.marketingConsented && !row.selectedPromoAlreadySent,
+    );
+  }
   if (onlyMarketingConsent) {
     rows = rows.filter((row) => row.marketingConsented);
   }
 
-  const selectableClientCount = rows.filter((row) => row.marketingConsented).length;
+  const selectableClientCount = rows.filter(
+    (row) => row.marketingConsented && !row.selectedPromoAlreadySent,
+  ).length;
+  const excludedBySelectedPromoCount = selectedPromoKey
+    ? selectedPromoSentClientIds.size
+    : 0;
 
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-6 md:px-8">
@@ -341,13 +625,19 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
                 Clienti visibili: {rows.length}
                 <span className="mx-2 text-slate-300">·</span>
                 Selezionabili: {selectableClientCount}
+                {selectedPromoKey ? (
+                  <>
+                    <span className="mx-2 text-slate-300">·</span>
+                    Esclusi promo: {excludedBySelectedPromoCount}
+                  </>
+                ) : null}
               </div>
             </div>
           </div>
         </section>
 
         <section className="rounded-3xl border border-slate-200 bg-white px-5 py-5 shadow-sm md:px-6">
-          <form className="grid gap-4 md:grid-cols-[minmax(0,1.2fr)_220px_minmax(260px,0.8fr)_auto]">
+          <form className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_220px_minmax(260px,0.7fr)_minmax(320px,1fr)_auto]">
             <div>
               <label className="mb-2 block text-sm font-medium text-slate-600">
                 Cerca cliente
@@ -390,6 +680,33 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
               <span>Solo clienti con consenso marketing</span>
             </label>
 
+            <div>
+              <label className="mb-2 block text-sm font-medium text-slate-600">
+                Escludi clienti già contattati per promo
+              </label>
+              <select
+                name="promo_key"
+                defaultValue={selectedPromoKey}
+                className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-orange-500"
+              >
+                <option value="">Nessun filtro promo</option>
+                {promoOptions.map((option) => (
+                  <option
+                    key={option.key}
+                    value={option.key}
+                    title={`Chiave tecnica: ${option.key}`}
+                  >
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              {requestedPromoKey && !selectedPromoKey ? (
+                <div className="mt-2 text-xs font-semibold text-amber-700">
+                  Promo non trovata nello storico dei clienti visibili.
+                </div>
+              ) : null}
+            </div>
+
             <div className="flex items-end gap-3">
               <button
                 type="submit"
@@ -406,6 +723,22 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
               </Link>
             </div>
           </form>
+
+          {selectedPromoOption ? (
+            <div className="mt-4 rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-950">
+              <div className="font-semibold">
+                Filtro promo attivo: {selectedPromoOption.label}
+              </div>
+              <div className="mt-1 text-orange-800">
+                Già contattati esclusi: {excludedBySelectedPromoCount}
+                <span className="mx-2 text-orange-300">·</span>
+                Ultimo invio: {formatPromoSentAtRome(selectedPromoOption.lastSentAt) || "—"}
+              </div>
+              <div className="mt-1 text-xs text-orange-700">
+                Chiave tecnica: {selectedPromoOption.key}
+              </div>
+            </div>
+          ) : null}
         </section>
 
         <ClientiSelectionForm
@@ -470,10 +803,14 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
                             type="checkbox"
                             name="clienti"
                             value={row.cliente.id}
-                            disabled={!row.marketingConsented}
+                            disabled={
+                              !row.marketingConsented || row.selectedPromoAlreadySent
+                            }
                             title={
                               !row.marketingConsented
                                 ? "Cliente senza consenso marketing: non selezionabile."
+                                : row.selectedPromoAlreadySent
+                                ? "Cliente già contattato per la promo selezionata."
                                 : undefined
                             }
                             className="h-4 w-4 rounded border-slate-300 text-orange-500 focus:ring-orange-500 disabled:cursor-not-allowed disabled:opacity-40"
