@@ -381,6 +381,7 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
     () => new Set(),
   );
   const [onlyMarketingUncontacted, setOnlyMarketingUncontacted] = useState(false);
+  const [isRecipientListOpen, setIsRecipientListOpen] = useState(false);
 
   const normalizedCustomMessage = sanitizeWhatsAppTemplateText(customMessage);
   const customMessageWasSanitized = customMessage !== normalizedCustomMessage;
@@ -776,64 +777,87 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
           </div>
         ) : null}
 
-        <div className="mt-5 overflow-hidden rounded-3xl border border-slate-200">
-          <div className="overflow-x-auto">
-            <table className="min-w-[1040px] w-full text-sm">
-              <thead className="bg-slate-50 text-slate-600">
-                <tr className="border-b border-slate-200">
-                  <th className="px-4 py-3 text-left font-semibold">Cliente</th>
-                  <th className="px-4 py-3 text-left font-semibold">Telefono</th>
-                  <th className="px-4 py-3 text-left font-semibold">Negozio</th>
-                  <th className="px-4 py-3 text-left font-semibold">WhatsApp</th>
-                  <th className="px-4 py-3 text-left font-semibold">Marketing</th>
-                  <th className="px-4 py-3 text-left font-semibold">Promo WhatsApp</th>
-                </tr>
-              </thead>
+        <div className="mt-5 rounded-3xl border border-slate-200 bg-white px-4 py-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="text-sm font-bold text-slate-950">
+                Clienti selezionati: {visibleRecipients.length}
+              </div>
+              <div className="mt-1 text-sm text-slate-600">
+                La lista dettagliata è chiusa di default.
+              </div>
+            </div>
 
-              <tbody>
-                {visibleRecipients.length === 0 ? (
-                  <tr>
-                    <td
-                      colSpan={6}
-                      className="px-4 py-10 text-center text-sm text-slate-500"
-                    >
-                      Nessun destinatario disponibile con i filtri selezionati.
-                    </td>
-                  </tr>
-                ) : (
-                  visibleRecipients.map((recipient) => (
-                    <tr key={recipient.id} className="border-b border-slate-100">
-                      <td className="px-4 py-4 font-semibold text-slate-950">
-                        {recipient.nomeCompleto}
-                      </td>
-                      <td className="px-4 py-4 text-slate-700">
-                        {recipient.telefono || "—"}
-                      </td>
-                      <td className="px-4 py-4 text-slate-700">
-                        {recipient.negozioLabel}
-                      </td>
-                      <td className="px-4 py-4">
-                        <Badge ok={recipient.whatsappActive}>
-                          {recipient.whatsappActive ? "Attivo" : "Non attivo"}
-                        </Badge>
-                      </td>
-                      <td className="px-4 py-4">
-                        <Badge ok={recipient.marketingConsented}>
-                          {recipient.marketingConsented ? "Autorizzato" : "Non autorizzato"}
-                        </Badge>
-                      </td>
-                      <td className="px-4 py-4">
-                        <PromoStatusBadge
-                          recipient={recipient}
-                          alreadyReceivedCurrentPromo={currentPromoSentIds.has(recipient.id)}
-                        />
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+            <button
+              type="button"
+              onClick={() => setIsRecipientListOpen((value) => !value)}
+              className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-300 px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+            >
+              {isRecipientListOpen ? "Nascondi elenco ▲" : "Mostra elenco ▼"}
+            </button>
           </div>
+
+          {isRecipientListOpen ? (
+            <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200">
+              <div className="overflow-x-auto">
+                <table className="min-w-[1040px] w-full text-sm">
+                  <thead className="bg-slate-50 text-slate-600">
+                    <tr className="border-b border-slate-200">
+                      <th className="px-4 py-3 text-left font-semibold">Cliente</th>
+                      <th className="px-4 py-3 text-left font-semibold">Telefono</th>
+                      <th className="px-4 py-3 text-left font-semibold">Negozio</th>
+                      <th className="px-4 py-3 text-left font-semibold">WhatsApp</th>
+                      <th className="px-4 py-3 text-left font-semibold">Marketing</th>
+                      <th className="px-4 py-3 text-left font-semibold">Promo WhatsApp</th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {visibleRecipients.length === 0 ? (
+                      <tr>
+                        <td
+                          colSpan={6}
+                          className="px-4 py-10 text-center text-sm text-slate-500"
+                        >
+                          Nessun destinatario disponibile con i filtri selezionati.
+                        </td>
+                      </tr>
+                    ) : (
+                      visibleRecipients.map((recipient) => (
+                        <tr key={recipient.id} className="border-b border-slate-100">
+                          <td className="px-4 py-4 font-semibold text-slate-950">
+                            {recipient.nomeCompleto}
+                          </td>
+                          <td className="px-4 py-4 text-slate-700">
+                            {recipient.telefono || "—"}
+                          </td>
+                          <td className="px-4 py-4 text-slate-700">
+                            {recipient.negozioLabel}
+                          </td>
+                          <td className="px-4 py-4">
+                            <Badge ok={recipient.whatsappActive}>
+                              {recipient.whatsappActive ? "Attivo" : "Non attivo"}
+                            </Badge>
+                          </td>
+                          <td className="px-4 py-4">
+                            <Badge ok={recipient.marketingConsented}>
+                              {recipient.marketingConsented ? "Autorizzato" : "Non autorizzato"}
+                            </Badge>
+                          </td>
+                          <td className="px-4 py-4">
+                            <PromoStatusBadge
+                              recipient={recipient}
+                              alreadyReceivedCurrentPromo={currentPromoSentIds.has(recipient.id)}
+                            />
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : null}
         </div>
       </section>
 
