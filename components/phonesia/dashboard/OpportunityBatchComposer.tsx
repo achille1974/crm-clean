@@ -43,6 +43,7 @@ type Props = {
 };
 
 type CustomMessageMode = "text" | "image" | "document";
+type AttachmentMode = "none" | "image" | "document";
 
 type SendResultRow = {
   clienteId: number | null;
@@ -215,6 +216,18 @@ function formatCurrency(value: number): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(value);
+}
+
+function formatFileSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return "dimensione non disponibile";
+  }
+
+  if (bytes < 1024 * 1024) {
+    return `${Math.ceil(bytes / 1024)} KB`;
+  }
+
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function getSupabaseBrowserClient() {
@@ -401,9 +414,13 @@ export default function OpportunityBatchComposer({
   recipients,
 }: Props) {
   const [promoName, setPromoName] = useState(initialPromoName ?? "");
-  const [messageMode, setMessageMode] = useState<"standard" | "custom">("standard");
+  const [messageMode, setMessageMode] = useState<"standard" | "custom">(
+    promoKeyOverride ? "custom" : "standard",
+  );
   const [standardService, setStandardService] = useState<ServiceFamily>("SMARTPHONE");
-  const [customMessageMode, setCustomMessageMode] = useState<CustomMessageMode>("text");
+  const [customMessageMode, setCustomMessageMode] = useState<CustomMessageMode>(
+    promoKeyOverride ? "image" : "text",
+  );
   const [customMessage, setCustomMessage] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [attachmentInputKey, setAttachmentInputKey] = useState(0);
@@ -427,6 +444,13 @@ export default function OpportunityBatchComposer({
   const trimmedCustomMessage = normalizedCustomMessage;
   const normalizedPromoName = normalizePromoName(promoName);
   const selectedFileName = selectedFile?.name ?? null;
+  const selectedFileSize = selectedFile?.size ?? null;
+  const selectedFileType = selectedFile?.type ?? null;
+  const selectedFileLastModified = selectedFile?.lastModified ?? null;
+  const attachmentMode: AttachmentMode =
+    messageMode === "custom" && customMessageMode !== "text"
+      ? customMessageMode
+      : "none";
 
   const currentPromoKey = useMemo(() => {
     return promoKeyOverride || buildPromoKeyFromName(normalizedPromoName);
@@ -530,7 +554,10 @@ export default function OpportunityBatchComposer({
         messageMode,
         promoKeyOverride: promoKeyOverride ?? "",
         promoName: normalizedPromoName,
+        selectedFileLastModified,
         selectedFileName,
+        selectedFileSize,
+        selectedFileType,
         standardService,
         trimmedCustomMessage,
       }),
@@ -539,7 +566,10 @@ export default function OpportunityBatchComposer({
       messageMode,
       normalizedPromoName,
       promoKeyOverride,
+      selectedFileLastModified,
       selectedFileName,
+      selectedFileSize,
+      selectedFileType,
       standardService,
       trimmedCustomMessage,
       visibleRecipients,
@@ -590,6 +620,27 @@ export default function OpportunityBatchComposer({
     setCustomMessageMode(mode);
     clearAttachment();
     setSendResponse(null);
+  }
+
+  function changeAttachmentMode(mode: AttachmentMode) {
+    setSendResponse(null);
+
+    if (mode === "none") {
+      if (messageMode === "custom" && customMessageMode !== "text") {
+        changeCustomMessageMode("text");
+      } else {
+        clearAttachment();
+      }
+
+      return;
+    }
+
+    if (messageMode === "custom" && customMessageMode === mode) {
+      return;
+    }
+
+    setMessageMode("custom");
+    changeCustomMessageMode(mode);
   }
 
   function handleAttachmentChange(event: React.ChangeEvent<HTMLInputElement>) {
@@ -1107,6 +1158,104 @@ export default function OpportunityBatchComposer({
               </div>
             </section>
 
+            <section className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+              <div className="text-sm font-semibold text-slate-900">Allegato promo</div>
+              <div className="mt-1 text-sm text-slate-600">
+                Per inviare una locandina usa il template con immagine; per PDF usa il
+                template documento.
+              </div>
+
+              <div className="mt-3 grid gap-3">
+                <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                  <input
+                    type="radio"
+                    name="attachmentMode"
+                    checked={attachmentMode === "none"}
+                    onChange={() => changeAttachmentMode("none")}
+                    className="mt-1 h-4 w-4 border-slate-300 text-orange-500 focus:ring-orange-500"
+                  />
+                  <div>
+                    <div className="font-semibold text-slate-950">Nessun allegato</div>
+                    <div className="mt-1 text-sm text-slate-600">
+                      Invia solo il testo del template selezionato.
+                    </div>
+                  </div>
+                </label>
+
+                <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                  <input
+                    type="radio"
+                    name="attachmentMode"
+                    checked={attachmentMode === "image"}
+                    onChange={() => changeAttachmentMode("image")}
+                    className="mt-1 h-4 w-4 border-slate-300 text-orange-500 focus:ring-orange-500"
+                  />
+                  <div>
+                    <div className="font-semibold text-slate-950">Immagine locandina</div>
+                    <div className="mt-1 text-sm text-slate-600">
+                      Usa il template personalizzato con intestazione immagine.
+                    </div>
+                  </div>
+                </label>
+
+                <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                  <input
+                    type="radio"
+                    name="attachmentMode"
+                    checked={attachmentMode === "document"}
+                    onChange={() => changeAttachmentMode("document")}
+                    className="mt-1 h-4 w-4 border-slate-300 text-orange-500 focus:ring-orange-500"
+                  />
+                  <div>
+                    <div className="font-semibold text-slate-950">Documento/PDF</div>
+                    <div className="mt-1 text-sm text-slate-600">
+                      Usa il template personalizzato con intestazione documento.
+                    </div>
+                  </div>
+                </label>
+              </div>
+
+              {attachmentMode !== "none" ? (
+                <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-4">
+                  <label className="mb-2 block text-sm font-semibold text-slate-900">
+                    {attachmentMode === "image"
+                      ? "Immagine da allegare"
+                      : "Documento/PDF da allegare"}
+                  </label>
+                  <input
+                    key={attachmentInputKey}
+                    type="file"
+                    accept={
+                      attachmentMode === "image"
+                        ? "image/png,image/jpeg,image/webp,image/*"
+                        : "application/pdf,.pdf"
+                    }
+                    onChange={handleAttachmentChange}
+                    disabled={isSending || isPreflighting}
+                    className="block w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 file:mr-4 file:rounded-xl file:border-0 file:bg-orange-50 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-orange-700 hover:file:bg-orange-100 disabled:cursor-not-allowed disabled:opacity-60"
+                  />
+                  <p className="mt-2 text-xs text-slate-500">
+                    {attachmentMode === "image"
+                      ? "Obbligatoria per questo template. Formati accettati: JPG, PNG o WEBP. Dimensione massima: 5 MB."
+                      : "Obbligatorio per questo template. Formato accettato: PDF. Dimensione massima: 10 MB."}
+                  </p>
+                  {selectedFile ? (
+                    <div className="mt-3 rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-900">
+                      <div className="font-semibold">{selectedFile.name}</div>
+                      <div className="mt-1 text-xs">
+                        {selectedFile.type || "tipo file non indicato"} -{" "}
+                        {formatFileSize(selectedFile.size)}
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-xs font-semibold text-rose-700">
+                      Carica un allegato compatibile con il template selezionato.
+                    </p>
+                  )}
+                </div>
+              ) : null}
+            </section>
+
             {messageMode === "standard" ? (
               <section className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
                 <label className="mb-2 block text-sm font-semibold text-slate-900">
@@ -1221,41 +1370,6 @@ export default function OpportunityBatchComposer({
                     Messaggio troppo lungo per l’invio batch sicuro.
                   </p>
                 ) : null}
-                {customMessageMode !== "text" ? (
-                  <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-4">
-                    <label className="mb-2 block text-sm font-semibold text-slate-900">
-                      {customMessageMode === "image"
-                        ? "Immagine da allegare"
-                        : "Documento/PDF da allegare"}
-                    </label>
-                    <input
-                      key={attachmentInputKey}
-                      type="file"
-                      accept={
-                        customMessageMode === "image"
-                          ? "image/png,image/jpeg,image/webp,image/*"
-                          : "application/pdf,.pdf"
-                      }
-                      onChange={handleAttachmentChange}
-                      disabled={isSending}
-                      className="block w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 file:mr-4 file:rounded-xl file:border-0 file:bg-orange-50 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-orange-700 hover:file:bg-orange-100 disabled:cursor-not-allowed disabled:opacity-60"
-                    />
-                    <p className="mt-2 text-xs text-slate-500">
-                      {customMessageMode === "image"
-                        ? "Obbligatoria per questo template. Formati accettati: JPG, PNG o WEBP. Dimensione massima: 5 MB."
-                        : "Obbligatorio per questo template. Formato accettato: PDF. Dimensione massima: 10 MB."}
-                    </p>
-                    {selectedFile ? (
-                      <div className="mt-3 rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-900">
-                        <div className="font-semibold">{selectedFile.name}</div>
-                      </div>
-                    ) : (
-                      <p className="mt-2 text-xs font-semibold text-rose-700">
-                        Carica un allegato compatibile con il template selezionato.
-                      </p>
-                    )}
-                  </div>
-                ) : null}
               </section>
             )}
           </div>
@@ -1336,6 +1450,14 @@ export default function OpportunityBatchComposer({
                   </div>
                   <div className="mt-1 break-all font-mono text-xs">
                     Promo key finale: {preflightResponse.promoKey}
+                  </div>
+                  <div className="mt-1">
+                    Allegato:{" "}
+                    <strong>
+                      {selectedFile
+                        ? `${selectedFile.name} (${formatFileSize(selectedFile.size)})`
+                        : "nessuno"}
+                    </strong>
                   </div>
                   <div className="mt-3 grid gap-3 sm:grid-cols-2">
                     <CompactStat
