@@ -380,6 +380,7 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
   const [excludedDuplicateIds, setExcludedDuplicateIds] = useState<Set<number>>(
     () => new Set(),
   );
+  const [onlyMarketingUncontacted, setOnlyMarketingUncontacted] = useState(false);
 
   const normalizedCustomMessage = sanitizeWhatsAppTemplateText(customMessage);
   const customMessageWasSanitized = customMessage !== normalizedCustomMessage;
@@ -421,9 +422,43 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
     setExcludedDuplicateIds(new Set());
   }, [currentPromoKey]);
 
+  const currentPromoSentIds = useMemo(
+    () =>
+      new Set(
+        recipients
+          .filter((recipient) => {
+            const hasCurrentPromoKey = (recipient.sentPromoKeys ?? []).includes(currentPromoKey);
+            const hasLegacyStandardMatch =
+              messageMode === "standard" &&
+              (recipient.sentOpportunityCodes ?? []).includes(standardService);
+
+            return hasCurrentPromoKey || hasLegacyStandardMatch;
+          })
+          .map((recipient) => recipient.id),
+      ),
+    [currentPromoKey, messageMode, recipients, standardService],
+  );
+
+  const marketingUncontactedRecipients = useMemo(
+    () =>
+      recipients.filter(
+        (recipient) =>
+          recipient.marketingConsented && !currentPromoSentIds.has(recipient.id),
+      ),
+    [currentPromoSentIds, recipients],
+  );
+
   const visibleRecipients = useMemo(
-    () => recipients.filter((recipient) => !excludedDuplicateIds.has(recipient.id)),
-    [excludedDuplicateIds, recipients],
+    () =>
+      recipients.filter((recipient) => {
+        if (excludedDuplicateIds.has(recipient.id)) return false;
+        if (!onlyMarketingUncontacted) return true;
+
+        return (
+          recipient.marketingConsented && !currentPromoSentIds.has(recipient.id)
+        );
+      }),
+    [currentPromoSentIds, excludedDuplicateIds, onlyMarketingUncontacted, recipients],
   );
 
   const eligibleRecipients = useMemo(
@@ -454,15 +489,8 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
 
   const duplicatePromoRecipients = useMemo(
     () =>
-      eligibleRecipients.filter((recipient) => {
-        const hasCurrentPromoKey = (recipient.sentPromoKeys ?? []).includes(currentPromoKey);
-        const hasLegacyStandardMatch =
-          messageMode === "standard" &&
-          (recipient.sentOpportunityCodes ?? []).includes(standardService);
-
-        return hasCurrentPromoKey || hasLegacyStandardMatch;
-      }),
-    [currentPromoKey, eligibleRecipients, messageMode, standardService],
+      eligibleRecipients.filter((recipient) => currentPromoSentIds.has(recipient.id)),
+    [currentPromoSentIds, eligibleRecipients],
   );
 
   const duplicatePromoIds = useMemo(
@@ -603,7 +631,7 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
           : null;
       const formData = new FormData();
 
-      for (const recipient of visibleRecipients) {
+      for (const recipient of sendableRecipients) {
         formData.append("clienti", String(recipient.id));
       }
 
@@ -677,6 +705,39 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
           <StatCard label="Bloccati" value={String(blockedRecipients.length)} />
         </div>
 
+        <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+          <label className="flex items-start gap-3">
+            <input
+              type="checkbox"
+              checked={onlyMarketingUncontacted}
+              onChange={(event) => {
+                setOnlyMarketingUncontacted(event.target.checked);
+                setSendResponse(null);
+              }}
+              className="mt-1 h-4 w-4 rounded border-slate-300 text-orange-500 focus:ring-orange-500"
+            />
+            <span>
+              <span className="block text-sm font-semibold text-slate-950">
+                Solo clienti marketing non ancora contattati per questa promo
+              </span>
+              <span className="mt-1 block text-sm text-slate-600">
+                Clienti disponibili con questo filtro:{" "}
+                <strong className="text-slate-950">
+                  {marketingUncontactedRecipients.length}
+                </strong>{" "}
+                / {recipients.length}
+              </span>
+            </span>
+          </label>
+        </div>
+
+        {onlyMarketingUncontacted && visibleRecipients.length === 0 ? (
+          <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-950">
+            Nessun cliente con consenso marketing risulta non ancora contattato per
+            questa promo.
+          </div>
+        ) : null}
+
         {duplicatePromoRecipients.length > 0 ? (
           <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-950">
             <div className="font-semibold">
@@ -730,31 +791,46 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
               </thead>
 
               <tbody>
-                {visibleRecipients.map((recipient) => (
-                  <tr key={recipient.id} className="border-b border-slate-100">
-                    <td className="px-4 py-4 font-semibold text-slate-950">
-                      {recipient.nomeCompleto}
-                    </td>
-                    <td className="px-4 py-4 text-slate-700">{recipient.telefono || "—"}</td>
-                    <td className="px-4 py-4 text-slate-700">{recipient.negozioLabel}</td>
-                    <td className="px-4 py-4">
-                      <Badge ok={recipient.whatsappActive}>
-                        {recipient.whatsappActive ? "Attivo" : "Non attivo"}
-                      </Badge>
-                    </td>
-                    <td className="px-4 py-4">
-                      <Badge ok={recipient.marketingConsented}>
-                        {recipient.marketingConsented ? "Autorizzato" : "Non autorizzato"}
-                      </Badge>
-                    </td>
-                    <td className="px-4 py-4">
-                      <PromoStatusBadge
-                        recipient={recipient}
-                        alreadyReceivedCurrentPromo={duplicatePromoIds.has(recipient.id)}
-                      />
+                {visibleRecipients.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={6}
+                      className="px-4 py-10 text-center text-sm text-slate-500"
+                    >
+                      Nessun destinatario disponibile con i filtri selezionati.
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  visibleRecipients.map((recipient) => (
+                    <tr key={recipient.id} className="border-b border-slate-100">
+                      <td className="px-4 py-4 font-semibold text-slate-950">
+                        {recipient.nomeCompleto}
+                      </td>
+                      <td className="px-4 py-4 text-slate-700">
+                        {recipient.telefono || "—"}
+                      </td>
+                      <td className="px-4 py-4 text-slate-700">
+                        {recipient.negozioLabel}
+                      </td>
+                      <td className="px-4 py-4">
+                        <Badge ok={recipient.whatsappActive}>
+                          {recipient.whatsappActive ? "Attivo" : "Non attivo"}
+                        </Badge>
+                      </td>
+                      <td className="px-4 py-4">
+                        <Badge ok={recipient.marketingConsented}>
+                          {recipient.marketingConsented ? "Autorizzato" : "Non autorizzato"}
+                        </Badge>
+                      </td>
+                      <td className="px-4 py-4">
+                        <PromoStatusBadge
+                          recipient={recipient}
+                          alreadyReceivedCurrentPromo={currentPromoSentIds.has(recipient.id)}
+                        />
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>

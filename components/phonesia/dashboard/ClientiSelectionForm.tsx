@@ -4,15 +4,18 @@ import { type ReactNode, useCallback, useRef, useState } from "react";
 
 type ClientiSelectionFormProps = {
   children: ReactNode;
+  selectableClientCount?: number;
   visibleClientCount: number;
 };
 
 export default function ClientiSelectionForm({
   children,
+  selectableClientCount,
   visibleClientCount,
 }: ClientiSelectionFormProps) {
   const formRef = useRef<HTMLFormElement>(null);
   const [selectedCount, setSelectedCount] = useState(0);
+  const selectableTotal = selectableClientCount ?? visibleClientCount;
 
   const getClientCheckboxes = useCallback(() => {
     return Array.from(
@@ -24,7 +27,8 @@ export default function ClientiSelectionForm({
 
   const getSelectAllCheckboxes = useCallback(() => {
     return getClientCheckboxes().filter(
-      (checkbox) => checkbox.dataset.promoSentToday !== "true",
+      (checkbox) =>
+        !checkbox.disabled && checkbox.dataset.promoSentToday !== "true",
     );
   }, [getClientCheckboxes]);
 
@@ -62,13 +66,13 @@ export default function ClientiSelectionForm({
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">
-              Clienti selezionati: {selectedCount} / {visibleClientCount}
+              Clienti selezionati: {selectedCount} / {selectableTotal}
             </div>
 
             <button
               type="button"
               onClick={() => setAllVisibleClients(true)}
-              disabled={visibleClientCount === 0}
+              disabled={selectableTotal === 0}
               className="inline-flex h-[50px] items-center justify-center rounded-2xl border border-orange-200 bg-orange-50 px-5 text-sm font-semibold text-orange-700 transition hover:border-orange-300 hover:bg-orange-100 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Seleziona tutti

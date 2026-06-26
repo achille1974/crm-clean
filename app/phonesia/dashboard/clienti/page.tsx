@@ -59,6 +59,10 @@ type ContrattoRow = {
   created_at: string | null;
 };
 
+type MarketingConsentRow = {
+  cliente_id: number | null;
+};
+
 const NEGOZI: Record<number, string> = {
   1: "Floridia",
   2: "Augusta",
@@ -193,11 +197,27 @@ function PromoHistoryBadge({ summary }: { summary: PromoSendSummary | null }) {
   );
 }
 
+function MarketingConsentBadge({ active }: { active: boolean }) {
+  return (
+    <span
+      className={[
+        "inline-flex rounded-full border px-3 py-1 text-xs font-semibold",
+        active
+          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+          : "border-rose-200 bg-rose-50 text-rose-700",
+      ].join(" ")}
+    >
+      {active ? "Autorizzato" : "Non autorizzato"}
+    </span>
+  );
+}
+
 export default async function DashboardClientiPage({ searchParams }: Props) {
   const resolvedParams = searchParams ? await searchParams : {};
 
   const q = getSingleValue(resolvedParams.q).trim();
   const negozio = getSingleValue(resolvedParams.negozio).trim();
+  const onlyMarketingConsent = getSingleValue(resolvedParams.solo_marketing) === "1";
 
   const supabase = getSupabaseAdmin();
 
@@ -228,12 +248,14 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
 
   const serviziByCliente = new Map<number, ServizioRow[]>();
   const contrattiByCliente = new Map<number, ContrattoRow[]>();
+  let marketingConsentedIds = new Set<number>();
   let promoSummaries = new Map<number, PromoSendSummary>();
 
   if (clienteIds.length > 0) {
     const [
       { data: serviziData, error: serviziError },
       { data: contrattiData, error: contrattiError },
+      { data: marketingConsentData, error: marketingConsentError },
       { data: opportunitaData, error: opportunitaError },
     ] =
       await Promise.all([
@@ -250,6 +272,11 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
           .order("data_stipula", { ascending: false })
           .order("created_at", { ascending: false }),
         supabase
+          .from("phonesia_consensi")
+          .select("cliente_id")
+          .eq("tipo_evento", "marketing_accepted")
+          .in("cliente_id", clienteIds),
+        supabase
           .from("phonesia_opportunita_inviate")
           .select(
             "cliente_id, channel, sent_at, created_at, send_mode, inviato_at, metadata",
@@ -265,6 +292,12 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
 
     if (contrattiError) {
       throw new Error(`Errore lettura contratti: ${contrattiError.message}`);
+    }
+
+    if (marketingConsentError) {
+      throw new Error(
+        `Errore lettura consensi marketing: ${marketingConsentError.message}`,
+      );
     }
 
     if (opportunitaError) {
@@ -287,12 +320,18 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
       contrattiByCliente.set(row.cliente_id, list);
     }
 
+    marketingConsentedIds = new Set<number>(
+      ((marketingConsentData ?? []) as MarketingConsentRow[])
+        .map((row) => Number(row.cliente_id))
+        .filter((value): value is number => Number.isFinite(value)),
+    );
+
     promoSummaries = buildPromoSendSummaries(
       (opportunitaData ?? []) as PromoOpportunityHistoryRow[],
     );
   }
 
-  const rows = clienti.map((cliente) => {
+  let rows = clienti.map((cliente) => {
     const servizi = (serviziByCliente.get(cliente.id) ?? []).filter((row) =>
       isServizioAttivo(row.service_status),
     );
@@ -307,13 +346,19 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
       }
     }
 
-      return {
-        cliente,
-        operatore: resolveOperatore(servizi, contratti),
-        activeFamilies,
-        promoSummary: promoSummaries.get(cliente.id) ?? null,
-      };
-    });
+    return {
+      cliente,
+      operatore: resolveOperatore(servizi, contratti),
+      activeFamilies,
+      marketingConsented: marketingConsentedIds.has(cliente.id),
+      promoSummary: promoSummaries.get(cliente.id) ?? null,
+    };
+  });
+  if (onlyMarketingConsent) {
+    rows = rows.filter((row) => row.marketingConsented);
+  }
+
+  const selectableClientCount = rows.filter((row) => row.marketingConsented).length;
 
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-6 md:px-8">
@@ -345,13 +390,15 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
 
               <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
                 Clienti visibili: {rows.length}
+                <span className="mx-2 text-slate-300">·</span>
+                Selezionabili: {selectableClientCount}
               </div>
             </div>
           </div>
         </section>
 
         <section className="rounded-3xl border border-slate-200 bg-white px-5 py-5 shadow-sm md:px-6">
-          <form className="grid gap-4 md:grid-cols-[minmax(0,1.2fr)_220px_auto]">
+          <form className="grid gap-4 md:grid-cols-[minmax(0,1.2fr)_220px_minmax(260px,0.8fr)_auto]">
             <div>
               <label className="mb-2 block text-sm font-medium text-slate-600">
                 Cerca cliente
@@ -383,6 +430,17 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
               </select>
             </div>
 
+            <label className="flex items-center gap-3 self-end rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">
+              <input
+                type="checkbox"
+                name="solo_marketing"
+                value="1"
+                defaultChecked={onlyMarketingConsent}
+                className="h-4 w-4 rounded border-slate-300 text-orange-500 focus:ring-orange-500"
+              />
+              <span>Solo clienti con consenso marketing</span>
+            </label>
+
             <div className="flex items-end gap-3">
               <button
                 type="submit"
@@ -401,10 +459,13 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
           </form>
         </section>
 
-        <ClientiSelectionForm visibleClientCount={rows.length}>
+        <ClientiSelectionForm
+          selectableClientCount={selectableClientCount}
+          visibleClientCount={rows.length}
+        >
           <section className="rounded-3xl border border-slate-200 bg-white shadow-sm">
             <div className="max-h-[70vh] overflow-auto rounded-3xl">
-              <table className="min-w-[1720px] w-full text-sm">
+              <table className="min-w-[1840px] w-full text-sm">
                 <thead className="text-slate-600">
                   <tr className="border-b border-slate-200">
                     <th className="sticky top-0 z-20 bg-slate-50 px-4 py-3 text-left font-semibold shadow-[0_1px_0_0_rgb(226_232_240)]">
@@ -421,6 +482,9 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
                     </th>
                     <th className="sticky top-0 z-20 bg-slate-50 px-4 py-3 text-left font-semibold shadow-[0_1px_0_0_rgb(226_232_240)]">
                       Codice fiscale
+                    </th>
+                    <th className="sticky top-0 z-20 bg-slate-50 px-4 py-3 text-left font-semibold shadow-[0_1px_0_0_rgb(226_232_240)]">
+                      Marketing
                     </th>
                     {SERVICE_COLUMNS.map((service) => (
                       <th
@@ -443,7 +507,7 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
                   {rows.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={7 + SERVICE_COLUMNS.length}
+                        colSpan={8 + SERVICE_COLUMNS.length}
                         className="px-4 py-10 text-center text-sm text-slate-500"
                       >
                         Nessun cliente trovato con i filtri selezionati.
@@ -463,12 +527,15 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
                             data-promo-sent-today={
                               row.promoSummary?.sentToday ? "true" : "false"
                             }
+                            disabled={!row.marketingConsented}
                             title={
-                              row.promoSummary?.sentToday
+                              !row.marketingConsented
+                                ? "Cliente senza consenso marketing: non selezionabile."
+                                : row.promoSummary?.sentToday
                                 ? "Escluso dal seleziona tutti: promo WhatsApp già inviata oggi."
                                 : undefined
                             }
-                            className="h-4 w-4 rounded border-slate-300 text-orange-500 focus:ring-orange-500"
+                            className="h-4 w-4 rounded border-slate-300 text-orange-500 focus:ring-orange-500 disabled:cursor-not-allowed disabled:opacity-40"
                           />
                         </td>
 
@@ -490,6 +557,10 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
                           {row.cliente.codice_fiscale || "—"}
                         </td>
 
+                        <td className="px-4 py-4">
+                          <MarketingConsentBadge active={row.marketingConsented} />
+                        </td>
+
                         {SERVICE_COLUMNS.map((service) => (
                           <td key={service} className="px-3 py-4 text-center">
                             <CellFlag active={row.activeFamilies.has(service)} />
@@ -501,6 +572,11 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
                           {row.promoSummary?.sentToday ? (
                             <div className="mt-1 text-xs text-slate-500">
                               Escluso dal seleziona tutti
+                            </div>
+                          ) : null}
+                          {!row.marketingConsented ? (
+                            <div className="mt-1 text-xs text-slate-500">
+                              Non selezionabile
                             </div>
                           ) : null}
                         </td>
