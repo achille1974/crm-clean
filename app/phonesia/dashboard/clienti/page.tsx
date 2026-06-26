@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import ClientiSelectionForm from "@/components/phonesia/dashboard/ClientiSelectionForm";
 import {
   formatPromoSentAtRome,
+  getPromoDisplayName,
   getPromoKeyFromHistoryRow,
   getPromoOpportunitySentAt,
   type PromoOpportunityHistoryRow,
@@ -66,6 +67,7 @@ type MarketingConsentRow = {
 type PromoFilterOption = {
   key: string;
   label: string;
+  promoName: string | null;
   description: string;
   negozioLabel: string;
   attachmentFileName: string | null;
@@ -300,6 +302,7 @@ function buildPromoFilterOptions(
       description: string | null;
       attachmentFileName: string | null;
       messagePreview: string | null;
+      promoName: string | null;
     }
   >();
 
@@ -319,6 +322,7 @@ function buildPromoFilterOptions(
         description: null,
         attachmentFileName: null,
         messagePreview: null,
+        promoName: null,
       };
 
     group.sentRowCount += 1;
@@ -356,6 +360,10 @@ function buildPromoFilterOptions(
     group.description ||= extractPromoDescription(row);
     group.attachmentFileName ||= getPromoAttachmentFileName(row);
     group.messagePreview ||= getPromoMessagePreview(row);
+    group.promoName ||=
+      getMetadataString(row.metadata, "promo_name") ||
+      getMetadataString(row.metadata, "display_name") ||
+      getMetadataString(row.metadata, "campaign_name");
     groups.set(promoKey, group);
   }
 
@@ -366,20 +374,23 @@ function buildPromoFilterOptions(
         (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]),
       )[0]?.[0];
       const negozioLabel = negozioWinner ?? "Negozio non disponibile";
+      const promoName = group.promoName || getPromoDisplayName(group.key);
       const description = group.description ?? "Promo WhatsApp";
       const attachmentPart = group.attachmentFileName
         ? ` - ${group.attachmentFileName}`
         : "";
-      const label = [
+      const detailLabel = [
         dateLabel || "Data non disponibile",
         negozioLabel,
         `${description}${attachmentPart}`,
         `${group.sentClientIds.size} clienti`,
       ].join(" - ");
+      const label = promoName ? `${promoName} - ${detailLabel}` : detailLabel;
 
       return {
         key: group.key,
         label,
+        promoName,
         description,
         negozioLabel,
         attachmentFileName: group.attachmentFileName,
@@ -742,6 +753,7 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
         </section>
 
         <ClientiSelectionForm
+          promoKey={selectedPromoKey}
           selectableClientCount={selectableClientCount}
           visibleClientCount={rows.length}
         >

@@ -4,10 +4,14 @@ import { createClient } from "@supabase/supabase-js";
 
 import OpportunityBatchComposer from "@/components/phonesia/dashboard/OpportunityBatchComposer";
 import {
+  buildPromoHistoryLabelSummary,
   buildPromoKeysByCliente,
   buildPromoSendSummaries,
   formatPromoSentAtRome,
+  getPromoKeyFromHistoryRow,
+  normalizePromoKey,
   type PromoOpportunityHistoryRow,
+  type PromoHistoryLabelSummary,
   type PromoSendSummary,
 } from "@/lib/phonesia/opportunita-promo-history";
 
@@ -76,6 +80,11 @@ function parseClienteIds(value: string | string[] | undefined): number[] {
   ];
 }
 
+function getSingleValue(value: string | string[] | undefined): string {
+  if (Array.isArray(value)) return value[0] ?? "";
+  return value ?? "";
+}
+
 function negozioLabel(negozioId?: number | null): string {
   if (!negozioId) return "Non assegnato";
   return NEGOZI[negozioId] ?? `Negozio ${negozioId}`;
@@ -84,6 +93,7 @@ function negozioLabel(negozioId?: number | null): string {
 export default async function DashboardOpportunitySendPage({ searchParams }: Props) {
   const resolvedParams = searchParams ? await searchParams : {};
   const clienteIds = parseClienteIds(resolvedParams.clienti);
+  const requestedPromoKey = normalizePromoKey(getSingleValue(resolvedParams.promo_key));
 
   if (clienteIds.length === 0) {
     return (
@@ -125,6 +135,7 @@ export default async function DashboardOpportunitySendPage({ searchParams }: Pro
     { data: marketingConsentRows, error: marketingConsentError },
     { data: sentOpportunityRows, error: sentOpportunityError },
     { data: promoHistoryRows, error: promoHistoryError },
+    { data: requestedPromoHistoryRows, error: requestedPromoHistoryError },
   ] = await Promise.all([
     supabase
       .from("phonesia_clienti")
@@ -147,6 +158,19 @@ export default async function DashboardOpportunitySendPage({ searchParams }: Pro
       .in("cliente_id", clienteIds)
       .order("inviato_at", { ascending: false })
       .limit(5000),
+    requestedPromoKey
+      ? supabase
+          .from("phonesia_opportunita_inviate")
+          .select(
+            "cliente_id, opportunita_code, channel, sent_at, created_at, send_mode, inviato_at, messaggio, attachment_public_url, attachment_file_name, promo_key, metadata",
+          )
+          .eq("promo_key", requestedPromoKey)
+          .order("inviato_at", { ascending: false })
+          .limit(5000)
+      : Promise.resolve({
+          data: [] as PromoOpportunityHistoryRow[],
+          error: null,
+        }),
   ]);
 
   if (clientiError) {
@@ -165,8 +189,24 @@ export default async function DashboardOpportunitySendPage({ searchParams }: Pro
     throw new Error(`Errore lettura storico promo WhatsApp: ${promoHistoryError.message}`);
   }
 
+  if (requestedPromoHistoryError) {
+    throw new Error(`Errore lettura promo selezionata: ${requestedPromoHistoryError.message}`);
+  }
+
   const clienti = (clientiData ?? []) as ClienteRow[];
   if (clienti.length === 0) notFound();
+
+  const requestedPromoRows = ((requestedPromoHistoryRows ?? []) as PromoOpportunityHistoryRow[])
+    .filter((row) => getPromoKeyFromHistoryRow(row) === requestedPromoKey);
+  const requestedPromoSummary: PromoHistoryLabelSummary | null = requestedPromoKey
+    ? buildPromoHistoryLabelSummary(requestedPromoRows, {
+        promoKey: requestedPromoKey,
+      })
+    : null;
+  const requestedPromoError =
+    requestedPromoKey && !requestedPromoSummary
+      ? `La promo selezionata (${requestedPromoKey}) non esiste nello storico invii. Nessun invio e consentito con questa chiave.`
+      : null;
 
   const promoSummaries = buildPromoSendSummaries(
     (promoHistoryRows ?? []) as PromoOpportunityHistoryRow[],
@@ -266,7 +306,55 @@ export default async function DashboardOpportunitySendPage({ searchParams }: Pro
           </div>
         </section>
 
-        <OpportunityBatchComposer recipients={recipients} />
+        {requestedPromoSummary ? (
+          <section className="rounded-3xl border border-emerald-200 bg-emerald-50 px-5 py-5 text-sm text-emerald-950 shadow-sm md:px-6">
+            <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+              Promo storica selezionata
+            </div>
+            <div className="mt-1 text-xl font-black text-emerald-950">
+              {requestedPromoSummary.promoName ?? requestedPromoSummary.description}
+            </div>
+            <div className="mt-3 grid gap-3 lg:grid-cols-[1fr_0.7fr]">
+              <div className="rounded-2xl border border-emerald-200 bg-white px-4 py-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+                  Dettaglio storico
+                </div>
+                <div className="mt-1 font-semibold text-emerald-950">
+                  {requestedPromoSummary.detailLabel}
+                </div>
+              </div>
+              <div className="rounded-2xl border border-emerald-200 bg-white px-4 py-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+                  Chiave tecnica
+                </div>
+                <div className="mt-1 break-all font-mono text-sm font-semibold text-emerald-950">
+                  {requestedPromoSummary.key}
+                </div>
+              </div>
+            </div>
+            <div className="mt-3 rounded-2xl border border-emerald-200 bg-white px-4 py-3 font-semibold text-emerald-900">
+              Questo invio verra registrato con la stessa chiave promo per evitare doppi invii agli stessi clienti.
+            </div>
+          </section>
+        ) : null}
+
+        {requestedPromoError ? (
+          <section className="rounded-3xl border border-rose-200 bg-rose-50 px-5 py-5 text-sm text-rose-800 shadow-sm md:px-6">
+            <div className="font-semibold">STOP promo selezionata non valida</div>
+            <div className="mt-1">{requestedPromoError}</div>
+          </section>
+        ) : (
+          <OpportunityBatchComposer
+            recipients={recipients}
+            promoKeyOverride={requestedPromoSummary?.key ?? null}
+            promoLabel={requestedPromoSummary?.detailLabel ?? null}
+            initialPromoName={
+              requestedPromoSummary?.promoName ??
+              requestedPromoSummary?.description ??
+              ""
+            }
+          />
+        )}
       </div>
     </main>
   );

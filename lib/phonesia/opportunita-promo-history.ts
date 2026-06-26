@@ -45,11 +45,30 @@ export type PromoKeyInput = {
   title?: string | null;
 };
 
+export type PromoHistoryLabelSummary = {
+  key: string | null;
+  label: string;
+  detailLabel: string;
+  promoName: string | null;
+  description: string;
+  negozioLabel: string;
+  attachmentFileName: string | null;
+  sentClientCount: number;
+  sentRowCount: number;
+  firstSentAt: string | null;
+  lastSentAt: string | null;
+  messagePreview: string | null;
+};
+
+const KNOWN_PROMO_NAMES: Record<string, string> = {
+  promo_3999cfa0c4f24f73: "TIM Motorola 6 euro mese",
+};
+
 function normalizeText(value?: string | null): string {
   return String(value ?? "").trim();
 }
 
-function normalizePromoText(value?: string | null): string {
+export function normalizePromoText(value?: string | null): string {
   return String(value ?? "")
     .normalize("NFKC")
     .replace(/[\r\n\t]+/g, " ")
@@ -67,6 +86,73 @@ function getMetadataString(
 ): string | null {
   const value = metadata?.[key];
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+export function normalizePromoKey(value?: string | null): string {
+  return normalizeText(value).replace(/\s+/g, "");
+}
+
+export function isValidPromoKey(value?: string | null): boolean {
+  return /^promo_[a-z0-9][a-z0-9_-]{2,140}$/i.test(normalizePromoKey(value));
+}
+
+export function normalizePromoName(value?: string | null): string {
+  return normalizePromoText(value).slice(0, 120);
+}
+
+export function isValidPromoName(value?: string | null): boolean {
+  const name = normalizePromoName(value);
+  return name.length >= 3 && name.length <= 120;
+}
+
+export function getKnownPromoName(promoKey?: string | null): string | null {
+  const key = normalizePromoKey(promoKey);
+  return KNOWN_PROMO_NAMES[key] ?? null;
+}
+
+function slugifyPromoName(value?: string | null): string {
+  return normalizePromoName(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .replace(/_+/g, "_")
+    .slice(0, 80);
+}
+
+function getPromoMonthSuffix(now: Date): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: ROME_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+  }).formatToParts(now);
+  const values = new Map(parts.map((part) => [part.type, part.value]));
+  return `${values.get("year") ?? ""}${values.get("month") ?? ""}`;
+}
+
+export function buildPromoKeyFromName(value?: string | null, now = new Date()): string {
+  const slug = slugifyPromoName(value);
+  if (!slug) return "";
+  return `promo_${slug}_${getPromoMonthSuffix(now)}`;
+}
+
+export function getPromoDisplayName(
+  promoKey?: string | null,
+  rows: PromoOpportunityHistoryRow[] = [],
+): string | null {
+  const knownName = getKnownPromoName(promoKey);
+  if (knownName) return knownName;
+
+  for (const row of rows) {
+    const name =
+      getMetadataString(row.metadata, "promo_name") ||
+      getMetadataString(row.metadata, "display_name") ||
+      getMetadataString(row.metadata, "campaign_name");
+    if (name) return normalizePromoName(name);
+  }
+
+  return null;
 }
 
 function stableStringify(value: unknown): string {
@@ -207,6 +293,167 @@ export function buildDuplicatePromoClienteIds(
   return duplicateIds;
 }
 
+function normalizePreviewText(value?: string | null): string {
+  return normalizeText(value).replace(/\s+/g, " ");
+}
+
+function getPromoSourceText(row: PromoOpportunityHistoryRow): string {
+  return (
+    normalizePreviewText(row.messaggio) ||
+    normalizePreviewText(getMetadataString(row.metadata, "custom_message")) ||
+    normalizePreviewText(getMetadataString(row.metadata, "messaggio_personalizzato")) ||
+    normalizePreviewText(row.opportunita_code)
+  );
+}
+
+function cleanPromoPhrase(value: string): string {
+  return value
+    .replace(/\s*,?\s*(anticipo zero|salvo approvazione|ti aspettiamo).*$/i, "")
+    .replace(/\s+/g, " ")
+    .replace(/\s+([,.;:])/g, "$1")
+    .trim();
+}
+
+function extractPromoDescription(row: PromoOpportunityHistoryRow): string | null {
+  const text = getPromoSourceText(row);
+  if (!text) return null;
+
+  const operatorMatch = text.match(/\b(TIM|Vodafone|WINDTRE|WindTre|Iliad|Fastweb|Kena|Very)\b/i);
+  const operator = operatorMatch?.[1]
+    ? operatorMatch[1].toUpperCase() === "WINDTRE"
+      ? "WINDTRE"
+      : operatorMatch[1].toUpperCase()
+    : null;
+  const purchaseMatch = text.match(/puoi acquistare\s+(.+?)(?:[,.]|$)/i);
+  const offerMatch = text.match(/promo\s+[A-Z0-9]+\s*:\s*(.+?)(?:[,.]|$)/i);
+  const service = normalizeText(row.opportunita_code)
+    .replace(/^CUSTOM_MESSAGE(?:_IMAGE|_DOCUMENT)?:/i, "")
+    .replace(/[-_]+/g, " ");
+  const rawPhrase = purchaseMatch?.[1] || offerMatch?.[1] || "";
+  const phrase = cleanPromoPhrase(rawPhrase);
+
+  if (operator && phrase) return `${operator} ${phrase}`;
+  if (operator) return `Promo ${operator}`;
+  if (phrase) return phrase;
+
+  if (service && !/^[0-9a-f]{8}/i.test(service)) {
+    return service.length > 80 ? `${service.slice(0, 77)}...` : service;
+  }
+
+  return null;
+}
+
+function getPromoAttachmentFileName(row: PromoOpportunityHistoryRow): string | null {
+  return (
+    normalizeText(row.attachment_file_name) ||
+    getMetadataString(row.metadata, "attachment_file_name") ||
+    null
+  );
+}
+
+function inferNegozioLabelFromText(value: string): string | null {
+  const text = value.toLowerCase();
+  const labels = ["Floridia", "Augusta", "Siracusa", "Avola", "Tabacchino Floridia"];
+  return labels.find((label) => text.includes(label.toLowerCase())) ?? null;
+}
+
+export function buildPromoHistoryLabelSummary(
+  rows: PromoOpportunityHistoryRow[],
+  options?: {
+    promoKey?: string | null;
+    negozioLabelByClienteId?: Map<number, string>;
+  },
+): PromoHistoryLabelSummary | null {
+  const promoKey = normalizePromoKey(options?.promoKey);
+  const matchingRows = rows.filter((row) => {
+    const rowPromoKey = getPromoKeyFromHistoryRow(row);
+    return rowPromoKey && (!promoKey || rowPromoKey === promoKey);
+  });
+
+  if (matchingRows.length === 0) return null;
+
+  const sentClientIds = new Set<number>();
+  const negozioCounts = new Map<string, number>();
+  let firstSentAt: string | null = null;
+  let lastSentAt: string | null = null;
+  let description: string | null = null;
+  let attachmentFileName: string | null = null;
+  let messagePreview: string | null = null;
+  let resolvedPromoKey: string | null = promoKey || null;
+
+  for (const row of matchingRows) {
+    resolvedPromoKey ||= getPromoKeyFromHistoryRow(row);
+    const clienteId = Number(row.cliente_id);
+    if (Number.isFinite(clienteId)) {
+      sentClientIds.add(clienteId);
+      const rowNegozioLabel =
+        options?.negozioLabelByClienteId?.get(clienteId) ??
+        inferNegozioLabelFromText(getPromoSourceText(row));
+
+      if (rowNegozioLabel) {
+        negozioCounts.set(
+          rowNegozioLabel,
+          (negozioCounts.get(rowNegozioLabel) ?? 0) + 1,
+        );
+      }
+    }
+
+    const sentAt = getPromoOpportunitySentAt(row);
+    const sentAtMs = sentAt ? Date.parse(sentAt) : NaN;
+    const firstSentAtMs = firstSentAt ? Date.parse(firstSentAt) : NaN;
+    const lastSentAtMs = lastSentAt ? Date.parse(lastSentAt) : NaN;
+
+    if (Number.isFinite(sentAtMs)) {
+      if (!Number.isFinite(firstSentAtMs) || sentAtMs < firstSentAtMs) {
+        firstSentAt = sentAt;
+      }
+
+      if (!Number.isFinite(lastSentAtMs) || sentAtMs > lastSentAtMs) {
+        lastSentAt = sentAt;
+      }
+    }
+
+    description ||= extractPromoDescription(row);
+    attachmentFileName ||= getPromoAttachmentFileName(row);
+    const sourceText = getPromoSourceText(row);
+    messagePreview ||= sourceText
+      ? sourceText.length > 90
+        ? `${sourceText.slice(0, 87)}...`
+        : sourceText
+      : null;
+  }
+
+  const dateLabel = firstSentAt ? formatPromoDateRome(firstSentAt) : "";
+  const negozioWinner = [...negozioCounts.entries()].sort(
+    (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]),
+  )[0]?.[0];
+  const negozioLabel = negozioWinner ?? "Negozio non disponibile";
+  const summaryDescription = description ?? "Promo WhatsApp";
+  const attachmentPart = attachmentFileName ? ` - ${attachmentFileName}` : "";
+  const detailLabel = [
+    dateLabel || "Data non disponibile",
+    negozioLabel,
+    `${summaryDescription}${attachmentPart}`,
+    `${sentClientIds.size} clienti`,
+  ].join(" - ");
+  const promoName = getPromoDisplayName(resolvedPromoKey, matchingRows);
+
+  return {
+    key: resolvedPromoKey,
+    label: promoName ? `${promoName} - ${detailLabel}` : detailLabel,
+    detailLabel,
+    promoName,
+    description: summaryDescription,
+    negozioLabel,
+    attachmentFileName,
+    sentClientCount: sentClientIds.size,
+    sentRowCount: matchingRows.length,
+    firstSentAt,
+    lastSentAt,
+    messagePreview,
+  };
+}
+
 function getDateTimeParts(date: Date, timeZone: string) {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone,
@@ -308,6 +555,20 @@ export function getPromoOpportunitySentAt(
     normalizeText(row.created_at) ||
     null
   );
+}
+
+function formatPromoDateRome(value: string | null): string {
+  if (!value) return "";
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+
+  return new Intl.DateTimeFormat("it-IT", {
+    timeZone: ROME_TIME_ZONE,
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(date);
 }
 
 function hasPromoMetadataMarker(metadata: Record<string, unknown> | null | undefined) {

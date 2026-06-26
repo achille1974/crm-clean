@@ -4,12 +4,14 @@ import { type ReactNode, useCallback, useRef, useState } from "react";
 
 type ClientiSelectionFormProps = {
   children: ReactNode;
+  promoKey?: string | null;
   selectableClientCount?: number;
   visibleClientCount: number;
 };
 
 export default function ClientiSelectionForm({
   children,
+  promoKey,
   selectableClientCount,
   visibleClientCount,
 }: ClientiSelectionFormProps) {
@@ -52,6 +54,8 @@ export default function ClientiSelectionForm({
       className="space-y-4"
       onChange={refreshSelectedCount}
     >
+      {promoKey ? <input type="hidden" name="promo_key" value={promoKey} /> : null}
+
       <section className="rounded-3xl border border-slate-200 bg-white px-5 py-5 shadow-sm md:px-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>

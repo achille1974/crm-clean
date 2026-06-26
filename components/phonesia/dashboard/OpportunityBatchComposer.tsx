@@ -2,7 +2,10 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { createClient } from "@supabase/supabase-js";
-import { buildPromoKey } from "@/lib/phonesia/opportunita-promo-history";
+import {
+  buildPromoKeyFromName,
+  normalizePromoName,
+} from "@/lib/phonesia/opportunita-promo-history";
 import { sanitizeWhatsAppTemplateText } from "@/lib/phonesia/whatsapp-template-payload";
 
 const SERVICE_COLUMNS = [
@@ -33,6 +36,9 @@ type Recipient = {
 };
 
 type Props = {
+  initialPromoName?: string | null;
+  promoKeyOverride?: string | null;
+  promoLabel?: string | null;
   recipients: Recipient[];
 };
 
@@ -57,7 +63,10 @@ type SendResultRow = {
 type SendResponse =
   | {
       ok: true;
+      dryRun?: false;
       batchId: string;
+      promoKey?: string;
+      promoName?: string;
       totalSelectedCount?: number;
       sentCount: number;
       blockedCount: number;
@@ -68,6 +77,21 @@ type SendResponse =
       results: SendResultRow[];
       failedResults?: SendResultRow[];
       skippedResults?: SendResultRow[];
+    }
+  | {
+      ok: true;
+      dryRun: true;
+      promoKey: string;
+      promoName: string;
+      totalSelectedCount: number;
+      alreadyContactedCount: number;
+      missingMarketingConsentCount: number;
+      invalidWhatsappCount: number;
+      sentTodayCount: number;
+      legacyAlreadySentCount: number;
+      sendableCount: number;
+      blockedCount: number;
+      errorCount: number;
     }
   | {
       ok: false;
@@ -82,6 +106,8 @@ type SendResponse =
         fbtrace_id?: string | null;
       } | null;
     };
+
+type DryRunResponse = Extract<SendResponse, { dryRun: true }>;
 
 type MediaUploadResponse = {
   ok: boolean;
@@ -104,10 +130,6 @@ const MAX_IMAGE_ATTACHMENT_SIZE_BYTES = 5 * 1024 * 1024;
 const MAX_DOCUMENT_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024;
 const MAX_CUSTOM_MESSAGE_LENGTH = 320;
 const MARKETING_MESSAGE_COST_EUR = 0.0522;
-const STANDARD_TEMPLATE_NAME = "phonesia_opportunita_marketing_v2";
-const CUSTOM_TEXT_TEMPLATE_NAME = "ph_msg_txt2_v1";
-const CUSTOM_IMAGE_TEMPLATE_NAME = "ph_msg_img_v1";
-const CUSTOM_DOCUMENT_TEMPLATE_NAME = "ph_msg_doc_v1";
 
 function serviceLabel(service: ServiceFamily): string {
   switch (service) {
@@ -180,6 +202,10 @@ function formatSendResponseError(data: Extract<SendResponse, { ok: false }>): st
   }
 
   return data.message || data.detail || data.error || "Invio batch non riuscito.";
+}
+
+function isDryRunResponse(data: SendResponse): data is DryRunResponse {
+  return data.ok === true && "dryRun" in data && data.dryRun === true;
 }
 
 function formatCurrency(value: number): string {
@@ -368,7 +394,13 @@ async function uploadCustomAttachment(
   };
 }
 
-export default function OpportunityBatchComposer({ recipients }: Props) {
+export default function OpportunityBatchComposer({
+  initialPromoName,
+  promoKeyOverride,
+  promoLabel,
+  recipients,
+}: Props) {
+  const [promoName, setPromoName] = useState(initialPromoName ?? "");
   const [messageMode, setMessageMode] = useState<"standard" | "custom">("standard");
   const [standardService, setStandardService] = useState<ServiceFamily>("SMARTPHONE");
   const [customMessageMode, setCustomMessageMode] = useState<CustomMessageMode>("text");
@@ -376,6 +408,13 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [attachmentInputKey, setAttachmentInputKey] = useState(0);
   const [isSending, setIsSending] = useState(false);
+  const [isPreflighting, setIsPreflighting] = useState(false);
+  const [preflightResponse, setPreflightResponse] = useState<DryRunResponse | null>(
+    null,
+  );
+  const [lastPreflightSignature, setLastPreflightSignature] = useState<string | null>(
+    null,
+  );
   const [sendResponse, setSendResponse] = useState<SendResponse | null>(null);
   const [excludedDuplicateIds, setExcludedDuplicateIds] = useState<Set<number>>(
     () => new Set(),
@@ -386,38 +425,12 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
   const normalizedCustomMessage = sanitizeWhatsAppTemplateText(customMessage);
   const customMessageWasSanitized = customMessage !== normalizedCustomMessage;
   const trimmedCustomMessage = normalizedCustomMessage;
+  const normalizedPromoName = normalizePromoName(promoName);
   const selectedFileName = selectedFile?.name ?? null;
 
   const currentPromoKey = useMemo(() => {
-    if (messageMode === "standard") {
-      return buildPromoKey({
-        templateName: STANDARD_TEMPLATE_NAME,
-        sendMode: "standard",
-        standardService,
-      });
-    }
-
-    const templateName =
-      customMessageMode === "image"
-        ? CUSTOM_IMAGE_TEMPLATE_NAME
-        : customMessageMode === "document"
-          ? CUSTOM_DOCUMENT_TEMPLATE_NAME
-          : CUSTOM_TEXT_TEMPLATE_NAME;
-    const sendMode =
-      customMessageMode === "image"
-        ? "custom_message_image"
-        : customMessageMode === "document"
-          ? "custom_message_document"
-          : "custom_message";
-
-    return buildPromoKey({
-      templateName,
-      sendMode,
-      customMessage: trimmedCustomMessage,
-      attachmentFileName:
-        customMessageMode === "text" ? null : selectedFileName,
-    });
-  }, [customMessageMode, messageMode, selectedFileName, standardService, trimmedCustomMessage]);
+    return promoKeyOverride || buildPromoKeyFromName(normalizedPromoName);
+  }, [normalizedPromoName, promoKeyOverride]);
 
   useEffect(() => {
     setExcludedDuplicateIds(new Set());
@@ -509,20 +522,64 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
     alreadySentTodayRecipients.length +
     duplicatePromoRecipients.length;
   const estimatedCost = sendableRecipients.length * MARKETING_MESSAGE_COST_EUR;
+  const requestSignature = useMemo(
+    () =>
+      JSON.stringify({
+        clienti: visibleRecipients.map((recipient) => recipient.id).sort((a, b) => a - b),
+        customMessageMode,
+        messageMode,
+        promoKeyOverride: promoKeyOverride ?? "",
+        promoName: normalizedPromoName,
+        selectedFileName,
+        standardService,
+        trimmedCustomMessage,
+      }),
+    [
+      customMessageMode,
+      messageMode,
+      normalizedPromoName,
+      promoKeyOverride,
+      selectedFileName,
+      standardService,
+      trimmedCustomMessage,
+      visibleRecipients,
+    ],
+  );
 
   const previewText =
     messageMode === "standard"
       ? buildStandardText(standardService)
       : trimmedCustomMessage || "Nessun messaggio personalizzato inserito.";
 
-  const canSend =
+  const canPreparePayload =
     visibleRecipients.length > 0 &&
-    sendableRecipients.length > 0 &&
-    !isSending &&
+    Boolean(currentPromoKey) &&
+    normalizedPromoName.length >= 3 &&
     (messageMode === "standard" ||
       (trimmedCustomMessage.length > 0 &&
         trimmedCustomMessage.length <= MAX_CUSTOM_MESSAGE_LENGTH &&
         (customMessageMode === "text" || selectedFile !== null)));
+  const preflightIsFresh =
+    Boolean(preflightResponse) &&
+    lastPreflightSignature === requestSignature &&
+    preflightResponse?.promoKey === currentPromoKey;
+  const promoKeyMismatchStop =
+    Boolean(promoKeyOverride) &&
+    Boolean(preflightResponse) &&
+    preflightResponse?.promoKey !== promoKeyOverride;
+  const canPreflight = canPreparePayload && !isSending && !isPreflighting;
+  const canSend =
+    canPreparePayload &&
+    preflightIsFresh &&
+    !promoKeyMismatchStop &&
+    (preflightResponse?.sendableCount ?? 0) > 0 &&
+    !isSending &&
+    !isPreflighting;
+
+  useEffect(() => {
+    setPreflightResponse(null);
+    setLastPreflightSignature(null);
+  }, [requestSignature]);
 
   function clearAttachment() {
     setSelectedFile(null);
@@ -590,7 +647,115 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
     setSelectedFile(file);
   }
 
+  function buildBatchFormData(params: {
+    dryRun: boolean;
+    uploadedAttachment?: UploadedAttachment | null;
+  }) {
+    const formData = new FormData();
+
+    for (const recipient of visibleRecipients) {
+      formData.append("clienti", String(recipient.id));
+    }
+
+    formData.append("messageMode", messageMode);
+    formData.append("promoName", normalizedPromoName);
+
+    if (promoKeyOverride) {
+      formData.append("promoKeyOverride", promoKeyOverride);
+    }
+
+    if (params.dryRun) {
+      formData.append("dryRun", "true");
+    }
+
+    if (messageMode === "standard") {
+      formData.append("standardService", standardService);
+    } else {
+      formData.append("customMessageMode", customMessageMode);
+      formData.append("customMessage", customMessage);
+
+      if (params.uploadedAttachment) {
+        formData.append("attachmentPublicUrl", params.uploadedAttachment.publicUrl);
+        formData.append("attachmentFileName", params.uploadedAttachment.fileName);
+        formData.append("attachmentMimeType", params.uploadedAttachment.mimeType);
+      } else if (selectedFile) {
+        formData.append("attachmentFileName", selectedFile.name);
+        formData.append("attachmentMimeType", selectedFile.type);
+      }
+    }
+
+    return formData;
+  }
+
+  async function handlePreflight() {
+    if (!canPreparePayload) {
+      setSendResponse({
+        ok: false,
+        error: "Completa nome promo, destinatari e contenuto prima del preflight.",
+      });
+      return;
+    }
+
+    setIsPreflighting(true);
+    setSendResponse(null);
+    setPreflightResponse(null);
+    setLastPreflightSignature(null);
+
+    try {
+      const response = await fetch("/api/phonesia/opportunita/send-batch", {
+        method: "POST",
+        body: buildBatchFormData({ dryRun: true }),
+      });
+      const data = (await response.json()) as SendResponse;
+
+      if (!response.ok || !isDryRunResponse(data)) {
+        setSendResponse(
+          data.ok
+            ? {
+                ok: false,
+                error: "Preflight non riuscito.",
+              }
+            : {
+                ok: false,
+                error: data.error || "Preflight non riuscito.",
+                message: formatSendResponseError(data),
+                detail: data.detail,
+                meta_error: data.meta_error,
+              },
+        );
+        return;
+      }
+
+      setPreflightResponse(data);
+      setLastPreflightSignature(requestSignature);
+    } catch (error) {
+      setSendResponse({
+        ok: false,
+        error: "Errore imprevisto durante il preflight.",
+        detail: error instanceof Error ? error.message : "Unknown error",
+      });
+    } finally {
+      setIsPreflighting(false);
+    }
+  }
+
   async function handleSendBatch() {
+    if (!preflightIsFresh) {
+      setSendResponse({
+        ok: false,
+        error: "Esegui un preflight aggiornato prima dell'invio reale.",
+      });
+      return;
+    }
+
+    if (promoKeyMismatchStop) {
+      setSendResponse({
+        ok: false,
+        error: "STOP: la promo_key finale non coincide con quella selezionata.",
+      });
+      return;
+    }
+
     if (messageMode === "custom" && !trimmedCustomMessage) {
       setSendResponse({
         ok: false,
@@ -630,29 +795,10 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
         messageMode === "custom" && customMessageMode !== "text" && selectedFile
           ? await uploadCustomAttachment(selectedFile, customMessageMode)
           : null;
-      const formData = new FormData();
-
-      for (const recipient of sendableRecipients) {
-        formData.append("clienti", String(recipient.id));
-      }
-
-      formData.append("messageMode", messageMode);
-
-      if (messageMode === "standard") {
-        formData.append("standardService", standardService);
-      } else {
-        formData.append("customMessageMode", customMessageMode);
-        formData.append("customMessage", customMessage);
-        if (uploadedAttachment) {
-          formData.append("attachmentPublicUrl", uploadedAttachment.publicUrl);
-          formData.append("attachmentFileName", uploadedAttachment.fileName);
-          formData.append("attachmentMimeType", uploadedAttachment.mimeType);
-        }
-      }
 
       const response = await fetch("/api/phonesia/opportunita/send-batch", {
         method: "POST",
-        body: formData,
+        body: buildBatchFormData({ dryRun: false, uploadedAttachment }),
       });
 
       const data = (await response.json()) as SendResponse;
@@ -868,6 +1014,55 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
             Scegli il template Meta approvato da usare per i clienti idonei selezionati.
           </p>
         </div>
+
+        <section className="mb-5 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+          <label className="mb-2 block text-sm font-semibold text-slate-900">
+            Nome promo
+          </label>
+          <input
+            type="text"
+            value={promoName}
+            onChange={(event) => setPromoName(event.target.value)}
+            placeholder="TIM Motorola 6 euro mese"
+            className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-orange-500"
+          />
+          <div className="mt-3 grid gap-3 lg:grid-cols-[1fr_0.8fr]">
+            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Promo key finale prevista
+              </div>
+              <div className="mt-1 break-all font-mono text-sm font-semibold text-slate-950">
+                {currentPromoKey || "Inserisci un nome promo valido"}
+              </div>
+            </div>
+            {promoKeyOverride ? (
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+                <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+                  Chiave storica bloccata
+                </div>
+                <div className="mt-1 font-semibold">
+                  La promo verra registrata con la chiave selezionata.
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+                La chiave tecnica nuova viene generata dal nome promo e dal mese corrente,
+                non dal testo, template o allegato.
+              </div>
+            )}
+          </div>
+          {promoLabel ? (
+            <div className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+              <span className="font-semibold text-slate-950">Storico selezionato:</span>{" "}
+              {promoLabel}
+            </div>
+          ) : null}
+          {normalizedPromoName.length > 0 && normalizedPromoName.length < 3 ? (
+            <p className="mt-2 text-xs font-semibold text-rose-700">
+              Inserisci un nome promo di almeno 3 caratteri.
+            </p>
+          ) : null}
+        </section>
 
         <div className="grid gap-5 lg:grid-cols-[1.05fr_0.95fr]">
           <div className="space-y-5">
@@ -1133,7 +1328,65 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
                 </ul>
               </div>
 
+              {preflightResponse ? (
+                <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-950">
+                  <div className="font-semibold">Riepilogo preflight</div>
+                  <div className="mt-1">
+                    Promo: <strong>{preflightResponse.promoName}</strong>
+                  </div>
+                  <div className="mt-1 break-all font-mono text-xs">
+                    Promo key finale: {preflightResponse.promoKey}
+                  </div>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <CompactStat
+                      label="Selezionati"
+                      value={String(preflightResponse.totalSelectedCount)}
+                    />
+                    <CompactStat
+                      label="Già contattati"
+                      value={String(preflightResponse.alreadyContactedCount)}
+                    />
+                    <CompactStat
+                      label="No marketing"
+                      value={String(preflightResponse.missingMarketingConsentCount)}
+                    />
+                    <CompactStat
+                      label="No WhatsApp"
+                      value={String(preflightResponse.invalidWhatsappCount)}
+                    />
+                    <CompactStat
+                      label="Già inviati oggi"
+                      value={String(preflightResponse.sentTodayCount)}
+                    />
+                    <CompactStat
+                      label="Inviabili"
+                      value={String(preflightResponse.sendableCount)}
+                    />
+                  </div>
+                </div>
+              ) : null}
+
+              {promoKeyMismatchStop ? (
+                <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-4 text-sm font-semibold text-rose-800">
+                  STOP: la promo_key finale restituita dal preflight non coincide con quella selezionata.
+                </div>
+              ) : null}
+
               <div className="mt-4 flex flex-col gap-3">
+                <button
+                  type="button"
+                  disabled={!canPreflight}
+                  onClick={handlePreflight}
+                  className={[
+                    "inline-flex items-center justify-center rounded-2xl border px-5 py-3 text-sm font-semibold transition",
+                    canPreflight
+                      ? "border-orange-300 bg-orange-50 text-orange-700 hover:bg-orange-100"
+                      : "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400",
+                  ].join(" ")}
+                >
+                  {isPreflighting ? "Preflight in corso..." : "Esegui preflight"}
+                </button>
+
                 <button
                   type="button"
                   disabled={!canSend}
@@ -1153,9 +1406,8 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
                 </button>
 
                 <p className="text-xs text-slate-500">
-                  I clienti senza consenso marketing, senza WhatsApp attivo o con
-                  promo già inviata oggi o già raggiunti dalla stessa promo verranno
-                  saltati automaticamente.
+                  Il bottone di invio resta bloccato finche il preflight aggiornato
+                  non conferma promo key finale, destinatari inviabili e blocchi server.
                 </p>
               </div>
             </section>
@@ -1165,7 +1417,12 @@ export default function OpportunityBatchComposer({ recipients }: Props) {
 
       {sendResponse ? (
         <section className="rounded-3xl border border-slate-200 bg-white px-5 py-5 shadow-sm md:px-6">
-          {sendResponse.ok ? (
+          {sendResponse.ok && sendResponse.dryRun ? (
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-800">
+              Preflight completato. Inviabili effettivi:{" "}
+              <strong>{sendResponse.sendableCount}</strong>.
+            </div>
+          ) : sendResponse.ok ? (
             <>
               <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-800">
                 Invio completato. Batch ID: <strong>{sendResponse.batchId}</strong>

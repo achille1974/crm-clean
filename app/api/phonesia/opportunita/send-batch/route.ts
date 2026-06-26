@@ -8,11 +8,15 @@ import {
 } from "@/lib/phonesia/whatsapp-template-payload";
 import {
   buildDuplicatePromoClienteIds,
-  buildPromoKey,
+  buildPromoKeyFromName,
   buildPromoSendSummaries,
   buildTodayPromoDateFilter,
   DAILY_WHATSAPP_PROMO_SKIP_REASON,
   DUPLICATE_PROMO_SKIP_REASON,
+  isValidPromoKey,
+  isValidPromoName,
+  normalizePromoKey,
+  normalizePromoName,
   type PromoOpportunityHistoryRow,
 } from "@/lib/phonesia/opportunita-promo-history";
 
@@ -1177,6 +1181,7 @@ async function logOpportunitySend(
     attachmentPublicUrl: string | null;
     attachmentFileName: string | null;
     promoKey: string;
+    promoName: string;
   },
 ) {
   try {
@@ -1196,6 +1201,7 @@ async function logOpportunitySend(
         batch_id: params.batchId,
         negozio_contatto: params.negozioContatto,
         promo_key: params.promoKey,
+        promo_name: params.promoName,
         template_name: params.templateName,
         template_usato: params.templateName,
         tipo_invio: params.sendMode,
@@ -1245,6 +1251,7 @@ async function logBatchSkipped(
     bodyParameterNames: string[];
     mediaUrl: string | null;
     promoKey: string;
+    promoName: string;
   },
 ) {
   try {
@@ -1264,6 +1271,7 @@ async function logBatchSkipped(
         batch_id: params.batchId,
         negozio_contatto: params.negozioContatto,
         promo_key: params.promoKey,
+        promo_name: params.promoName,
         template_name: params.templateName,
         template_usato: params.templateName,
         tipo_invio: params.sendMode,
@@ -1308,6 +1316,7 @@ async function saveOpportunitySentRow(
     whatsappUrl: string;
     mapsUrl: string;
     promoKey: string;
+    promoName: string;
   },
 ) {
   const customPrefix =
@@ -1340,6 +1349,7 @@ async function saveOpportunitySentRow(
     metadata: {
       template_name: params.templateName,
       promo_key: params.promoKey,
+      promo_name: params.promoName,
       template_usato: params.templateName,
       tipo_invio: params.sendMode,
       send_mode: params.sendMode,
@@ -1390,6 +1400,8 @@ async function logMetaTemplateFailure(
     attempts: MetaTemplateSendAttempt[];
     maskedPhone: string | null;
     mediaUrl: string | null;
+    promoKey: string;
+    promoName: string;
   },
 ) {
   const lastError = getLastErrorAttempt(params.attempts);
@@ -1410,6 +1422,8 @@ async function logMetaTemplateFailure(
       metadata: {
         batch_id: params.batchId,
         negozio_contatto: params.negozioContatto,
+        promo_key: params.promoKey,
+        promo_name: params.promoName,
         template_name: params.templateName,
         template_usato: params.templateName,
         tipo_invio: params.sendMode,
@@ -1439,6 +1453,9 @@ async function logMetaTemplateFailure(
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
+    const dryRun = normalizeText(String(formData.get("dryRun") ?? "")).toLowerCase() === "true";
+    const promoKeyOverride = normalizePromoKey(String(formData.get("promoKeyOverride") ?? ""));
+    const promoName = normalizePromoName(String(formData.get("promoName") ?? ""));
 
     const rawClienteIds = formData.getAll("clienti");
     const clienteIds = [
@@ -1485,6 +1502,28 @@ export async function POST(request: NextRequest) {
     if (clienteIds.length === 0) {
       return NextResponse.json(
         { ok: false, error: "nessun_cliente_selezionato" },
+        { status: 400 },
+      );
+    }
+
+    if (!isValidPromoName(promoName)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "nome_promo_non_valido",
+          message: "Inserisci un nome promo valido di almeno 3 caratteri.",
+        },
+        { status: 400 },
+      );
+    }
+
+    if (promoKeyOverride && !isValidPromoKey(promoKeyOverride)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "promo_key_override_non_valida",
+          message: "La promo_key selezionata non ha un formato valido.",
+        },
         { status: 400 },
       );
     }
@@ -1537,6 +1576,7 @@ export async function POST(request: NextRequest) {
 
     if (
       messageMode === "custom" &&
+      !dryRun &&
       customTemplateConfig.headerKind &&
       !attachmentPublicUrl
     ) {
@@ -1547,6 +1587,7 @@ export async function POST(request: NextRequest) {
 
     if (
       messageMode === "custom" &&
+      !dryRun &&
       customTemplateConfig.headerKind === "image" &&
       attachmentPublicUrl &&
       !isAllowedImageAttachment({
@@ -1560,6 +1601,7 @@ export async function POST(request: NextRequest) {
 
     if (
       messageMode === "custom" &&
+      !dryRun &&
       customTemplateConfig.headerKind === "document" &&
       attachmentPublicUrl &&
       !isAllowedDocumentAttachment({
@@ -1571,21 +1613,48 @@ export async function POST(request: NextRequest) {
       globalSkipReason = "Carica un allegato compatibile con il template selezionato.";
     }
 
-    const requestedPromoKey =
-      messageMode === "custom"
-        ? buildPromoKey({
-            templateName: customTemplateConfig.templateName,
-            sendMode: customTemplateConfig.sendMode,
-            customMessage,
-            attachmentFileName: attachmentFileName || null,
-          })
-        : buildPromoKey({
-            templateName: WHATSAPP_TEMPLATE_OPPORTUNITA_NAME,
-            sendMode: "standard",
-            standardService,
-          });
+    const requestedPromoKey = promoKeyOverride || buildPromoKeyFromName(promoName);
+
+    if (!requestedPromoKey) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "promo_key_non_generabile",
+          message: "Nome promo non sufficiente per generare una promo_key stabile.",
+        },
+        { status: 400 },
+      );
+    }
+
+    const supabase = getSupabaseAdmin();
+
+    if (promoKeyOverride) {
+      const { count: promoOverrideCount, error: promoOverrideError } = await supabase
+        .from("phonesia_opportunita_inviate")
+        .select("cliente_id", { count: "exact", head: true })
+        .eq("promo_key", promoKeyOverride);
+
+      if (promoOverrideError) {
+        throw new Error(
+          `Errore validazione promo selezionata: ${promoOverrideError.message}`,
+        );
+      }
+
+      if (!promoOverrideCount) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "promo_key_override_non_trovata",
+            message:
+              "La promo_key selezionata non esiste nello storico. Invio bloccato.",
+          },
+          { status: 400 },
+        );
+      }
+    }
 
     const mediaPreflight =
+      !dryRun &&
       messageMode === "custom" &&
       customTemplateConfig.headerKind &&
       attachmentPublicUrl &&
@@ -1608,7 +1677,6 @@ export async function POST(request: NextRequest) {
         "Allegato non accessibile da Meta. Verifica che il file sia pubblico, HTTPS e con content-type corretto.";
     }
 
-    const supabase = getSupabaseAdmin();
     const batchId = crypto.randomUUID();
 
     const [
@@ -1724,6 +1792,74 @@ export async function POST(request: NextRequest) {
         .filter(([, summary]) => summary.sentToday)
         .map(([clienteId]) => clienteId),
     );
+
+    if (dryRun) {
+      let missingClientCount = 0;
+      let missingMarketingConsentCount = 0;
+      let invalidWhatsappCount = 0;
+      let sentTodayCount = 0;
+      let alreadyContactedCount = 0;
+      let legacyAlreadySentCount = 0;
+      let sendableCount = 0;
+
+      for (const clienteId of clienteIds) {
+        const cliente = clientiMap.get(clienteId);
+
+        if (!cliente) {
+          missingClientCount += 1;
+          continue;
+        }
+
+        const hasMarketingConsent = marketingIds.has(cliente.id);
+        const hasUsableWhatsapp =
+          cliente.whatsapp_active === true && Boolean(toMetaRecipient(cliente.telefono ?? ""));
+        const alreadyContacted = duplicatePromoSentIds.has(cliente.id);
+        const sentToday = todayPromoSentIds.has(cliente.id);
+        const legacyAlreadySent =
+          sendMode === "standard" && standardService
+            ? alreadySentIds.has(cliente.id)
+            : false;
+
+        if (!hasMarketingConsent) missingMarketingConsentCount += 1;
+        if (!hasUsableWhatsapp) invalidWhatsappCount += 1;
+        if (sentToday) sentTodayCount += 1;
+        if (alreadyContacted) alreadyContactedCount += 1;
+        if (legacyAlreadySent) legacyAlreadySentCount += 1;
+
+        if (
+          hasMarketingConsent &&
+          hasUsableWhatsapp &&
+          !sentToday &&
+          !alreadyContacted &&
+          !legacyAlreadySent
+        ) {
+          sendableCount += 1;
+        }
+      }
+
+      return NextResponse.json({
+        ok: true,
+        dryRun: true,
+        promoKey: requestedPromoKey,
+        promoName,
+        totalSelectedCount: clienteIds.length,
+        missingClientCount,
+        alreadyContactedCount,
+        missingMarketingConsentCount,
+        invalidWhatsappCount,
+        sentTodayCount,
+        legacyAlreadySentCount,
+        sendableCount,
+        blockedCount:
+          missingClientCount +
+          alreadyContactedCount +
+          missingMarketingConsentCount +
+          invalidWhatsappCount +
+          sentTodayCount +
+          legacyAlreadySentCount,
+        errorCount: 0,
+      });
+    }
 
     const results: SendResultRow[] = [];
 
@@ -1845,6 +1981,7 @@ export async function POST(request: NextRequest) {
           bodyParameterNames,
           mediaUrl,
           promoKey: requestedPromoKey,
+          promoName,
         });
 
         results.push({
@@ -1974,6 +2111,8 @@ export async function POST(request: NextRequest) {
               attempts: error.attempts,
               maskedPhone,
               mediaUrl,
+              promoKey: requestedPromoKey,
+              promoName,
             });
 
             results.push({
@@ -2022,6 +2161,7 @@ export async function POST(request: NextRequest) {
           whatsappUrl,
           mapsUrl: contactStore.mapsUrl,
           promoKey: requestedPromoKey,
+          promoName,
         });
 
         await logOpportunitySend(supabase, {
@@ -2040,6 +2180,7 @@ export async function POST(request: NextRequest) {
           attachmentPublicUrl: messageMode === "custom" ? attachmentPublicUrl || null : null,
           attachmentFileName: messageMode === "custom" ? attachmentFileName || null : null,
           promoKey: requestedPromoKey,
+          promoName,
         });
 
         results.push({
@@ -2094,7 +2235,10 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       ok: true,
+      dryRun: false,
       batchId,
+      promoKey: requestedPromoKey,
+      promoName,
       totalSelectedCount: clienteIds.length,
       sentCount,
       failedCount,
