@@ -26,10 +26,7 @@ export default function ClientiSelectionForm({
   }, []);
 
   const getSelectAllCheckboxes = useCallback(() => {
-    return getClientCheckboxes().filter(
-      (checkbox) =>
-        !checkbox.disabled && checkbox.dataset.promoSentToday !== "true",
-    );
+    return getClientCheckboxes().filter((checkbox) => !checkbox.disabled);
   }, [getClientCheckboxes]);
 
   const refreshSelectedCount = useCallback(() => {

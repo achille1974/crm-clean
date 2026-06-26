@@ -1,12 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@supabase/supabase-js";
 import ClientiSelectionForm from "@/components/phonesia/dashboard/ClientiSelectionForm";
-import {
-  buildPromoSendSummaries,
-  formatPromoSentAtRome,
-  type PromoOpportunityHistoryRow,
-  type PromoSendSummary,
-} from "@/lib/phonesia/opportunita-promo-history";
 
 export const dynamic = "force-dynamic";
 
@@ -173,30 +167,6 @@ function CellFlag({ active }: { active: boolean }) {
   );
 }
 
-function PromoHistoryBadge({ summary }: { summary: PromoSendSummary | null }) {
-  if (summary?.sentToday) {
-    return (
-      <span className="inline-flex rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-xs font-semibold text-orange-700">
-        Promo inviata oggi
-      </span>
-    );
-  }
-
-  if (summary?.lastSentAt) {
-    return (
-      <span className="inline-flex rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700">
-        Ultimo invio: {formatPromoSentAtRome(summary.lastSentAt) || "—"}
-      </span>
-    );
-  }
-
-  return (
-    <span className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
-      Mai inviato
-    </span>
-  );
-}
-
 function MarketingConsentBadge({ active }: { active: boolean }) {
   return (
     <span
@@ -249,14 +219,12 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
   const serviziByCliente = new Map<number, ServizioRow[]>();
   const contrattiByCliente = new Map<number, ContrattoRow[]>();
   let marketingConsentedIds = new Set<number>();
-  let promoSummaries = new Map<number, PromoSendSummary>();
 
   if (clienteIds.length > 0) {
     const [
       { data: serviziData, error: serviziError },
       { data: contrattiData, error: contrattiError },
       { data: marketingConsentData, error: marketingConsentError },
-      { data: opportunitaData, error: opportunitaError },
     ] =
       await Promise.all([
         supabase
@@ -276,14 +244,6 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
           .select("cliente_id")
           .eq("tipo_evento", "marketing_accepted")
           .in("cliente_id", clienteIds),
-        supabase
-          .from("phonesia_opportunita_inviate")
-          .select(
-            "cliente_id, channel, sent_at, created_at, send_mode, inviato_at, metadata",
-          )
-          .in("cliente_id", clienteIds)
-          .order("inviato_at", { ascending: false })
-          .limit(5000),
       ]);
 
     if (serviziError) {
@@ -297,12 +257,6 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
     if (marketingConsentError) {
       throw new Error(
         `Errore lettura consensi marketing: ${marketingConsentError.message}`,
-      );
-    }
-
-    if (opportunitaError) {
-      throw new Error(
-        `Errore lettura storico opportunità: ${opportunitaError.message}`,
       );
     }
 
@@ -324,10 +278,6 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
       ((marketingConsentData ?? []) as MarketingConsentRow[])
         .map((row) => Number(row.cliente_id))
         .filter((value): value is number => Number.isFinite(value)),
-    );
-
-    promoSummaries = buildPromoSendSummaries(
-      (opportunitaData ?? []) as PromoOpportunityHistoryRow[],
     );
   }
 
@@ -351,7 +301,6 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
       operatore: resolveOperatore(servizi, contratti),
       activeFamilies,
       marketingConsented: marketingConsentedIds.has(cliente.id),
-      promoSummary: promoSummaries.get(cliente.id) ?? null,
     };
   });
   if (onlyMarketingConsent) {
@@ -495,9 +444,6 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
                       </th>
                     ))}
                     <th className="sticky top-0 z-20 bg-slate-50 px-4 py-3 text-left font-semibold shadow-[0_1px_0_0_rgb(226_232_240)]">
-                      Promo WhatsApp
-                    </th>
-                    <th className="sticky top-0 z-20 bg-slate-50 px-4 py-3 text-left font-semibold shadow-[0_1px_0_0_rgb(226_232_240)]">
                       Opportunità
                     </th>
                   </tr>
@@ -524,15 +470,10 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
                             type="checkbox"
                             name="clienti"
                             value={row.cliente.id}
-                            data-promo-sent-today={
-                              row.promoSummary?.sentToday ? "true" : "false"
-                            }
                             disabled={!row.marketingConsented}
                             title={
                               !row.marketingConsented
                                 ? "Cliente senza consenso marketing: non selezionabile."
-                                : row.promoSummary?.sentToday
-                                ? "Escluso dal seleziona tutti: promo WhatsApp già inviata oggi."
                                 : undefined
                             }
                             className="h-4 w-4 rounded border-slate-300 text-orange-500 focus:ring-orange-500 disabled:cursor-not-allowed disabled:opacity-40"
@@ -566,20 +507,6 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
                             <CellFlag active={row.activeFamilies.has(service)} />
                           </td>
                         ))}
-
-                        <td className="px-4 py-4">
-                          <PromoHistoryBadge summary={row.promoSummary} />
-                          {row.promoSummary?.sentToday ? (
-                            <div className="mt-1 text-xs text-slate-500">
-                              Escluso dal seleziona tutti
-                            </div>
-                          ) : null}
-                          {!row.marketingConsented ? (
-                            <div className="mt-1 text-xs text-slate-500">
-                              Non selezionabile
-                            </div>
-                          ) : null}
-                        </td>
 
                         <td className="px-4 py-4">
                           <Link
