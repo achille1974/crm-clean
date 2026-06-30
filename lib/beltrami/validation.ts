@@ -7,6 +7,7 @@ export type BeltramiRegistrationData = {
   codice_fiscale: string | null;
   privacy_consent: true;
   whatsapp_consent: true;
+  marketing_consent: boolean;
 };
 
 export type BeltramiValidationResult =
@@ -27,6 +28,7 @@ type RawBeltramiRegistrationInput = {
   codice_fiscale?: unknown;
   privacy_consent?: unknown;
   whatsapp_consent?: unknown;
+  marketing_consent?: unknown;
 };
 
 const ITALIAN_MOBILE_RE = /^3\d{8,9}$/;
@@ -134,6 +136,7 @@ export function validateBeltramiRegistration(
       codice_fiscale: codiceFiscale,
       privacy_consent: true,
       whatsapp_consent: true,
+      marketing_consent: input.marketing_consent === true,
     },
   };
 }

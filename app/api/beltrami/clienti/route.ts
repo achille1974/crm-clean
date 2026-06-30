@@ -138,6 +138,7 @@ async function registraConsensi(
   params: {
     clienteId: number;
     userAgent: string | null;
+    marketingConsent: boolean;
   },
 ) {
   const base = {
@@ -148,7 +149,7 @@ async function registraConsensi(
     user_agent: params.userAgent,
   };
 
-  const { error } = await supabase.from("beltrami_consensi").insert([
+  const rows = [
     {
       ...base,
       tipo_evento: "privacy_accepted",
@@ -157,7 +158,16 @@ async function registraConsensi(
       ...base,
       tipo_evento: "whatsapp_contact_accepted",
     },
-  ]);
+  ];
+
+  if (params.marketingConsent) {
+    rows.push({
+      ...base,
+      tipo_evento: "marketing_accepted",
+    });
+  }
+
+  const { error } = await supabase.from("beltrami_consensi").insert(rows);
 
   if (error) throw error;
 }
@@ -209,6 +219,7 @@ export async function POST(request: NextRequest) {
     await registraConsensi(supabase, {
       clienteId: result.clienteId,
       userAgent: request.headers.get("user-agent"),
+      marketingConsent: validation.data.marketing_consent,
     });
 
     const welcomeResult = await sendBeltramiWelcomeMessage({

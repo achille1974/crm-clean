@@ -27,6 +27,7 @@ export default function RegistrazioneForm() {
   const router = useRouter();
   const [privacyConsent, setPrivacyConsent] = useState(false);
   const [whatsappConsent, setWhatsappConsent] = useState(false);
+  const [marketingConsent, setMarketingConsent] = useState(false);
   const [loading, setLoading] = useState(false);
   const [state, setState] = useState<SubmitState>(INITIAL_STATE);
 
@@ -42,6 +43,7 @@ export default function RegistrazioneForm() {
       codice_fiscale: formData.get("codice_fiscale"),
       privacy_consent: privacyConsent,
       whatsapp_consent: whatsappConsent,
+      marketing_consent: marketingConsent,
     };
 
     const validation = validateBeltramiRegistration(payload);
@@ -204,6 +206,17 @@ export default function RegistrazioneForm() {
         >
           Consenso obbligatorio per ricevere comunicazioni operative su
           registrazione, servizi richiesti in negozio e promemoria di scadenza.
+        </ConsentCheckbox>
+      </div>
+
+      <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+        <ConsentCheckbox
+          checked={marketingConsent}
+          onChange={setMarketingConsent}
+          title="Comunicazioni promozionali WhatsApp"
+        >
+          Acconsento a ricevere comunicazioni promozionali e offerte da
+          Beltrami 1876 tramite WhatsApp.
         </ConsentCheckbox>
       </div>
 

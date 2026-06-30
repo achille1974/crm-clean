@@ -28,3 +28,17 @@ export async function requireBeltramiDashboardAuth(nextPath?: string) {
     profile: auth.profile,
   };
 }
+
+export async function getBeltramiDashboardAuth() {
+  const auth = await getPhonesiaAuth();
+
+  if (!auth.user || !auth.profile || auth.profile.role !== "admin") {
+    return null;
+  }
+
+  return {
+    supabase: auth.supabase,
+    user: auth.user,
+    profile: auth.profile,
+  };
+}

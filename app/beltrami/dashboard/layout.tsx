@@ -9,6 +9,7 @@ const NAV_ITEMS = [
   { href: "/beltrami/dashboard", label: "Dashboard" },
   { href: "/beltrami/dashboard/clienti", label: "Clienti" },
   { href: "/beltrami/dashboard/attivita", label: "Attivita" },
+  { href: "/beltrami/dashboard/promo", label: "Promo" },
 ];
 
 export default async function BeltramiDashboardLayout({
