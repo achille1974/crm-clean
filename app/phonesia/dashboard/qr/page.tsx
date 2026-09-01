@@ -15,6 +15,11 @@ type ClienteQrRow = {
   created_at: string | null;
 };
 
+type ClienteQrStatsRow = Pick<
+  ClienteQrRow,
+  "id" | "negozio_id" | "qr_id" | "whatsapp_active" | "created_at"
+>;
+
 type StoreStats = {
   negozioId: number | null;
   negozioLabel: string;
@@ -25,6 +30,9 @@ type StoreStats = {
   whatsappAttivi: number;
   ultimoQr: string | null;
 };
+
+const QR_FETCH_PAGE_SIZE = 1000;
+const RECENT_QR_ROWS_LIMIT = 100;
 
 const NEGOZI: Record<number, string> = {
   1: "Floridia",
@@ -95,7 +103,58 @@ function isAfter(value: string | null, date: Date): boolean {
   return parsed >= date;
 }
 
-function buildStoreStats(rows: ClienteQrRow[]): StoreStats[] {
+function hasCompiledQr(row: { qr_id: string | null }): boolean {
+  return typeof row.qr_id === "string" && row.qr_id.trim().length > 0;
+}
+
+async function fetchAllQrStatsRows(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+): Promise<ClienteQrStatsRow[]> {
+  const rows: ClienteQrStatsRow[] = [];
+  let from = 0;
+
+  while (true) {
+    const { data, error } = await supabase
+      .from("phonesia_clienti")
+      .select("id, negozio_id, qr_id, whatsapp_active, created_at")
+      .not("qr_id", "is", null)
+      .neq("qr_id", "")
+      .order("created_at", { ascending: false })
+      .range(from, from + QR_FETCH_PAGE_SIZE - 1);
+
+    if (error) {
+      throw new Error(`Errore lettura statistiche QR: ${error.message}`);
+    }
+
+    const page = (data ?? []) as ClienteQrStatsRow[];
+    rows.push(...page.filter(hasCompiledQr));
+
+    if (page.length < QR_FETCH_PAGE_SIZE) break;
+    from += QR_FETCH_PAGE_SIZE;
+  }
+
+  return rows;
+}
+
+async function fetchRecentQrRows(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+): Promise<ClienteQrRow[]> {
+  const { data, error } = await supabase
+    .from("phonesia_clienti")
+    .select("id, nome, cognome, telefono, email, negozio_id, qr_id, whatsapp_active, created_at")
+    .not("qr_id", "is", null)
+    .neq("qr_id", "")
+    .order("created_at", { ascending: false })
+    .limit(RECENT_QR_ROWS_LIMIT);
+
+  if (error) {
+    throw new Error(`Errore lettura registrazioni QR recenti: ${error.message}`);
+  }
+
+  return ((data ?? []) as ClienteQrRow[]).filter(hasCompiledQr);
+}
+
+function buildStoreStats(rows: ClienteQrStatsRow[]): StoreStats[] {
   const today = startOfToday();
   const last7 = daysAgo(7);
   const last30 = daysAgo(30);
@@ -140,33 +199,23 @@ function buildStoreStats(rows: ClienteQrRow[]): StoreStats[] {
 export default async function DashboardQrPage() {
   const supabase = getSupabaseAdmin();
 
-  const { data, error } = await supabase
-    .from("phonesia_clienti")
-    .select("id, nome, cognome, telefono, email, negozio_id, qr_id, whatsapp_active, created_at")
-    .not("qr_id", "is", null)
-    .order("created_at", { ascending: false })
-    .limit(2000);
-
-  if (error) {
-    throw new Error(`Errore lettura registrazioni QR: ${error.message}`);
-  }
-
-  const rows = ((data ?? []) as ClienteQrRow[]).filter((row) => {
-    return typeof row.qr_id === "string" && row.qr_id.trim().length > 0;
-  });
+  const [statsRows, recentRows] = await Promise.all([
+    fetchAllQrStatsRows(supabase),
+    fetchRecentQrRows(supabase),
+  ]);
 
   const today = startOfToday();
   const last7 = daysAgo(7);
   const last30 = daysAgo(30);
 
-  const totale = rows.length;
-  const oggi = rows.filter((row) => isAfter(row.created_at, today)).length;
-  const ultimi7 = rows.filter((row) => isAfter(row.created_at, last7)).length;
-  const ultimi30 = rows.filter((row) => isAfter(row.created_at, last30)).length;
-  const whatsappAttivi = rows.filter((row) => row.whatsapp_active === true).length;
+  const totale = statsRows.length;
+  const oggi = statsRows.filter((row) => isAfter(row.created_at, today)).length;
+  const ultimi7 = statsRows.filter((row) => isAfter(row.created_at, last7)).length;
+  const ultimi30 = statsRows.filter((row) => isAfter(row.created_at, last30)).length;
+  const whatsappAttivi = statsRows.filter((row) => row.whatsapp_active === true).length;
   const whatsappRate = totale > 0 ? Math.round((whatsappAttivi / totale) * 100) : 0;
 
-  const storeStats = buildStoreStats(rows);
+  const storeStats = buildStoreStats(statsRows);
 
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-6 text-slate-900 md:px-8">
@@ -260,7 +309,7 @@ export default async function DashboardQrPage() {
             </p>
           </div>
 
-          {rows.length === 0 ? (
+          {recentRows.length === 0 ? (
             <div className="p-8 text-sm font-semibold text-slate-500">
               Nessuna registrazione QR trovata.
             </div>
@@ -279,7 +328,7 @@ export default async function DashboardQrPage() {
                 </thead>
 
                 <tbody className="divide-y divide-slate-100">
-                  {rows.slice(0, 100).map((row) => (
+                  {recentRows.map((row) => (
                     <tr key={row.id} className="hover:bg-orange-50/30">
                       <td className="whitespace-nowrap px-5 py-4 text-slate-600">
                         {formatDateTime(row.created_at)}

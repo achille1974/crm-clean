@@ -3,11 +3,13 @@ const path = require("path");
 const crypto = require("crypto");
 const { spawn } = require("child_process");
 const { createClient } = require("@supabase/supabase-js");
+const { sendAlertEmail } = require("./lib/alert-email");
 
 const ROOT_DIR = path.resolve(__dirname, "..");
 const DEFAULT_INBOX_DIR = "/Users/Shared/PHONESIA_IMPORT/inbox";
 const ERROR_DIR = "/Users/Shared/PHONESIA_IMPORT/error";
 const LOGS_DIR = "/Users/Shared/PHONESIA_IMPORT/logs";
+const SMTP_FALLBACK_ENV_FILE = "/Users/archimede/phonesia_ai/.env.importer";
 const IMPORT_SCRIPT = path.join(ROOT_DIR, "scripts/import-phonesia-activity-xlsx.js");
 const MATCH_SCRIPT = path.join(ROOT_DIR, "scripts/match-phonesia-activity-customers.js");
 const BATCH_TABLE = "phonesia_activity_import_batches";
@@ -88,6 +90,7 @@ function loadEnvFile(filePath) {
 
 function loadEnv() {
   return {
+    ...loadEnvFile(SMTP_FALLBACK_ENV_FILE),
     ...loadEnvFile(path.join(ROOT_DIR, ".env.production.local")),
     ...loadEnvFile(path.join(ROOT_DIR, ".env.local")),
     ...process.env,
@@ -419,74 +422,10 @@ function buildAlertEmail(event) {
 }
 
 async function sendImportFailureAlert({ env, event }) {
-  const recipient = String(env.PHONESIA_IMPORT_ALERT_EMAIL || "").trim();
-  const apiKey = String(env.RESEND_API_KEY || "").trim();
-  const from = String(env.PHONESIA_IMPORT_ALERT_FROM || "").trim();
   const email = buildAlertEmail(event);
-  const missing = [];
-
-  if (!recipient) missing.push("PHONESIA_IMPORT_ALERT_EMAIL");
-  if (!apiKey) missing.push("RESEND_API_KEY");
-  if (!from) missing.push("PHONESIA_IMPORT_ALERT_FROM");
-
-  if (missing.length > 0) {
-    console.log("Alert email non configurato");
-    return {
-      attempted_at: nowIso(),
-      configured: false,
-      sent: false,
-      skipped_reason: `${missing.join(", ")} mancante`,
-      provider: "resend",
-      missing_configuration: missing,
-      email,
-    };
-  }
-
-  try {
-    const { Resend } = await import("resend");
-    const resend = new Resend(apiKey);
-    const { data, error } = await resend.emails.send({
-      from,
-      to: recipient,
-      subject: email.subject,
-      text: email.body,
-    });
-
-    if (error) {
-      return {
-        attempted_at: nowIso(),
-        configured: true,
-        provider: "resend",
-        recipient,
-        from,
-        sent: false,
-        error: serializeError(error),
-        email,
-      };
-    }
-
-    return {
-      attempted_at: nowIso(),
-      configured: true,
-      provider: "resend",
-      recipient,
-      from,
-      sent: true,
-      resend_email_id: data && data.id ? data.id : null,
-      email,
-    };
-  } catch (error) {
-    return {
-      attempted_at: nowIso(),
-      configured: true,
-      provider: "resend",
-      recipient,
-      from,
-      sent: false,
-      error: serializeError(error),
-      email,
-    };
-  }
+  const result = await sendAlertEmail({ env, email });
+  if (!result.configured) console.log("Alert email non configurato");
+  return result;
 }
 
 async function writeLogAndMaybeAlert({ log, env, event }) {
@@ -768,10 +707,14 @@ async function main() {
     alert_email_configured: false,
     email_system: {
       project_email_system_found: true,
-      provider: "resend",
-      provider_configured: Boolean(env.PHONESIA_IMPORT_ALERT_EMAIL && env.RESEND_API_KEY && env.PHONESIA_IMPORT_ALERT_FROM),
+      provider: "resend_with_smtp_fallback",
+      provider_configured: Boolean(
+        (env.PHONESIA_IMPORT_ALERT_EMAIL || env.ALERT_EMAIL_TO) &&
+          ((env.RESEND_API_KEY && env.PHONESIA_IMPORT_ALERT_FROM) ||
+            (env.SMTP_USERNAME && env.SMTP_PASSWORD && (env.SMTP_FROM || env.SMTP_USERNAME))),
+      ),
       notes:
-        "Alert errori import via Resend, attivo solo con PHONESIA_IMPORT_ALERT_EMAIL, PHONESIA_IMPORT_ALERT_FROM e RESEND_API_KEY.",
+        "Alert errori import via Resend; se Resend fallisce, fallback SMTP con credenziali locali.",
     },
     files_found: [],
     results: [],

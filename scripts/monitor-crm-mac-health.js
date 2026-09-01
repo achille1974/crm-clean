@@ -1,11 +1,13 @@
 const fs = require("fs");
 const path = require("path");
 const { spawnSync } = require("child_process");
+const { sendAlertEmail } = require("./lib/alert-email");
 
 const PROJECT_DIR = "/Users/archimede/crm-clean";
 const ROOT_DIR = path.resolve(__dirname, "..");
 const PACKAGE_JSON = path.join(PROJECT_DIR, "package.json");
 const MONITOR_LOGS_DIR = "/Users/Shared/PHONESIA_MONITOR/logs";
+const SMTP_FALLBACK_ENV_FILE = "/Users/archimede/phonesia_ai/.env.importer";
 const GOOGLE_DRIVE_INBOX =
   "/Users/archimede/Il mio Drive/CRM_IMPORT/ATTIVITA_NEGOZI/inbox";
 const DISK_ALERT_FREE_PERCENT = 15;
@@ -113,6 +115,7 @@ function loadEnvFile(filePath) {
 
 function loadEnv() {
   return {
+    ...loadEnvFile(SMTP_FALLBACK_ENV_FILE),
     ...loadEnvFile(path.join(ROOT_DIR, ".env.production.local")),
     ...loadEnvFile(path.join(ROOT_DIR, ".env.local")),
     ...process.env,
@@ -1267,73 +1270,8 @@ function buildAlertEmail(log) {
 }
 
 async function sendCriticalAlert({ env, log }) {
-  const recipient = String(env.PHONESIA_IMPORT_ALERT_EMAIL || "").trim();
-  const apiKey = String(env.RESEND_API_KEY || "").trim();
-  const from = String(env.PHONESIA_IMPORT_ALERT_FROM || "").trim();
-  const missing = [];
   const email = buildAlertEmail(log);
-
-  if (!recipient) missing.push("PHONESIA_IMPORT_ALERT_EMAIL");
-  if (!apiKey) missing.push("RESEND_API_KEY");
-  if (!from) missing.push("PHONESIA_IMPORT_ALERT_FROM");
-
-  if (missing.length > 0) {
-    return {
-      attempted_at: nowIso(),
-      configured: false,
-      sent: false,
-      provider: "resend",
-      skipped_reason: `${missing.join(", ")} mancante`,
-      missing_configuration: missing,
-      email,
-    };
-  }
-
-  try {
-    const { Resend } = await import("resend");
-    const resend = new Resend(apiKey);
-    const { data, error } = await resend.emails.send({
-      from,
-      to: recipient,
-      subject: email.subject,
-      text: email.body,
-    });
-
-    if (error) {
-      return {
-        attempted_at: nowIso(),
-        configured: true,
-        sent: false,
-        provider: "resend",
-        recipient,
-        from,
-        error: serializeError(error),
-        email,
-      };
-    }
-
-    return {
-      attempted_at: nowIso(),
-      configured: true,
-      sent: true,
-      provider: "resend",
-      recipient,
-      from,
-      resend_email_id: data && data.id ? data.id : null,
-      email,
-    };
-  } catch (error) {
-    return {
-      attempted_at: nowIso(),
-      configured: true,
-      sent: false,
-      provider: "resend",
-      recipient,
-      from,
-      error: serializeError(error),
-      email,
-    };
-  }
+  return sendAlertEmail({ env, email });
 }
 
 function writeJsonLog(log) {
@@ -1406,16 +1344,22 @@ async function main() {
       contract_recent_log_window_minutes: CONTRACT_RECENT_LOG_WINDOW_MS / 60000,
     },
     email_system: {
-      provider: "resend",
+      provider: "resend_with_smtp_fallback",
       configured: Boolean(
-        env.RESEND_API_KEY &&
-          env.PHONESIA_IMPORT_ALERT_EMAIL &&
-          env.PHONESIA_IMPORT_ALERT_FROM
+        (env.PHONESIA_IMPORT_ALERT_EMAIL || env.ALERT_EMAIL_TO) &&
+          ((env.RESEND_API_KEY && env.PHONESIA_IMPORT_ALERT_FROM) ||
+            (env.SMTP_USERNAME && env.SMTP_PASSWORD && (env.SMTP_FROM || env.SMTP_USERNAME)))
       ),
       missing_configuration: [
-        !env.RESEND_API_KEY ? "RESEND_API_KEY" : null,
-        !env.PHONESIA_IMPORT_ALERT_EMAIL ? "PHONESIA_IMPORT_ALERT_EMAIL" : null,
-        !env.PHONESIA_IMPORT_ALERT_FROM ? "PHONESIA_IMPORT_ALERT_FROM" : null,
+        !(env.PHONESIA_IMPORT_ALERT_EMAIL || env.ALERT_EMAIL_TO)
+          ? "PHONESIA_IMPORT_ALERT_EMAIL/ALERT_EMAIL_TO"
+          : null,
+        !(
+          (env.RESEND_API_KEY && env.PHONESIA_IMPORT_ALERT_FROM) ||
+          (env.SMTP_USERNAME && env.SMTP_PASSWORD && (env.SMTP_FROM || env.SMTP_USERNAME))
+        )
+          ? "RESEND_API_KEY+PHONESIA_IMPORT_ALERT_FROM or SMTP_USERNAME+SMTP_PASSWORD"
+          : null,
       ].filter(Boolean),
       sends_only_when_status: "critical",
     },
