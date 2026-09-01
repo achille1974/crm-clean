@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
 
 type Tabaccaio = {
@@ -89,26 +90,26 @@ export default function ListaTabaccaiSupreme() {
           <div className="font-bold text-lg">SUPREME CRM</div>
 
           <div className="flex gap-2">
-            <a
+            <Link
               href="/supreme/tabaccai"
               className="px-4 py-2 border rounded bg-black text-white"
             >
               Tabaccai
-            </a>
+            </Link>
 
-            <a
+            <Link
               href="/supreme/dashboard"
               className="px-4 py-2 border rounded hover:bg-black hover:text-white"
             >
               Dashboard
-            </a>
+            </Link>
 
-            <a
+            <Link
               href="/supreme/biglietto"
               className="px-4 py-2 border rounded hover:bg-black hover:text-white"
             >
               Biglietto
-            </a>
+            </Link>
           </div>
         </div>
       </div>

@@ -59,7 +59,7 @@ export async function POST(req: Request) {
       status: "ok",
       origine: "manuale",
     });
-  } catch (err) {
+  } catch {
     return NextResponse.json(
       { error: "Payload non valido" },
       { status: 400 }

@@ -30,7 +30,7 @@ export async function POST(req: Request) {
       operazioni: data
     });
 
-  } catch (err) {
+  } catch {
     return NextResponse.json(
       { error: "invalid request" },
       { status: 400 }

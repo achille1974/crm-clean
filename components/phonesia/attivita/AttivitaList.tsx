@@ -18,18 +18,23 @@ export default function AttivitaList({ clienteId }: { clienteId: number }) {
   const [attivita, setAttivita] = useState<Attivita[]>([]);
 
   useEffect(() => {
-    load();
-  }, []);
+    let cancelled = false;
 
-  async function load() {
-    const { data } = await supabase
+    supabase
       .from("phonesia_attivita")
       .select("id, descrizione, created_at")
       .eq("cliente_id", clienteId)
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .then(({ data }) => {
+        if (!cancelled && data) {
+          setAttivita(data);
+        }
+      });
 
-    if (data) setAttivita(data);
-  }
+    return () => {
+      cancelled = true;
+    };
+  }, [clienteId]);
 
   if (!attivita.length) {
     return <p className="text-sm text-gray-500">Nessuna attività registrata.</p>;
