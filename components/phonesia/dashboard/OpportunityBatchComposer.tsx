@@ -7,6 +7,10 @@ import {
   normalizePromoName,
 } from "@/lib/phonesia/opportunita-promo-history";
 import { sanitizeWhatsAppTemplateText } from "@/lib/phonesia/whatsapp-template-payload";
+import {
+  batchNetworkFailure,
+  readBatchApiResponse,
+} from "@/lib/phonesia/batch-api-response";
 
 const SERVICE_COLUMNS = [
   "MOBILE",
@@ -75,6 +79,8 @@ type SendResponse =
       failedCount?: number;
       skippedCount?: number;
       skipped_duplicate_promo?: number;
+      partial?: boolean;
+      message?: string;
       results: SendResultRow[];
       failedResults?: SendResultRow[];
       skippedResults?: SendResultRow[];
@@ -106,6 +112,7 @@ type SendResponse =
         error_subcode?: number | null;
         fbtrace_id?: string | null;
       } | null;
+      outcomeUnconfirmed?: boolean;
     };
 
 type DryRunResponse = Extract<SendResponse, { dryRun: true }>;
@@ -757,7 +764,9 @@ export default function OpportunityBatchComposer({
         method: "POST",
         body: buildBatchFormData({ dryRun: true }),
       });
-      const data = (await response.json()) as SendResponse;
+      const data = (await readBatchApiResponse(response, {
+        isSend: false,
+      })) as SendResponse;
 
       if (!response.ok || !isDryRunResponse(data)) {
         setSendResponse(
@@ -852,7 +861,9 @@ export default function OpportunityBatchComposer({
         body: buildBatchFormData({ dryRun: false, uploadedAttachment }),
       });
 
-      const data = (await response.json()) as SendResponse;
+      const data = (await readBatchApiResponse(response, {
+        isSend: true,
+      })) as SendResponse;
 
       if (!response.ok || !data.ok) {
         setSendResponse(
@@ -872,11 +883,7 @@ export default function OpportunityBatchComposer({
 
       setSendResponse(data);
     } catch (error) {
-      setSendResponse({
-        ok: false,
-        error: "Errore imprevisto durante l’invio batch.",
-        detail: error instanceof Error ? error.message : "Unknown error",
-      });
+      setSendResponse(batchNetworkFailure(error));
     } finally {
       setIsSending(false);
     }
@@ -1546,8 +1553,18 @@ export default function OpportunityBatchComposer({
             </div>
           ) : sendResponse.ok ? (
             <>
-              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-800">
-                Invio completato. Batch ID: <strong>{sendResponse.batchId}</strong>
+              <div
+                className={`rounded-2xl border px-4 py-4 text-sm ${
+                  sendResponse.partial
+                    ? "border-amber-200 bg-amber-50 text-amber-900"
+                    : "border-emerald-200 bg-emerald-50 text-emerald-800"
+                }`}
+              >
+                {sendResponse.partial ? "Invio parziale." : "Invio completato."} Batch ID:{" "}
+                <strong>{sendResponse.batchId}</strong>
+                {sendResponse.message ? (
+                  <div className="mt-1">{sendResponse.message}</div>
+                ) : null}
               </div>
 
               <div className="mt-4 grid gap-4 md:grid-cols-4">

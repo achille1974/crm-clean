@@ -22,6 +22,11 @@ import {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 300;
+
+const BATCH_PROCESSING_BUDGET_MS = 270_000;
+const BATCH_TIME_LIMIT_REASON =
+  "Non elaborato: limite temporale del batch raggiunto prima del timeout piattaforma.";
 
 const SERVICE_COLUMNS = [
   "MOBILE",
@@ -1451,6 +1456,8 @@ async function logMetaTemplateFailure(
 }
 
 export async function POST(request: NextRequest) {
+  const requestStartedAt = Date.now();
+
   try {
     const formData = await request.formData();
     const dryRun = normalizeText(String(formData.get("dryRun") ?? "")).toLowerCase() === "true";
@@ -1863,7 +1870,44 @@ export async function POST(request: NextRequest) {
 
     const results: SendResultRow[] = [];
 
-    for (const clienteId of clienteIds) {
+    for (const [clienteIndex, clienteId] of clienteIds.entries()) {
+      if (!dryRun && Date.now() - requestStartedAt >= BATCH_PROCESSING_BUDGET_MS) {
+        for (const pendingClienteId of clienteIds.slice(clienteIndex)) {
+          const pendingCliente = clientiMap.get(pendingClienteId);
+          const pendingName = pendingCliente
+            ? [pendingCliente.nome, pendingCliente.cognome].filter(Boolean).join(" ").trim() ||
+              `Cliente ${pendingClienteId}`
+            : `Cliente ${pendingClienteId}`;
+
+          results.push({
+            clienteId: pendingClienteId,
+            nome: pendingName,
+            status: "skipped",
+            reason: BATCH_TIME_LIMIT_REASON,
+            errorCode: null,
+            fbtraceId: null,
+            metaMessage: null,
+            templateName:
+              messageMode === "custom"
+                ? customTemplateConfig.templateName
+                : WHATSAPP_TEMPLATE_OPPORTUNITA_NAME,
+            parameterFormat: messageMode === "custom" ? "NAMED" : null,
+            bodyParameterNames:
+              messageMode === "custom" ? [...CUSTOM_MESSAGE_BODY_PARAMETER_NAMES] : [],
+            telefonoMascherato: pendingCliente
+              ? maskRecipient(pendingCliente.telefono ?? "")
+              : null,
+            mediaUrl:
+              messageMode === "custom" && customTemplateConfig.headerKind
+                ? sanitizeUrl(attachmentPublicUrl)
+                : null,
+            skipped_reason: BATCH_TIME_LIMIT_REASON,
+          });
+        }
+
+        break;
+      }
+
       const cliente = clientiMap.get(clienteId);
 
       if (!cliente) {
@@ -2232,6 +2276,9 @@ export async function POST(request: NextRequest) {
     const skippedDuplicatePromo = results.filter(
       (row) => row.status === "skipped" && row.reason === DUPLICATE_PROMO_SKIP_REASON,
     ).length;
+    const timeLimitReached = results.some(
+      (row) => row.skipped_reason === BATCH_TIME_LIMIT_REASON,
+    );
 
     return NextResponse.json({
       ok: true,
@@ -2244,6 +2291,10 @@ export async function POST(request: NextRequest) {
       failedCount,
       skippedCount,
       skipped_duplicate_promo: skippedDuplicatePromo,
+      partial: timeLimitReached,
+      message: timeLimitReached
+        ? "Batch concluso prima del timeout: alcuni destinatari non sono stati elaborati. Verificare Campagne prima di un nuovo invio."
+        : undefined,
       blockedCount: skippedCount,
       errorCount: failedCount,
       results,
