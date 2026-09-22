@@ -40,6 +40,18 @@ async function dispatch(request: NextRequest) {
 
   emit({ runId, event: "started", workerEnabled: true });
   const supabase = adminClient();
+  // Recupera campagne già senza lavoro, senza richiamare il worker.
+  const { data: finalizedCount, error: finalizationError } = await supabase.rpc(
+    "phonesia_finalize_idle_whatsapp_campaigns",
+  );
+  if (finalizationError) {
+    emit({ runId, event: "finalization_failed", workerEnabled: true, error: finalizationError.code ?? "database_error" });
+    return NextResponse.json(
+      { ok: false, error: "finalization_failed" },
+      { status: 500 },
+    );
+  }
+  emit({ runId, event: "finalization_checked", workerEnabled: true, campaignsFound: Number(finalizedCount ?? 0) });
   const { data, error } = await supabase
     .from("phonesia_whatsapp_campaign_progress")
     .select("id,historical,state,pending,snapshot_complete")
