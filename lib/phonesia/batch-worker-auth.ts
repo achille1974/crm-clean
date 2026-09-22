@@ -37,6 +37,7 @@ export type DispatchableCampaign = {
   historical: boolean;
   state: string;
   pending: number;
+  snapshot_complete?: boolean;
 };
 
 export const HISTORICAL_CAMPAIGN_ID = "e6964dee-865a-4dbf-95dc-223e0c2fece2";
@@ -49,6 +50,7 @@ export function selectDispatchableCampaign(
       (campaign) =>
         campaign.id !== HISTORICAL_CAMPAIGN_ID &&
         !campaign.historical &&
+        campaign.snapshot_complete !== false &&
         campaign.pending > 0 &&
         (campaign.state === "ready" || campaign.state === "processing"),
     ) ?? null
