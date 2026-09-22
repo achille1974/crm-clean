@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars -- legacy sender helpers kept for payload parity while the persistent worker rollout is pending */
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import {
@@ -1456,11 +1457,18 @@ async function logMetaTemplateFailure(
 }
 
 export async function POST(request: NextRequest) {
+  if (process.env.PHONESIA_BATCH_WORKER_ENABLED !== "true") {
+    return NextResponse.json(
+      { ok: false, error: "batch_worker_disabled", message: "Invio WhatsApp batch temporaneamente sospeso. Nessuna campagna è stata accodata." },
+      { status: 503 },
+    );
+  }
   const requestStartedAt = Date.now();
 
   try {
     const formData = await request.formData();
     const dryRun = normalizeText(String(formData.get("dryRun") ?? "")).toLowerCase() === "true";
+    const idempotencyKey = normalizeText(String(formData.get("idempotencyKey") ?? ""));
     const promoKeyOverride = normalizePromoKey(String(formData.get("promoKeyOverride") ?? ""));
     const promoName = normalizePromoName(String(formData.get("promoName") ?? ""));
 
@@ -1868,16 +1876,134 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    if (!idempotencyKey) {
+      return NextResponse.json(
+        { ok: false, error: "idempotency_key_mancante", message: "Ripetere il preflight prima della conferma." },
+        { status: 400 },
+      );
+    }
+
+    const snapshotRecipients = clienteIds.map((clienteId, inputPosition) => {
+      const cliente = clientiMap.get(clienteId);
+      const normalizedPhone = cliente ? toMetaRecipient(cliente.telefono ?? "") : null;
+      const contractStoreId = cliente
+        ? (contrattiByCliente.get(cliente.id) ?? []).find((row) => row.negozio_id != null)?.negozio_id
+        : null;
+      const contactStore = STORE_CONTACTS[contractStoreId ?? cliente?.negozio_id ?? 1] ?? STORE_CONTACTS[1];
+      const fullName = cliente
+        ? [cliente.nome, cliente.cognome].filter(Boolean).join(" ").trim() || `Cliente ${cliente.id}`
+        : `Cliente ${clienteId}`;
+      let exclusionReason: string | null = null;
+      if (!cliente) exclusionReason = "Cliente non trovato.";
+      else if (!marketingIds.has(cliente.id)) exclusionReason = "Consenso marketing mancante.";
+      else if (!cliente.whatsapp_active) exclusionReason = "WhatsApp non attivo.";
+      else if (!normalizedPhone) exclusionReason = "Telefono mancante o non valido.";
+      else if (todayPromoSentIds.has(cliente.id)) exclusionReason = DAILY_WHATSAPP_PROMO_SKIP_REASON;
+      else if (duplicatePromoSentIds.has(cliente.id)) exclusionReason = DUPLICATE_PROMO_SKIP_REASON;
+      else if (sendMode === "standard" && standardService && alreadySentIds.has(cliente.id))
+        exclusionReason = "Opportunità già inviata in precedenza.";
+      else if (globalSkipReason) exclusionReason = globalSkipReason;
+
+      const payload = normalizedPhone
+        ? messageMode === "custom"
+          ? buildCustomTemplatePayload({
+              to: normalizedPhone,
+              mode: customTemplateConfig.mode,
+              templateName: customTemplateConfig.templateName,
+              language: WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_LANGUAGE,
+              nomeCliente: sanitizeWhatsAppTemplateText(cliente?.nome ?? "") || "cliente",
+              messaggio: customMessage,
+              headerMedia:
+                customTemplateConfig.headerKind && attachmentPublicUrl
+                  ? customTemplateConfig.headerKind === "image"
+                    ? { kind: "image" as const, link: attachmentPublicUrl, mimeType: attachmentMimeType || null }
+                    : { kind: "document" as const, link: attachmentPublicUrl, fileName: attachmentFileName || null, mimeType: attachmentMimeType || null }
+                  : null,
+            })
+          : {
+              messaging_product: "whatsapp",
+              to: normalizedPhone,
+              type: "template",
+              template: {
+                name: WHATSAPP_TEMPLATE_OPPORTUNITA_NAME,
+                language: { code: WHATSAPP_TEMPLATE_OPPORTUNITA_LANGUAGE },
+                components: [{
+                  type: "body",
+                  parameters: [
+                    { type: "text", text: fullName },
+                    { type: "text", text: buildOfferText(standardService!) },
+                    { type: "text", text: buildWhatsappUrl(contactStore.whatsappBase) },
+                    { type: "text", text: contactStore.mapsUrl },
+                  ],
+                }],
+              },
+            }
+        : null;
+
+      return {
+        cliente_id: clienteId,
+        input_position: inputPosition,
+        normalized_phone: normalizedPhone,
+        exclusion_reason: exclusionReason,
+        eligibility_snapshot: {
+          marketing_consented: cliente ? marketingIds.has(cliente.id) : false,
+          whatsapp_active: cliente?.whatsapp_active === true,
+          promo_sent_today: cliente ? todayPromoSentIds.has(cliente.id) : false,
+          duplicate_promo: cliente ? duplicatePromoSentIds.has(cliente.id) : false,
+          payload,
+        },
+      };
+    });
+
+    const { data: persistentCampaignId, error: snapshotError } = await supabase.rpc(
+      "phonesia_create_whatsapp_campaign_snapshot",
+      {
+        p_idempotency_key: idempotencyKey,
+        p_promo_key: requestedPromoKey,
+        p_promo_name: promoName,
+        p_send_mode: sendMode,
+        p_template_name: messageMode === "custom" ? customTemplateConfig.templateName : WHATSAPP_TEMPLATE_OPPORTUNITA_NAME,
+        p_template_language: messageMode === "custom" ? WHATSAPP_TEMPLATE_CUSTOM_MESSAGE_LANGUAGE : WHATSAPP_TEMPLATE_OPPORTUNITA_LANGUAGE,
+        p_normalized_message: messageMode === "custom" ? customMessage : buildOfferText(standardService!),
+        p_attachment_public_url: attachmentPublicUrl,
+        p_attachment_file_name: attachmentFileName || null,
+        p_attachment_mime_type: attachmentMimeType || null,
+        p_created_by: null,
+        p_recipients: snapshotRecipients,
+      },
+    );
+    if (snapshotError) throw new Error(`Salvataggio snapshot campagna fallito: ${snapshotError.message}`);
+
+    const skippedResults: SendResultRow[] = snapshotRecipients
+      .filter((row) => row.exclusion_reason)
+      .map((row) => ({
+        clienteId: row.cliente_id,
+        nome: clientiMap.get(row.cliente_id)
+          ? [clientiMap.get(row.cliente_id)?.nome, clientiMap.get(row.cliente_id)?.cognome].filter(Boolean).join(" ")
+          : `Cliente ${row.cliente_id}`,
+        status: "skipped",
+        reason: row.exclusion_reason!,
+        skipped_reason: row.exclusion_reason!,
+      }));
+    return NextResponse.json({
+      ok: true, dryRun: false, queued: true, batchId: persistentCampaignId,
+      promoKey: requestedPromoKey, promoName, totalSelectedCount: clienteIds.length,
+      sentCount: 0, failedCount: 0, skippedCount: skippedResults.length,
+      blockedCount: skippedResults.length, errorCount: 0, results: skippedResults,
+      failedResults: [], skippedResults,
+      message: "Snapshot completo salvato. Nessun invio eseguito dalla richiesta di conferma.",
+    });
+
+    /* Legacy synchronous sender intentionally disabled. The persistent worker owns sends.
     const results: SendResultRow[] = [];
 
     for (const [clienteIndex, clienteId] of clienteIds.entries()) {
       if (!dryRun && Date.now() - requestStartedAt >= BATCH_PROCESSING_BUDGET_MS) {
         for (const pendingClienteId of clienteIds.slice(clienteIndex)) {
           const pendingCliente = clientiMap.get(pendingClienteId);
-          const pendingName = pendingCliente
-            ? [pendingCliente.nome, pendingCliente.cognome].filter(Boolean).join(" ").trim() ||
-              `Cliente ${pendingClienteId}`
-            : `Cliente ${pendingClienteId}`;
+          const pendingName =
+            [pendingCliente?.nome, pendingCliente?.cognome].filter(Boolean).join(" ").trim() ||
+            `Cliente ${pendingClienteId}`;
 
           results.push({
             clienteId: pendingClienteId,
@@ -2301,6 +2427,7 @@ export async function POST(request: NextRequest) {
       failedResults: results.filter((row) => row.status === "failed"),
       skippedResults: results.filter((row) => row.status === "skipped"),
     });
+    */
   } catch (error) {
     console.error("phonesia opportunita send-batch error:", error);
 

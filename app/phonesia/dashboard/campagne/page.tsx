@@ -72,6 +72,24 @@ type WhatsappMessageStatusRow = {
   error_message: string | null;
 };
 
+type PersistentCampaignProgress = {
+  id: string;
+  promo_name: string;
+  state: string;
+  selected_declared: number;
+  pending: number;
+  processing: number;
+  accepted: number;
+  rejected: number;
+  skipped: number;
+  uncertain: number;
+  sent: number;
+  delivered: number;
+  read: number;
+  delivery_failed: number;
+  can_be_completed: boolean;
+};
+
 type MetaErrorSummary = {
   label: string;
   code: string | null;
@@ -1083,6 +1101,17 @@ export default async function PhonesiaCampagneWhatsappPage({ searchParams }: Pro
   const filters = getFilters(resolvedParams);
   const supabase = getSupabaseAdmin();
 
+  const { data: persistentProgressData, error: persistentProgressError } = await supabase
+    .from("phonesia_whatsapp_campaign_progress")
+    .select(
+      "id,promo_name,state,selected_declared,pending,processing,accepted,rejected,skipped,uncertain,sent,delivered,read,delivery_failed,can_be_completed",
+    )
+    .order("id", { ascending: false })
+    .limit(100);
+  const persistentProgress = persistentProgressError
+    ? []
+    : ((persistentProgressData ?? []) as PersistentCampaignProgress[]);
+
   let opportunityQuery = supabase
     .from("phonesia_opportunita_inviate")
     .select(
@@ -1264,6 +1293,43 @@ export default async function PhonesiaCampagneWhatsappPage({ searchParams }: Pro
             note={totals.responses === 0 ? "Nessuna risposta attribuita." : undefined}
           />
         </section>
+
+        {persistentProgress.length > 0 ? (
+          <section className="rounded-3xl border border-slate-200 bg-white px-5 py-5 shadow-sm">
+            <h2 className="text-lg font-black text-slate-950">Avanzamento persistente</h2>
+            <div className="mt-4 overflow-x-auto">
+              <table className="min-w-[1100px] w-full text-sm">
+                <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-500">
+                  <tr>
+                    {[
+                      "Campagna", "Stato", "Selezionati", "Da elaborare", "Accettati",
+                      "Consegnati", "Letti", "Rifiutati", "Falliti consegna", "Saltati", "Incerti",
+                    ].map((label) => <th key={label} className="px-3 py-3 text-right first:text-left">{label}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {persistentProgress.map((campaign) => (
+                    <tr key={campaign.id} className="border-b border-slate-100">
+                      <td className="px-3 py-3 text-left font-semibold">{campaign.promo_name}</td>
+                      <td className="px-3 py-3 text-right">
+                        {campaign.can_be_completed ? "completata" : campaign.state}
+                      </td>
+                      <td className="px-3 py-3 text-right">{campaign.selected_declared}</td>
+                      <td className="px-3 py-3 text-right">{campaign.pending + campaign.processing}</td>
+                      <td className="px-3 py-3 text-right">{campaign.accepted}</td>
+                      <td className="px-3 py-3 text-right">{campaign.delivered}</td>
+                      <td className="px-3 py-3 text-right">{campaign.read}</td>
+                      <td className="px-3 py-3 text-right">{campaign.rejected}</td>
+                      <td className="px-3 py-3 text-right">{campaign.delivery_failed}</td>
+                      <td className="px-3 py-3 text-right">{campaign.skipped}</td>
+                      <td className="px-3 py-3 text-right font-semibold text-amber-700">{campaign.uncertain}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        ) : null}
 
         <details className="rounded-3xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
           <summary className="cursor-pointer text-sm font-semibold text-slate-800">

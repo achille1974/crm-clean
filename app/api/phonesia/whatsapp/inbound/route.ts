@@ -670,6 +670,36 @@ async function saveWhatsappStatusCallbacks(
   if (error) {
     throw error;
   }
+
+  const { data: campaignRecipients, error: campaignLookupError } = await supabase
+    .from("phonesia_whatsapp_campaign_recipients")
+    .select("whatsapp_message_id")
+    .in("whatsapp_message_id", statuses.map((item) => item.whatsappMessageId));
+  if (campaignLookupError) {
+    console.error("Persistent campaign status lookup failed.", campaignLookupError.message);
+    return;
+  }
+  const campaignMessageIds = new Set(
+    (campaignRecipients ?? []).map((row) => row.whatsapp_message_id),
+  );
+  for (const item of statuses) {
+    if (!campaignMessageIds.has(item.whatsappMessageId)) continue;
+    const { error: persistentError } = await supabase.rpc(
+      "phonesia_record_whatsapp_delivery_event",
+      {
+        p_whatsapp_message_id: item.whatsappMessageId,
+        p_status: item.status,
+        p_timestamp_meta: item.timestampMeta,
+        p_error_code: item.errorCode,
+        p_error_title: item.errorTitle,
+        p_error_message: item.errorMessage,
+        p_payload: item.rawJson,
+      },
+    );
+    if (persistentError) {
+      console.error("Persistent campaign status update failed.", persistentError.message);
+    }
+  }
 }
 
 async function askPhonesiaAgent(params: {

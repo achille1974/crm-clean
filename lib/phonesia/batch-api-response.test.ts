@@ -48,7 +48,7 @@ test("classifies empty and HTML 200 responses as invalid", async () => {
 
   assert.equal(empty.error, "risposta_batch_non_valida");
   assert.equal(html.error, "risposta_batch_non_valida");
-  assert.match(empty.detail ?? "", /Esito batch non confermato/);
+  assert.match(String(empty.detail ?? ""), /Esito batch non confermato/);
 });
 
 test("classifies an aborted request as timeout with unconfirmed outcome", () => {
@@ -56,5 +56,5 @@ test("classifies an aborted request as timeout with unconfirmed outcome", () => 
 
   assert.equal(result.error, "timeout_batch");
   assert.equal(result.outcomeUnconfirmed, true);
-  assert.match(result.detail ?? "", /Esito batch non confermato/);
+  assert.match(String(result.detail ?? ""), /Esito batch non confermato/);
 });

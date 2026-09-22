@@ -40,6 +40,7 @@ type Recipient = {
 };
 
 type Props = {
+  batchEnabled: boolean;
   initialPromoName?: string | null;
   promoKeyOverride?: string | null;
   promoLabel?: string | null;
@@ -80,6 +81,7 @@ type SendResponse =
       skippedCount?: number;
       skipped_duplicate_promo?: number;
       partial?: boolean;
+      queued?: boolean;
       message?: string;
       results: SendResultRow[];
       failedResults?: SendResultRow[];
@@ -415,6 +417,7 @@ async function uploadCustomAttachment(
 }
 
 export default function OpportunityBatchComposer({
+  batchEnabled,
   initialPromoName,
   promoKeyOverride,
   promoLabel,
@@ -439,6 +442,7 @@ export default function OpportunityBatchComposer({
   const [lastPreflightSignature, setLastPreflightSignature] = useState<string | null>(
     null,
   );
+  const [confirmationKey, setConfirmationKey] = useState<string | null>(null);
   const [sendResponse, setSendResponse] = useState<SendResponse | null>(null);
   const [excludedDuplicateIds, setExcludedDuplicateIds] = useState<Set<number>>(
     () => new Set(),
@@ -606,6 +610,7 @@ export default function OpportunityBatchComposer({
     preflightResponse?.promoKey !== promoKeyOverride;
   const canPreflight = canPreparePayload && !isSending && !isPreflighting;
   const canSend =
+    batchEnabled &&
     canPreparePayload &&
     preflightIsFresh &&
     !promoKeyMismatchStop &&
@@ -616,6 +621,7 @@ export default function OpportunityBatchComposer({
   useEffect(() => {
     setPreflightResponse(null);
     setLastPreflightSignature(null);
+    setConfirmationKey(null);
   }, [requestSignature]);
 
   function clearAttachment() {
@@ -724,6 +730,8 @@ export default function OpportunityBatchComposer({
 
     if (params.dryRun) {
       formData.append("dryRun", "true");
+    } else if (confirmationKey) {
+      formData.append("idempotencyKey", confirmationKey);
     }
 
     if (messageMode === "standard") {
@@ -788,6 +796,7 @@ export default function OpportunityBatchComposer({
 
       setPreflightResponse(data);
       setLastPreflightSignature(requestSignature);
+      setConfirmationKey(crypto.randomUUID());
     } catch (error) {
       setSendResponse({
         ok: false,
@@ -1502,6 +1511,11 @@ export default function OpportunityBatchComposer({
               ) : null}
 
               <div className="mt-4 flex flex-col gap-3">
+                {!batchEnabled ? (
+                  <p className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">
+                    Invio WhatsApp batch temporaneamente sospeso. Nessuna nuova campagna può essere accodata.
+                  </p>
+                ) : null}
                 <button
                   type="button"
                   disabled={!canPreflight}
@@ -1560,7 +1574,11 @@ export default function OpportunityBatchComposer({
                     : "border-emerald-200 bg-emerald-50 text-emerald-800"
                 }`}
               >
-                {sendResponse.partial ? "Invio parziale." : "Invio completato."} Batch ID:{" "}
+                {sendResponse.queued
+                  ? "Campagna salvata e pronta per il worker."
+                  : sendResponse.partial
+                    ? "Invio parziale."
+                    : "Invio completato."} Batch ID:{" "}
                 <strong>{sendResponse.batchId}</strong>
                 {sendResponse.message ? (
                   <div className="mt-1">{sendResponse.message}</div>

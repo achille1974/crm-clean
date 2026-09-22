@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
+import { authorizeBatchWorker } from "@/lib/phonesia/batch-worker-auth";
 
 type Profile = {
   id: number;
@@ -39,6 +40,13 @@ function isAgentSharedSecretValid(request: NextRequest) {
   const receivedSecret = request.headers.get("x-phonesia-secret");
 
   return Boolean(expectedSecret && receivedSecret && expectedSecret === receivedSecret);
+}
+
+function isBatchWorkerPath(pathname: string) {
+  return (
+    pathname === "/api/phonesia/opportunita/campaigns/worker" ||
+    /^\/api\/phonesia\/opportunita\/campaigns\/[^/]+\/worker$/.test(pathname)
+  );
 }
 
 function loginRedirect(request: NextRequest) {
@@ -159,6 +167,18 @@ export async function proxy(request: NextRequest) {
 
   if (pathname === "/api/phonesia/agent/message" && isAgentSharedSecretValid(request)) {
     return response;
+  }
+
+  if (isBatchWorkerPath(pathname)) {
+    const authorization = authorizeBatchWorker(
+      request.headers.get("authorization"),
+      process.env,
+    );
+    if (authorization.ok) return response;
+    return NextResponse.json(
+      { ok: false, error: authorization.error },
+      { status: authorization.status },
+    );
   }
 
   const { userId, profile } = await getUserProfile(request, response);

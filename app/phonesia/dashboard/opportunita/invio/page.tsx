@@ -345,6 +345,7 @@ export default async function DashboardOpportunitySendPage({ searchParams }: Pro
           </section>
         ) : (
           <OpportunityBatchComposer
+            batchEnabled={process.env.PHONESIA_BATCH_WORKER_ENABLED === "true"}
             recipients={recipients}
             promoKeyOverride={requestedPromoSummary?.key ?? null}
             promoLabel={requestedPromoSummary?.detailLabel ?? null}
