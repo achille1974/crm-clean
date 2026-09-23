@@ -14,6 +14,10 @@ import {
   type PromoHistoryLabelSummary,
   type PromoSendSummary,
 } from "@/lib/phonesia/opportunita-promo-history";
+import {
+  resolvePromoReference,
+  type PromoCampaignReference,
+} from "@/lib/phonesia/promo-reference";
 
 export const dynamic = "force-dynamic";
 
@@ -136,6 +140,7 @@ export default async function DashboardOpportunitySendPage({ searchParams }: Pro
     { data: sentOpportunityRows, error: sentOpportunityError },
     { data: promoHistoryRows, error: promoHistoryError },
     { data: requestedPromoHistoryRows, error: requestedPromoHistoryError },
+    { data: requestedPromoCampaignRows, error: requestedPromoCampaignError },
   ] = await Promise.all([
     supabase
       .from("phonesia_clienti")
@@ -171,6 +176,16 @@ export default async function DashboardOpportunitySendPage({ searchParams }: Pro
           data: [] as PromoOpportunityHistoryRow[],
           error: null,
         }),
+    requestedPromoKey
+      ? supabase
+          .from("phonesia_whatsapp_campaigns")
+          .select(
+            "id,historical,snapshot_complete,state,selected_declared,documented_recipients,unreconstructable_count",
+          )
+          .eq("promo_key", requestedPromoKey)
+          .order("created_at", { ascending: false })
+          .limit(2)
+      : Promise.resolve({ data: [] as PromoCampaignReference[], error: null }),
   ]);
 
   if (clientiError) {
@@ -193,6 +208,10 @@ export default async function DashboardOpportunitySendPage({ searchParams }: Pro
     throw new Error(`Errore lettura promo selezionata: ${requestedPromoHistoryError.message}`);
   }
 
+  if (requestedPromoCampaignError) {
+    throw new Error(`Errore lettura campagne persistenti: ${requestedPromoCampaignError.message}`);
+  }
+
   const clienti = (clientiData ?? []) as ClienteRow[];
   if (clienti.length === 0) notFound();
 
@@ -203,10 +222,21 @@ export default async function DashboardOpportunitySendPage({ searchParams }: Pro
         promoKey: requestedPromoKey,
       })
     : null;
+  const promoReference = resolvePromoReference({
+    hasOverride: Boolean(requestedPromoKey),
+    legacyCount: requestedPromoRows.length,
+    campaigns: (requestedPromoCampaignRows ?? []) as PromoCampaignReference[],
+  });
+  const incompleteCampaign =
+    promoReference.kind === "historical_incomplete" ? promoReference.campaign : null;
   const requestedPromoError =
-    requestedPromoKey && !requestedPromoSummary
-      ? `La promo selezionata (${requestedPromoKey}) non esiste nello storico invii. Nessun invio e consentito con questa chiave.`
-      : null;
+    incompleteCampaign
+      ? `La chiave ${requestedPromoKey} appartiene alla campagna storica ${incompleteCampaign.id}: ${incompleteCampaign.selected_declared} destinatari dichiarati, ${incompleteCampaign.documented_recipients} documentati e ${incompleteCampaign.unreconstructable_count} non ricostruibili. I clienti selezionati oggi non costituiscono una ripresa verificabile: invio bloccato.`
+      : promoReference.kind === "persistent"
+        ? `La chiave ${requestedPromoKey} appartiene alla campagna persistente ${promoReference.campaign.id}. La ripresa deve usare lo snapshot e gli esiti documentati della campagna; non può essere trasformata in un nuovo invio dal composer.`
+        : requestedPromoKey && promoReference.kind === "unknown"
+          ? `La promo selezionata (${requestedPromoKey}) non esiste nello storico invii. Nessun invio e consentito con questa chiave.`
+          : null;
 
   const promoSummaries = buildPromoSendSummaries(
     (promoHistoryRows ?? []) as PromoOpportunityHistoryRow[],
@@ -306,7 +336,7 @@ export default async function DashboardOpportunitySendPage({ searchParams }: Pro
           </div>
         </section>
 
-        {requestedPromoSummary ? (
+        {requestedPromoSummary && !requestedPromoError ? (
           <section className="rounded-3xl border border-emerald-200 bg-emerald-50 px-5 py-5 text-sm text-emerald-950 shadow-sm md:px-6">
             <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
               Promo storica selezionata

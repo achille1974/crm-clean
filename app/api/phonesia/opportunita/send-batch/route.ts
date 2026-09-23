@@ -20,6 +20,10 @@ import {
   normalizePromoName,
   type PromoOpportunityHistoryRow,
 } from "@/lib/phonesia/opportunita-promo-history";
+import {
+  resolvePromoReference,
+  type PromoCampaignReference,
+} from "@/lib/phonesia/promo-reference";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -1644,18 +1648,62 @@ export async function POST(request: NextRequest) {
     const supabase = getSupabaseAdmin();
 
     if (promoKeyOverride) {
-      const { count: promoOverrideCount, error: promoOverrideError } = await supabase
-        .from("phonesia_opportunita_inviate")
-        .select("cliente_id", { count: "exact", head: true })
-        .eq("promo_key", promoKeyOverride);
+      const [legacyResult, campaignResult] = await Promise.all([
+        supabase
+          .from("phonesia_opportunita_inviate")
+          .select("cliente_id", { count: "exact", head: true })
+          .eq("promo_key", promoKeyOverride),
+        supabase
+          .from("phonesia_whatsapp_campaigns")
+          .select(
+            "id,historical,snapshot_complete,state,selected_declared,documented_recipients,unreconstructable_count",
+          )
+          .eq("promo_key", promoKeyOverride)
+          .order("created_at", { ascending: false })
+          .limit(2),
+      ]);
 
-      if (promoOverrideError) {
+      if (legacyResult.error) {
         throw new Error(
-          `Errore validazione promo selezionata: ${promoOverrideError.message}`,
+          `Errore validazione promo selezionata: ${legacyResult.error.message}`,
+        );
+      }
+      if (campaignResult.error) {
+        throw new Error(`Errore validazione campagna persistente: ${campaignResult.error.message}`);
+      }
+
+      const promoReference = resolvePromoReference({
+        hasOverride: true,
+        legacyCount: legacyResult.count ?? 0,
+        campaigns: (campaignResult.data ?? []) as PromoCampaignReference[],
+      });
+
+      if (promoReference.kind === "historical_incomplete") {
+        const campaign = promoReference.campaign;
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "campagna_storica_snapshot_incompleto",
+            campaignId: campaign.id,
+            message: `Ripresa bloccata: ${campaign.selected_declared} destinatari dichiarati, ${campaign.documented_recipients} documentati e ${campaign.unreconstructable_count} non ricostruibili. La selezione corrente non può sostituire lo snapshot storico.`,
+          },
+          { status: 409 },
         );
       }
 
-      if (!promoOverrideCount) {
+      if (promoReference.kind === "persistent") {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "campagna_persistente_ripresa_non_valida",
+            campaignId: promoReference.campaign.id,
+            message: "La ripresa deve usare destinatari ed esiti documentati della campagna persistente. Accepted e uncertain non vengono reinviati.",
+          },
+          { status: 409 },
+        );
+      }
+
+      if (promoReference.kind === "unknown") {
         return NextResponse.json(
           {
             ok: false,
