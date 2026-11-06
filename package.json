@@ -18,7 +18,7 @@
     "phonesia:promo-key:backfill:dry-run": "node scripts/phonesia/backfill-promo-key.js --dry-run",
     "phonesia:promo-key:backfill:apply": "node scripts/phonesia/backfill-promo-key.js --apply",
     "test:dashboard": "node --test scripts/phonesia/dashboard-data.test.mjs",
-    "test:messaging": "node --experimental-strip-types --test lib/phonesia/messaging-hygiene.test.ts"
+    "test:messaging": "node --experimental-strip-types --test lib/phonesia/messaging-hygiene.test.ts lib/whatsapp/meta-signature.test.ts"
   },
   "dependencies": {
     "@supabase/ssr": "0.10.3",

@@ -1,6 +1,7 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
+import { checkMetaSignature } from "@/lib/whatsapp/meta-signature";
 import { createClient } from "@supabase/supabase-js";
 import {
   routeBeltramiInbound,
@@ -1339,7 +1340,18 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const payload = (await request.json()) as MetaWebhookPayload;
+    const rawBody = await request.text();
+    const signature = checkMetaSignature(
+      rawBody, request.headers.get("x-hub-signature-256"), process.env.PHONESIA_META_APP_SECRET,
+    );
+    if (signature.status === "invalid") {
+      console.warn("WA PHONESIA WEBHOOK: firma Meta non valida, richiesta rifiutata.", { reason: signature.reason });
+      return new Response("invalid signature", { status: 401 });
+    }
+    if (signature.status === "not_configured") {
+      console.warn("WA PHONESIA WEBHOOK: PHONESIA_META_APP_SECRET non configurato, firma non verificata.");
+    }
+    const payload = JSON.parse(rawBody) as MetaWebhookPayload;
     const origin = new URL(request.url).origin;
     const supabase = getSupabaseAdmin();
 

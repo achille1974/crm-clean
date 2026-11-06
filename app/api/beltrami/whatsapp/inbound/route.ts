@@ -12,6 +12,7 @@ import {
   verifyMetaWebhookRequest,
   type MetaWebhookPayload,
 } from "@/lib/whatsapp/meta-webhook";
+import { checkMetaSignature } from "@/lib/whatsapp/meta-signature";
 
 const BASE_URL = "https://app.crm-supreme.it";
 
@@ -21,7 +22,18 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const payload = (await request.json()) as MetaWebhookPayload;
+    const rawBody = await request.text();
+    const signature = checkMetaSignature(
+      rawBody, request.headers.get("x-hub-signature-256"), process.env.BELTRAMI_META_APP_SECRET,
+    );
+    if (signature.status === "invalid") {
+      console.warn("WA BELTRAMI WEBHOOK: firma Meta non valida, richiesta rifiutata.", { reason: signature.reason });
+      return new Response("invalid signature", { status: 401 });
+    }
+    if (signature.status === "not_configured") {
+      console.warn("WA BELTRAMI WEBHOOK: BELTRAMI_META_APP_SECRET non configurato, firma non verificata.");
+    }
+    const payload = JSON.parse(rawBody) as MetaWebhookPayload;
     const statusCallbacks = extractStatusCallbacks(payload);
 
     if (statusCallbacks.length > 0) {
