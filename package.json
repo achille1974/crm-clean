@@ -4,7 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "prebuild": "npm run test:qr && npm run test:dashboard",
     "build": "next build",
+    "postbuild": "node scripts/phonesia/qr-build-smoke.mjs",
+    "test:qr": "node --test scripts/phonesia/qr-security.test.mjs scripts/phonesia/qr-outbox.test.mjs scripts/phonesia/qr-browser-storage.test.mjs scripts/phonesia/qr-health.test.mjs scripts/phonesia/qr-monitor-state.test.mjs",
     "start": "next start",
     "lint": "eslint",
     "beltrami:servizi:dry-run": "node scripts/beltrami/import-servizi-scadenze.js --dry-run",
@@ -13,17 +16,18 @@
     "handoff:reminders:dry-run": "node scripts/handoff/send-reminders.js --dry-run",
     "handoff:reminders:apply": "node scripts/handoff/send-reminders.js --apply",
     "phonesia:promo-key:backfill:dry-run": "node scripts/phonesia/backfill-promo-key.js --dry-run",
-    "phonesia:promo-key:backfill:apply": "node scripts/phonesia/backfill-promo-key.js --apply"
+    "phonesia:promo-key:backfill:apply": "node scripts/phonesia/backfill-promo-key.js --apply",
+    "test:dashboard": "node --test scripts/phonesia/dashboard-data.test.mjs"
   },
   "dependencies": {
-    "@supabase/ssr": "^0.10.3",
-    "@supabase/supabase-js": "^2.90.1",
-    "next": "16.1.1",
-    "react": "19.2.3",
-    "react-dom": "19.2.3",
+    "@supabase/ssr": "0.10.3",
+    "@supabase/supabase-js": "2.106.1",
+    "next": "16.3.6",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
     "resend": "^6.12.4",
     "twilio": "^5.11.2",
-    "xlsx": "^0.18.5"
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -31,7 +35,8 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.1.1",
+    "eslint-config-next": "16.3.6",
+    "fake-indexeddb": "6.2.5",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

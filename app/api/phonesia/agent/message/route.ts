@@ -1,3 +1,4 @@
+import { isServizioAttivo, isServizioDaVerificare } from "@/lib/phonesia/service-state";
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
@@ -318,7 +319,7 @@ function getActiveServiceFamilies(servizi: ServizioClienteRow[]): string[] {
   for (const servizio of servizi) {
     const status = normalizeText(servizio.service_status)?.toUpperCase() ?? null;
 
-    if (status && INACTIVE_SERVICE_STATUSES.has(status)) {
+    if (!isServizioAttivo(status)) {
       continue;
     }
 
@@ -795,7 +796,7 @@ async function findServiziCliente(
   if (!clienteId) return [];
 
   const { data, error } = await supabase
-    .from("phonesia_servizi_cliente")
+    .from("phonesia_servizi_cliente_coerenti")
     .select(
       "id, cliente_id, service_family, service_code, provider_cluster, brand_raw, service_status, created_at",
     )
@@ -918,6 +919,7 @@ function buildAgentPrompt(
         }
       : null,
     servizi_attivi: getActiveServiceFamilies(context.servizi),
+    servizi_da_verificare: context.servizi.filter(s => isServizioDaVerificare(s.service_status)).map(s => s.service_family),
     contratti: context.contratti.map((c) => ({
       id: c.id,
       operatore: c.operatore,
@@ -946,6 +948,7 @@ function buildAgentPrompt(
     "- se il cliente chiede energia, chiedi o suggerisci bolletta recente e verifica in negozio;",
     "- se il cliente chiede fibra/internet casa, suggerisci controllo copertura e indirizzo;",
     "- se il cliente chiede assistenza, dai priorità al supporto e non proporre offerte;",
+    "- i servizi da verificare derivano da contratti storici: chiedi conferma e non considerarli attivi o mancanti; l’assenza di un servizio in archivio non dimostra che il cliente non lo abbia;",
     "- se il cliente è insoddisfatto o ha feedback basso, fai recupero cliente e non fare promo;",
     "- il consenso marketing serve per campagne outbound; se il cliente scrive inbound puoi rispondere alla sua richiesta;",
     "- tono: gentile, concreto, rassicurante, da consulente PHONESIA;",

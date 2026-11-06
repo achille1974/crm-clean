@@ -1,0 +1,144 @@
+import "server-only";
+import { signFeedbackToken } from "./feedback-token";
+import { feedbackSecret } from "./feedback-secret";
+import { createPhonesiaAdminClient } from "./admin-client";
+
+const GRAPH_API_VERSION = process.env.WHATSAPP_GRAPH_API_VERSION || "v23.0";
+const WHATSAPP_ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN;
+const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
+
+const WHATSAPP_WELCOME_TEMPLATE_NAME =
+  process.env.WHATSAPP_WELCOME_TEMPLATE_NAME || "phonesia_benvenuto_feedback_v1";
+
+const WHATSAPP_WELCOME_TEMPLATE_LANGUAGE =
+  process.env.WHATSAPP_WELCOME_TEMPLATE_LANGUAGE || "it";
+
+const WELCOME_HEADER_IMAGE_URL =
+  "https://app.crm-supreme.it/phonesia/welcome-header.jpg";
+
+const STORE_CONTACTS: Record<number, { label: string; mapsUrl: string }> = {
+  1: {
+    label: "PHONESIA Floridia",
+    mapsUrl:
+      "https://www.google.com/maps/search/?api=1&query=Corso+Vittorio+Emanuele+735+Floridia",
+  },
+  2: {
+    label: "PHONESIA Augusta",
+    mapsUrl:
+      "https://www.google.com/maps/search/?api=1&query=Viale+Italia+195+Augusta",
+  },
+  3: {
+    label: "PHONESIA Siracusa",
+    mapsUrl:
+      "https://www.google.com/maps/search/?api=1&query=Corso+Gelone+41+Siracusa",
+  },
+  4: {
+    label: "PHONESIA Avola",
+    mapsUrl:
+      "https://www.google.com/maps/search/?api=1&query=Corso+Vittorio+Emanuele+281+Avola",
+  },
+  5: {
+    label: "PHONESIA Floridia",
+    mapsUrl:
+      "https://www.google.com/maps/search/?api=1&query=Corso+Vittorio+Emanuele+735+Floridia",
+  },
+};
+
+function toMetaRecipient(rawPhone: string) {
+  const cleaned = rawPhone.trim().replace(/[^\d+]/g, "");
+  const numeric = cleaned.startsWith("+") ? cleaned.slice(1) : cleaned;
+  return /^\d+$/.test(numeric) ? numeric : null;
+}
+
+async function sendTemplate(params: {
+  to: string;
+  mapsUrl: string;
+  clienteId: number;
+}) {
+  const response = await fetch(
+    `https://graph.facebook.com/${GRAPH_API_VERSION}/${WHATSAPP_PHONE_NUMBER_ID}/messages`,
+    {
+      method: "POST",
+      signal: AbortSignal.timeout(15000),
+      headers: {
+        Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to: params.to,
+        type: "template",
+        template: {
+          name: WHATSAPP_WELCOME_TEMPLATE_NAME,
+          language: {
+            code: WHATSAPP_WELCOME_TEMPLATE_LANGUAGE,
+          },
+          components: [
+            {
+              type: "header",
+              parameters: [
+                {
+                  type: "image",
+                  image: {
+                    link: WELCOME_HEADER_IMAGE_URL,
+                  },
+                },
+              ],
+            },
+            {
+              type: "button",
+              sub_type: "url",
+              index: "0",
+              parameters: [
+                {
+                  type: "text",
+                  text: params.mapsUrl,
+                },
+              ],
+            },
+            {
+              type: "button",
+              sub_type: "url",
+              index: "1",
+              parameters: [
+                {
+                  type: "text",
+                  text: signFeedbackToken(params.clienteId, feedbackSecret()),
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(`Welcome delivery failed (${response.status})`);
+  }
+}
+
+export async function sendPhonesiaWelcome(clienteId: number) {
+  if (!WHATSAPP_ACCESS_TOKEN || !WHATSAPP_PHONE_NUMBER_ID) {
+    throw new Error("Missing welcome delivery configuration");
+  }
+  const supabase = createPhonesiaAdminClient();
+  const { data: cliente, error } = await supabase
+    .from("phonesia_clienti")
+    .select("id, telefono, negozio_id, welcome_sent_at")
+    .eq("id", clienteId)
+    .single();
+
+  if (error || !cliente?.telefono) throw new Error("Welcome recipient unavailable");
+  if (cliente.welcome_sent_at) return;
+  const to = toMetaRecipient(cliente.telefono);
+  const store = STORE_CONTACTS[cliente.negozio_id || 1];
+  if (!to || !store) throw new Error("Invalid welcome recipient");
+
+  await sendTemplate({ to, mapsUrl: store.mapsUrl, clienteId: cliente.id });
+  const { error: updateError } = await supabase
+    .from("phonesia_clienti")
+    .update({ whatsapp_active: true, welcome_sent_at: new Date().toISOString() })
+    .eq("id", cliente.id);
+  if (updateError) throw new Error("Welcome delivery status could not be saved");
+}

@@ -1,4 +1,6 @@
 import "server-only";
+import { readAll, readByIds, checked } from "./read-all";
+import { romeDayStart, shiftDate } from "./rome-time";
 
 import { createClient } from "@supabase/supabase-js";
 
@@ -103,7 +105,7 @@ export type NegozioOption = {
   nome: string;
 };
 
-function applyDateRange<T extends { gte: Function; lte: Function }>(
+function applyDateRange<T extends { gte: Function; lte: Function; lt: Function }>(
   query: T,
   field: string,
   filters?: DashboardFilters,
@@ -115,14 +117,14 @@ function applyDateRange<T extends { gte: Function; lte: Function }>(
     next =
       mode === "date"
         ? next.gte(field, filters.dateFrom)
-        : next.gte(field, `${filters.dateFrom}T00:00:00`);
+        : next.gte(field, romeDayStart(filters.dateFrom).toISOString());
   }
 
   if (filters?.dateTo) {
     next =
       mode === "date"
         ? next.lte(field, filters.dateTo)
-        : next.lte(field, `${filters.dateTo}T23:59:59`);
+        : next.lt(field, romeDayStart(shiftDate(filters.dateTo, 1)).toISOString());
   }
 
   return next;
@@ -191,11 +193,11 @@ export async function getDashboardKpis(filters?: DashboardFilters): Promise<Dash
 
   const [leadCountRes, contractCountRes, linkedContractsRes, telefoniaRes, energiaRes] =
     await Promise.all([
-      leadQuery,
-      contractQuery,
-      applyDateRange(baseLinkedContractsQuery as any, CONTRACT_DATE_FIELD, filters, "date"),
-      applyDateRange(baseTelefoniaQuery as any, CONTRACT_DATE_FIELD, filters, "date"),
-      applyDateRange(baseEnergiaQuery as any, CONTRACT_DATE_FIELD, filters, "date"),
+      checked(leadQuery, "totale clienti"),
+      checked(contractQuery, "totale contratti"),
+      checked(applyDateRange(baseLinkedContractsQuery, CONTRACT_DATE_FIELD, filters, "date"), "conteggi contratti"),
+      checked(applyDateRange(baseTelefoniaQuery, CONTRACT_DATE_FIELD, filters, "date"), "conteggi contratti"),
+      checked(applyDateRange(baseEnergiaQuery, CONTRACT_DATE_FIELD, filters, "date"), "conteggi contratti"),
     ]);
 
   let linkedLeadsQuery = supabase
@@ -214,7 +216,7 @@ export async function getDashboardKpis(filters?: DashboardFilters): Promise<Dash
     "date",
   ) as any;
 
-  const { data: linkedLeadsRows } = await linkedLeadsQuery;
+  const { data: linkedLeadsRows } = await readAll(linkedLeadsQuery, "clienti associati");
 
   const linkedClienteIds = [
     ...new Set(
@@ -227,11 +229,9 @@ export async function getDashboardKpis(filters?: DashboardFilters): Promise<Dash
   let clientiConConsensoMarketing = 0;
 
   if (linkedClienteIds.length > 0) {
-    const { data: marketingRows } = await supabase
-      .from("phonesia_consensi")
-      .select("cliente_id")
-      .eq("tipo_evento", "marketing_accepted")
-      .in("cliente_id", linkedClienteIds);
+    const { data: marketingRows } = await readByIds(linkedClienteIds, (ids) => supabase
+      .from("phonesia_consensi").select("cliente_id").eq("tipo_evento", "marketing_accepted")
+      .in("cliente_id", ids), "consensi");
 
     clientiConConsensoMarketing = new Set<number>(
       (marketingRows ?? [])
@@ -269,8 +269,8 @@ export async function getLeadPerNegozio(filters?: DashboardFilters): Promise<Neg
   }
 
   const [{ data: clienti }, { data: negozi }] = await Promise.all([
-    query,
-    supabase.from("phonesia_negozi").select("codice, nome").order("codice", { ascending: true }),
+    readAll(query, "getLeadPerNegozio"),
+    checked(supabase.from("phonesia_negozi").select("codice, nome").order("codice", { ascending: true }), "negozi"),
   ]);
 
   const map = new Map<number, string>();
@@ -278,14 +278,14 @@ export async function getLeadPerNegozio(filters?: DashboardFilters): Promise<Neg
 
   const counts = new Map<number, number>();
   (clienti ?? []).forEach((c: any) => {
-    const codice = Number(c.negozio_id);
+    const codice = c.negozio_id == null ? -1 : Number(c.negozio_id);
     counts.set(codice, (counts.get(codice) ?? 0) + 1);
   });
 
   return Array.from(counts.entries())
     .map(([codice, totale]) => ({
-      negozioCodice: codice,
-      negozio: map.get(codice) ?? `Negozio ${codice}`,
+      negozioCodice: codice === -1 ? null : codice,
+      negozio: codice === -1 ? "(non associato)" : map.get(codice) ?? `Negozio ${codice}`,
       totale,
     }))
     .sort((a, b) => (a.negozioCodice ?? 0) - (b.negozioCodice ?? 0));
@@ -300,8 +300,8 @@ export async function getContrattiPerNegozio(filters?: DashboardFilters): Promis
   }
 
   const [{ data: contratti }, { data: negozi }] = await Promise.all([
-    query,
-    supabase.from("phonesia_negozi").select("codice, nome").order("codice", { ascending: true }),
+    readAll(query, "getContrattiPerNegozio"),
+    checked(supabase.from("phonesia_negozi").select("codice, nome").order("codice", { ascending: true }), "negozi"),
   ]);
 
   const map = new Map<number, string>();
@@ -342,9 +342,9 @@ export async function getConversionePerNegozio(
   }
 
   const [{ data: negozi }, { data: clienti }, { data: contratti }] = await Promise.all([
-    supabase.from("phonesia_negozi").select("codice, nome").order("codice", { ascending: true }),
-    leadQuery,
-    contractQuery,
+    checked(supabase.from("phonesia_negozi").select("codice, nome").order("codice", { ascending: true }), "negozi"),
+    readAll(leadQuery, "getConversionePerNegozio"),
+    readAll(contractQuery, "getConversionePerNegozio"),
   ]);
 
   const negoziList = (negozi ?? []).map((n: any) => ({
@@ -400,7 +400,7 @@ export async function getContrattiPerOperatore(
     query = query.eq("negozio_id", filters.negozioCodice);
   }
 
-  const { data } = await query;
+  const { data } = await readAll(query, "getContrattiPerOperatore");
 
   const counts = new Map<string, number>();
   (data ?? []).forEach((row: any) => {
@@ -430,8 +430,8 @@ export async function getContrattiRecenti(filters?: DashboardFilters): Promise<C
   }
 
   const [{ data: contratti }, { data: negozi }] = await Promise.all([
-    query,
-    supabase.from("phonesia_negozi").select("codice, nome"),
+    checked(query, "record recenti"),
+    checked(supabase.from("phonesia_negozi").select("codice, nome"), "negozi"),
   ]);
 
   const negozioMap = new Map<number, string>();
@@ -472,8 +472,8 @@ export async function getLeadRecenti(filters?: DashboardFilters): Promise<LeadRe
   }
 
   const [{ data: lead }, { data: negozi }] = await Promise.all([
-    query,
-    supabase.from("phonesia_negozi").select("codice, nome"),
+    checked(query, "record recenti"),
+    checked(supabase.from("phonesia_negozi").select("codice, nome"), "negozi"),
   ]);
 
   const negozioMap = new Map<number, string>();
@@ -521,9 +521,9 @@ export async function getLeadOpportunityRows(
   }
 
   const [{ data: leads }, { data: contracts }, { data: negozi }] = await Promise.all([
-    leadQuery,
-    contractQuery,
-    supabase.from("phonesia_negozi").select("codice, nome"),
+    readAll(leadQuery, "getLeadOpportunityRows"),
+    readAll(contractQuery, "getLeadOpportunityRows"),
+    checked(supabase.from("phonesia_negozi").select("codice, nome"), "negozi"),
   ]);
 
   const negozioMap = new Map<number, string>();

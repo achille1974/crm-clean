@@ -2,6 +2,8 @@ const fs = require("fs");
 const path = require("path");
 const { spawnSync } = require("child_process");
 const { sendAlertEmail } = require("./lib/alert-email");
+const { checkQrMonitorState } = require("./lib/qr-monitor-state");
+const { parseSshFailures } = require("./lib/ssh-auth-failures");
 
 const PROJECT_DIR = "/Users/archimede/crm-clean";
 const ROOT_DIR = path.resolve(__dirname, "..");
@@ -1099,68 +1101,39 @@ function parseCsvSet(value) {
   );
 }
 
-function countSshFailuresFromText(text) {
-  return String(text || "")
-    .split(/\r?\n/)
-    .filter((line) => /sshd|ssh/i.test(line))
-    .filter((line) => /failed|failure|invalid user|authentication error|authentication failed/i.test(line))
-    .length;
-}
-
-function checkSshFailedAttempts(log, env) {
+function checkSshFailedAttempts(log, env, commandRunner = runCommand) {
   const threshold = Number(env.PHONESIA_MONITOR_SSH_FAILED_THRESHOLD || SSH_FAILED_THRESHOLD_DEFAULT);
   const effectiveThreshold = Number.isFinite(threshold) && threshold > 0 ? threshold : SSH_FAILED_THRESHOLD_DEFAULT;
-  const predicate = [
-    '(process == "sshd" OR eventMessage CONTAINS[c] "sshd" OR eventMessage CONTAINS[c] "ssh")',
-    '(eventMessage CONTAINS[c] "failed" OR eventMessage CONTAINS[c] "failure" OR eventMessage CONTAINS[c] "invalid user" OR eventMessage CONTAINS[c] "authentication failed")',
-  ].join(" AND ");
-  const logShow = runCommand(
+  const windowStart = Date.now() - 60 * 60 * 1000;
+  const predicate = 'process == "sshd" OR process == "sshd-session" OR process == "sshd-auth"';
+  const logShow = commandRunner(
     "log",
-    ["show", "--last", "1h", "--style", "compact", "--predicate", predicate],
-    { timeoutMs: 20000, maxOutput: 60000 }
+    ["show", "--last", "1h", "--style", "json", "--info", "--predicate", predicate],
+    { timeoutMs: 20000, maxOutput: 8 * 1024 * 1024, maxBuffer: 8 * 1024 * 1024 }
   );
-  let source = "log show";
-  let failedCount = logShow.ok ? countSshFailuresFromText(logShow.stdout) : null;
-  let fallback = null;
-
-  if (!logShow.ok) {
-    const systemLogPath = "/var/log/system.log";
-    const systemLog = fileExists(systemLogPath);
-
-    if (systemLog.exists && systemLog.stat.isFile()) {
-      try {
-        const tail = readFileTail(systemLogPath, 1024 * 1024);
-        fallback = {
-          path: systemLogPath,
-          ok: true,
-          failed_count: countSshFailuresFromText(tail),
-          tail_checked_bytes: Math.min(systemLog.stat.size, 1024 * 1024),
-        };
-        source = systemLogPath;
-        failedCount = fallback.failed_count;
-      } catch (error) {
-        fallback = {
-          path: systemLogPath,
-          ok: false,
-          error: serializeError(error),
-        };
-      }
-    } else {
-      fallback = {
-        path: systemLogPath,
-        ok: false,
-        error: systemLog.error || null,
-      };
+  let parsed = null;
+  let parseError = null;
+  if (logShow.ok) {
+    try {
+      parsed = parseSshFailures(logShow.stdout, { since: windowStart, until: Date.now() });
+    } catch (error) {
+      parseError = serializeError(error);
     }
   }
-
+  const failedCount = parsed ? parsed.failed_count : null;
   const result = {
-    ok: logShow.ok || (fallback && fallback.ok),
-    source,
+    ok: Boolean(logShow.ok && parsed),
+    source: "log show",
     threshold: effectiveThreshold,
     failed_count_last_hour: failedCount,
+    window_start: new Date(windowStart).toISOString(),
+    matching_log_events: parsed ? parsed.matching_log_events : null,
+    source_addresses: parsed ? parsed.source_addresses : [],
+    sample_events: parsed ? parsed.sample_events : [],
     log_show: logShow,
-    fallback,
+    parse_error: parseError,
+    fallback: null,
+    note: "Solo eventi di autenticazione dei processi SSH. Log non leggibili o JSON incompleto producono warning, mai un conteggio zero presunto. Il vecchio fallback system.log senza copertura temporale non viene usato.",
   };
 
   if (!result.ok) {
@@ -1171,13 +1144,15 @@ function checkSshFailedAttempts(log, env) {
         stderr: logShow.stderr,
         error: logShow.error,
       },
-      fallback,
+      parse_error: parseError,
     });
   } else if (failedCount >= effectiveThreshold) {
     addAlert(log, "critical", "ssh_failed_attempts_high", "Molti tentativi SSH falliti recenti.", {
-      source,
+      source: result.source,
       failed_count_last_hour: failedCount,
       threshold: effectiveThreshold,
+      source_addresses: result.source_addresses,
+      sample_events: result.sample_events,
     });
   }
 
@@ -1325,7 +1300,7 @@ function printSummary(log) {
   }
 }
 
-async function main() {
+async function main({ sendEmail = true } = {}) {
   const startedAt = nowIso();
   const env = loadEnv();
   const log = {
@@ -1375,11 +1350,14 @@ async function main() {
   checkLaunchdLabels(log);
   checkContractParser(log, env);
   checkSecurity(log, env);
+  if (fs.existsSync("/Users/archimede/Library/LaunchAgents/com.phonesia.qr-health.plist")) checkQrMonitorState(log);
 
   log.status = computeStatus(log);
 
-  if (log.status === "critical") {
+  if (log.status === "critical" && sendEmail) {
     log.email_alert = await sendCriticalAlert({ env, log });
+  } else if (!sendEmail) {
+    log.email_alert = { sent: false, skipped_reason: "--no-email: verifica locale senza invio email" };
   }
 
   log.finished_at = nowIso();
@@ -1392,8 +1370,12 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  const serialized = serializeError(error);
-  console.error("Errore monitor CRM/Mac:", serialized.message || serialized);
-  process.exit(1);
-});
+module.exports = { checkSshFailedAttempts, computeStatus };
+
+if (require.main === module) {
+  main({ sendEmail: !process.argv.includes("--no-email") }).catch((error) => {
+    const serialized = serializeError(error);
+    console.error("Errore monitor CRM/Mac:", serialized.message || serialized);
+    process.exit(1);
+  });
+}

@@ -4,9 +4,7 @@ import { getBeltramiPromoDashboardData } from "@/lib/beltrami/promo";
 
 export const dynamic = "force-dynamic";
 
-type SearchParamsInput =
-  | Promise<Record<string, string | string[] | undefined>>
-  | Record<string, string | string[] | undefined>;
+type SearchParamsInput = Promise<Record<string, string | string[] | undefined>>;
 
 type Props = {
   searchParams?: SearchParamsInput;

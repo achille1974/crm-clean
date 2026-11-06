@@ -1,3 +1,6 @@
+import FeedbackLinkButton from "@/components/phonesia/dashboard/FeedbackLinkButton";
+import { parseDatabaseTime } from "@/lib/phonesia/rome-time";
+import { isServizioAttivo, isServizioDaVerificare } from "@/lib/phonesia/service-state";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
@@ -21,7 +24,7 @@ const SERVICE_COLUMNS = [
 
 type ServiceFamily = (typeof SERVICE_COLUMNS)[number];
 
-type ParamsInput = Promise<{ id: string }> | { id: string };
+type ParamsInput = Promise<{ id: string }>;
 
 type ClienteRow = {
   id: number;
@@ -183,11 +186,7 @@ function normalizeText(value?: string | null): string {
   return String(value ?? "").trim();
 }
 
-function isServizioAttivo(status?: string | null): boolean {
-  const normalized = normalizeText(status).toUpperCase();
-  if (!normalized) return true;
-  return !["CESSATO", "DISATTIVO", "CHIUSO", "ANNULLATO"].includes(normalized);
-}
+
 
 function normalizeServiceFamily(row: ServizioRow): ServiceFamily | null {
   const family = normalizeText(row.service_family).toUpperCase();
@@ -214,9 +213,10 @@ function negozioLabel(negozioId?: number | null): string {
 
 function formatDate(value?: string | null): string {
   if (!value) return "—";
-  const date = new Date(value);
+  const date = parseDatabaseTime(value);
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat("it-IT", {
+    timeZone: "Europe/Rome",
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
@@ -225,10 +225,11 @@ function formatDate(value?: string | null): string {
 
 function formatDateTime(value?: string | null): string {
   if (!value) return "—";
-  const date = new Date(value);
+  const date = parseDatabaseTime(value);
   if (Number.isNaN(date.getTime())) return value;
 
   return new Intl.DateTimeFormat("it-IT", {
+    timeZone: "Europe/Rome",
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
@@ -270,7 +271,8 @@ function resolveOperatore(servizi: ServizioRow[], contratti: ContrattoRow[]): st
   return winner?.[0] ?? "—";
 }
 
-function CellFlag({ active, alreadySent }: { active: boolean; alreadySent?: boolean }) {
+function CellFlag({ active, pending, alreadySent }: { active: boolean; pending?: boolean; alreadySent?: boolean }) {
+  if (!active && pending) return <span title="Contratto presente; stato del servizio da verificare" className="mx-auto flex h-8 w-8 items-center justify-center rounded-full border border-amber-300 bg-amber-50 font-bold text-amber-800">?</span>;
   return (
     <div className="flex flex-col items-center gap-1">
       <div
@@ -497,7 +499,7 @@ export default async function DashboardClienteOpportunitaPage({
       .limit(1)
       .maybeSingle(),
     supabase
-      .from("phonesia_servizi_cliente")
+      .from("phonesia_servizi_cliente_coerenti")
       .select(
         "cliente_id, service_family, service_code, provider_cluster, brand_raw, service_status",
       )
@@ -595,6 +597,7 @@ export default async function DashboardClienteOpportunitaPage({
   ];
   const lastStoreActivity = storeActivities[0]?.activityDate ?? null;
 
+  const pendingFamilies = new Set<ServiceFamily>(((serviziData ?? []) as ServizioRow[]).filter(row => isServizioDaVerificare(row.service_status)).map(normalizeServiceFamily).filter((family): family is ServiceFamily => family !== null));
   const activeFamilies = new Set<ServiceFamily>();
   for (const servizio of servizi) {
     const family = normalizeServiceFamily(servizio);
@@ -650,6 +653,7 @@ export default async function DashboardClienteOpportunitaPage({
                 <h1 className="text-3xl font-black tracking-tight text-slate-950 md:text-5xl">
                   {[cliente.nome, cliente.cognome].filter(Boolean).join(" ") || "Cliente"}
                 </h1>
+                <FeedbackLinkButton clienteId={cliente.id} />
 
                 <p className="mt-2 max-w-3xl text-sm text-slate-600 md:text-base">
                   Anagrafica completa, servizi attivi e servizi che puoi proporre commercialmente al cliente.
@@ -697,7 +701,8 @@ export default async function DashboardClienteOpportunitaPage({
 
         <section className="rounded-3xl border border-slate-200 bg-white px-5 py-5 shadow-sm md:px-6">
           <div className="mb-4">
-            <h2 className="text-xl font-black text-slate-950">Servizi attivi</h2>
+            <h2 className="text-xl font-black text-slate-950">Servizi censiti</h2>
+            <p className="mt-2 text-sm text-slate-600">✓ Attivo confermato · ? Contratto presente, stato da verificare · — Nessun servizio attivo censito.</p>
             <p className="mt-1 text-sm text-slate-600">
               Questa griglia mostra i servizi già attivi per il cliente.
             </p>
@@ -724,6 +729,7 @@ export default async function DashboardClienteOpportunitaPage({
                   >
                     <CellFlag
                       active={activeFamilies.has(service)}
+                      pending={pendingFamilies.has(service)}
                       alreadySent={sentOpportunityCodes.has(service)}
                     />
                   </div>
@@ -935,6 +941,7 @@ export default async function DashboardClienteOpportunitaPage({
         <ClienteAgentInsight
           clienteNome={[cliente.nome, cliente.cognome].filter(Boolean).join(" ") || "Cliente"}
           activeServices={[...activeFamilies]}
+          pendingServices={[...pendingFamilies]}
           operatore={operatore}
           contactStoreLabel={contactStoreLabel}
           marketingConsented={marketingConsented}
@@ -948,6 +955,7 @@ export default async function DashboardClienteOpportunitaPage({
           clienteId={cliente.id}
           clienteNome={[cliente.nome, cliente.cognome].filter(Boolean).join(" ") || "Cliente"}
           activeServices={[...activeFamilies]}
+          pendingServices={[...pendingFamilies]}
           whatsappActive={cliente.whatsapp_active === true}
           marketingConsented={marketingConsented}
           contactStoreLabel={contactStoreLabel}

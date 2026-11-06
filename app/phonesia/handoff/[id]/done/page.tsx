@@ -6,8 +6,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type PageProps = {
-  params: Promise<{ id: string }> | { id: string };
-  searchParams?: Promise<{ token?: string | string[] }> | { token?: string | string[] };
+params: Promise<{ id: string }>;
+searchParams?: Promise<{ token?: string | string[] }>;
 };
 
 function createPhonesiaSupabaseAdmin() {
@@ -98,4 +98,3 @@ export default async function PhonesiaHandoffDonePage({
     </main>
   );
 }
-

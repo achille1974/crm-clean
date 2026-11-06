@@ -1,3 +1,4 @@
+import { parseDatabaseTime } from "@/lib/phonesia/rome-time";
 import Link from "next/link";
 import { createClient } from "@supabase/supabase-js";
 
@@ -20,9 +21,7 @@ const COLLEGAMENTO_OPTIONS = [
 
 type CollegamentoFilter = (typeof COLLEGAMENTO_OPTIONS)[number]["value"];
 
-type SearchParamsInput =
-  | Promise<Record<string, string | string[] | undefined>>
-  | Record<string, string | string[] | undefined>;
+type SearchParamsInput = Promise<Record<string, string | string[] | undefined>>;
 
 type Props = {
   searchParams?: SearchParamsInput;
@@ -186,10 +185,11 @@ function formatCurrency(value: number | string | null | undefined): string {
 
 function formatDate(value?: string | null): string {
   if (!value) return "—";
-  const date = new Date(value);
+  const date = parseDatabaseTime(value);
   if (Number.isNaN(date.getTime())) return value;
 
   return new Intl.DateTimeFormat("it-IT", {
+    timeZone: "Europe/Rome",
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
@@ -198,10 +198,11 @@ function formatDate(value?: string | null): string {
 
 function formatDateTime(value?: string | null): string {
   if (!value) return "—";
-  const date = new Date(value);
+  const date = parseDatabaseTime(value);
   if (Number.isNaN(date.getTime())) return value;
 
   return new Intl.DateTimeFormat("it-IT", {
+    timeZone: "Europe/Rome",
     day: "2-digit",
     month: "2-digit",
     year: "numeric",

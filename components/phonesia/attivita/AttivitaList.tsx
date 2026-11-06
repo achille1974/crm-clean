@@ -1,41 +1,45 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClient } from "@supabase/supabase-js";
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
 
 type Attivita = {
   id: number;
-  descrizione: string;
+  descrizione: string | null;
   created_at: string;
 };
 
 export default function AttivitaList({ clienteId }: { clienteId: number }) {
   const [attivita, setAttivita] = useState<Attivita[]>([]);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
 
-    supabase
-      .from("phonesia_attivita")
-      .select("id, descrizione, created_at")
-      .eq("cliente_id", clienteId)
-      .order("created_at", { ascending: false })
-      .then(({ data }) => {
-        if (!cancelled && data) {
-          setAttivita(data);
-        }
-      });
+    const controller = new AbortController();
+    async function load() {
+      try {
+        const response = await fetch(`/api/phonesia/clienti/${clienteId}/attivita`, { signal: controller.signal });
+        if (!response.ok) throw new Error("Lettura delle attività non riuscita.");
+        const data = await response.json();
+        if (!cancelled) { setAttivita(data.attivita || []); setError(""); }
+      } catch {
+        if (!cancelled) setError("Lettura delle attività non riuscita.");
+      }
+    }
+    function onSaved(event: Event) {
+      if ((event as CustomEvent<number>).detail === clienteId) void load();
+    }
+    void load();
+    window.addEventListener("phonesia-attivita-saved", onSaved);
 
     return () => {
       cancelled = true;
+      controller.abort();
+      window.removeEventListener("phonesia-attivita-saved", onSaved);
     };
   }, [clienteId]);
 
+  if (error) return <p role="alert" className="text-sm text-red-700">{error}</p>;
   if (!attivita.length) {
     return <p className="text-sm text-gray-500">Nessuna attività registrata.</p>;
   }

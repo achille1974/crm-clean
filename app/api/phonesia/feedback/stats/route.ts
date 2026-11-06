@@ -1,3 +1,5 @@
+import { readAll, readByIds } from "@/lib/phonesia/read-all";
+import { authorizePhonesiaAdminApi } from "@/lib/phonesia/api-auth";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -65,12 +67,14 @@ function getNegozioLabel(negozioId: number | null | undefined) {
 
 export async function GET() {
   try {
-    const supabase = getSupabaseAdmin();
+    const auth = await authorizePhonesiaAdminApi();
+    if (!auth.ok) return auth.response;
+    const supabase = auth.supabase;
 
-    const { data: feedbackData, error: feedbackError } = await supabase
+    const { data: feedbackData, error: feedbackError } = await readAll(supabase
       .from("phonesia_feedback")
       .select("id, cliente_id, rating, commento, ricontatto, negozio_id, created_at")
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false }), "feedback");
 
     if (feedbackError) {
       throw new Error(`Errore lettura feedback: ${feedbackError.message}`);
@@ -89,10 +93,10 @@ export async function GET() {
     let clientiMap = new Map<number, ClienteRow>();
 
     if (clienteIds.length > 0) {
-      const { data: clientiData, error: clientiError } = await supabase
+      const { data: clientiData, error: clientiError } = await readByIds(clienteIds, (ids) => supabase
         .from("phonesia_clienti")
         .select("id, nome, cognome, telefono, negozio_id")
-        .in("id", clienteIds);
+        .in("id", ids), "clienti feedback");
 
       if (clientiError) {
         throw new Error(`Errore lettura clienti: ${clientiError.message}`);

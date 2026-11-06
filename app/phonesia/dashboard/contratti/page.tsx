@@ -1,3 +1,4 @@
+import { parseDatabaseTime } from "@/lib/phonesia/rome-time";
 import Link from "next/link";
 
 import Filters from "@/components/phonesia/dashboard/Filters";
@@ -9,9 +10,7 @@ import {
   type DashboardFilters,
 } from "@/lib/phonesia/dashboard";
 
-type SearchParamsInput =
-  | Promise<Record<string, string | string[] | undefined>>
-  | Record<string, string | string[] | undefined>;
+type SearchParamsInput = Promise<Record<string, string | string[] | undefined>>;
 
 type Props = {
   searchParams?: SearchParamsInput;
@@ -46,10 +45,11 @@ function buildHref(path: string, filters: DashboardFilters) {
 function formatDate(value: string | null | undefined) {
   if (!value) return "—";
 
-  const date = new Date(value);
+  const date = parseDatabaseTime(value);
   if (Number.isNaN(date.getTime())) return value;
 
   return new Intl.DateTimeFormat("it-IT", {
+    timeZone: "Europe/Rome",
     day: "2-digit",
     month: "2-digit",
     year: "numeric",

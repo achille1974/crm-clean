@@ -58,7 +58,8 @@ function FeedbackContent() {
   const searchParams = useSearchParams();
 
   const clienteIdRaw = searchParams.get("cliente_id");
-  const clienteId = clienteIdRaw ? Number(clienteIdRaw) : null;
+  const token = searchParams.get("token") || clienteIdRaw || "";
+  const clienteId = Number(token.split(".")[0]);
 
   const [rating, setRating] = useState<number | null>(null);
   const [commento, setCommento] = useState("");
@@ -69,7 +70,7 @@ function FeedbackContent() {
   const validClienteId =
     typeof clienteId === "number" &&
     Number.isInteger(clienteId) &&
-    clienteId > 0;
+    clienteId > 0 && token.split(".").length === 4;
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -86,13 +87,14 @@ function FeedbackContent() {
 
     setLoading(true);
 
+    try {
     const response = await fetch("/api/phonesia/feedback", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        cliente_id: clienteId,
+        token,
         rating,
         commento: commento.trim() || null,
         ricontatto,
@@ -110,6 +112,11 @@ function FeedbackContent() {
     }
 
     setSent(true);
+    } catch {
+      alert("Connessione non disponibile. Riprova: il tuo feedback non andrà duplicato.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   if (!validClienteId) {
@@ -208,7 +215,7 @@ function FeedbackContent() {
                 <span className="font-normal">(facoltativo)</span>
               </label>
 
-              <textarea
+              <textarea maxLength={2000}
                 value={commento}
                 onChange={(e) => setCommento(e.target.value)}
                 rows={4}

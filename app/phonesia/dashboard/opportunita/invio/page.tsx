@@ -1,3 +1,4 @@
+import { readAll, readByIds } from "@/lib/phonesia/read-all";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
@@ -21,9 +22,7 @@ import {
 
 export const dynamic = "force-dynamic";
 
-type SearchParamsInput =
-  | Promise<Record<string, string | string[] | undefined>>
-  | Record<string, string | string[] | undefined>;
+type SearchParamsInput = Promise<Record<string, string | string[] | undefined>>;
 
 type Props = {
   searchParams?: SearchParamsInput;
@@ -142,36 +141,34 @@ export default async function DashboardOpportunitySendPage({ searchParams }: Pro
     { data: requestedPromoHistoryRows, error: requestedPromoHistoryError },
     { data: requestedPromoCampaignRows, error: requestedPromoCampaignError },
   ] = await Promise.all([
-    supabase
+    readByIds(clienteIds, (ids) => supabase
       .from("phonesia_clienti")
       .select("id, nome, cognome, telefono, email, negozio_id, whatsapp_active")
-      .in("id", clienteIds),
-    supabase
+      .in("id", ids), "clienti selezionati"),
+    readByIds(clienteIds, (ids) => supabase
       .from("phonesia_consensi")
       .select("cliente_id")
       .eq("tipo_evento", "marketing_accepted")
-      .in("cliente_id", clienteIds),
-    supabase
+      .in("cliente_id", ids), "consensi e invii"),
+    readByIds(clienteIds, (ids) => supabase
       .from("phonesia_opportunita_inviate")
       .select("cliente_id, opportunita_code")
-      .in("cliente_id", clienteIds),
-    supabase
+      .in("cliente_id", ids), "consensi e invii"),
+    readByIds(clienteIds, (ids) => supabase
       .from("phonesia_opportunita_inviate")
       .select(
         "cliente_id, opportunita_code, channel, sent_at, created_at, send_mode, inviato_at, messaggio, attachment_public_url, attachment_file_name, promo_key, metadata",
       )
-      .in("cliente_id", clienteIds)
-      .order("inviato_at", { ascending: false })
-      .limit(5000),
+      .in("cliente_id", ids)
+      .order("inviato_at", { ascending: false }), "storico promozioni"),
     requestedPromoKey
-      ? supabase
+      ? readAll(supabase
           .from("phonesia_opportunita_inviate")
           .select(
             "cliente_id, opportunita_code, channel, sent_at, created_at, send_mode, inviato_at, messaggio, attachment_public_url, attachment_file_name, promo_key, metadata",
           )
           .eq("promo_key", requestedPromoKey)
-          .order("inviato_at", { ascending: false })
-          .limit(5000)
+          .order("inviato_at", { ascending: false }), "storico promo selezionata")
       : Promise.resolve({
           data: [] as PromoOpportunityHistoryRow[],
           error: null,

@@ -40,3 +40,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 .env*.local
+
+# dati campagne con anagrafiche clienti: mai su Git
+/invio/

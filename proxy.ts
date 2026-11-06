@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import { authorizeBatchWorker } from "@/lib/phonesia/batch-worker-auth";
+import { qrCanonicalRedirect } from "@/lib/phonesia/qr-origins";
 
 type Profile = {
   id: number;
@@ -14,7 +15,7 @@ type Profile = {
 const PUBLIC_API_PATHS = new Set([
   "/api/phonesia/feedback",
   "/api/phonesia/whatsapp/inbound",
-  "/api/phonesia/whatsapp/send-welcome",
+  "/api/phonesia/qr/register",
 ]);
 
 function isProtectedPagePath(pathname: string) {
@@ -148,7 +149,14 @@ async function getUserProfile(
 
 export async function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
+  const canonicalQr = qrCanonicalRedirect(
+    request.headers.get("host"), pathname, request.nextUrl.search, request.method, process.env,
+  );
+  if (canonicalQr) {
+    return NextResponse.redirect(canonicalQr, { status: 307, headers: { "Cache-Control": "no-store" } });
+  }
   const response = NextResponse.next();
+  if (pathname === "/phonesia/qr") response.headers.set("Cache-Control", "no-store");
 
   if (pathname === "/phonesia/access-denied") {
     return response;
@@ -224,6 +232,7 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
+    "/phonesia/qr",
     "/phonesia/login",
     "/phonesia/access-denied",
     "/phonesia/dashboard",

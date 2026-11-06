@@ -1,0 +1,11 @@
+.next/
+node_modules/
+.vercel/
+.env*
+db_cleanup_backups/
+*.log
+*.tsbuildinfo
+env-fix.txt
+rebuild.txt
+git
+supabase/*test-report.txt

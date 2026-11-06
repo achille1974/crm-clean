@@ -1,13 +1,10 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
-
-// Supabase client
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+import { authorizePhonesiaAdminApi } from "@/lib/phonesia/api-auth";
 
 export async function POST(req: Request) {
+  const auth = await authorizePhonesiaAdminApi();
+  if (!auth.ok) return auth.response;
+  const { supabase } = auth;
   try {
     const body = await req.json();
 

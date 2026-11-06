@@ -1,20 +1,6 @@
 "use client";
 
-import { useSearchParams } from "next/navigation";
-
 export default function WelcomeClient() {
-
-  const searchParams = useSearchParams();
-
-  const id = searchParams.get("id");
-
-  if (!id) {
-    return (
-      <p style={{ padding: 20 }}>
-        Cliente non valido
-      </p>
-    );
-  }
 
   return (
 
@@ -25,7 +11,7 @@ export default function WelcomeClient() {
       </h1>
 
       <p style={{ marginTop: 20 }}>
-        La registrazione è stata completata con successo.
+        La tua richiesta di registrazione è stata ricevuta.
       </p>
 
       <p style={{ marginTop: 20 }}>
@@ -33,7 +19,7 @@ export default function WelcomeClient() {
       </p>
 
       <a
-        href={`/phonesia/card/${id}`}
+        href="/phonesia/biglietto"
         style={{
           display: "inline-block",
           marginTop: 20,

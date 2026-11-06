@@ -4,7 +4,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type RouteContext = {
-  params: Promise<{ telefono: string }> | { telefono: string };
+params: Promise<{ telefono: string }>;
 };
 
 const REPLY_TEXT =

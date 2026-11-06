@@ -1,5 +1,7 @@
+import { readAll } from "@/lib/phonesia/read-all";
+import { romeDate } from "@/lib/phonesia/rome-time";
 import { NextResponse } from "next/server";
-import { supabase } from "@/lib/supabaseClient";
+import { authorizePhonesiaAdminApi } from "@/lib/phonesia/api-auth";
 
 type ClienteStatsRow = {
   negozio_id: number | null;
@@ -13,11 +15,14 @@ type NegozioRow = {
 };
 
 export async function GET() {
-  const oggi = new Date().toISOString().slice(0, 10);
+  const auth = await authorizePhonesiaAdminApi();
+  if (!auth.ok) return auth.response;
+  const { supabase } = auth;
+  const oggi = romeDate();
 
-  const { data: clienti, error: clientiError } = await supabase
+  const { data: clienti, error: clientiError } = await readAll(supabase
     .from("phonesia_clienti")
-    .select("negozio_id, whatsapp_active, created_at");
+    .select("negozio_id, whatsapp_active, created_at"), "statistiche clienti");
 
   if (clientiError) {
     return NextResponse.json(
@@ -51,7 +56,7 @@ export async function GET() {
   const totaleClienti = clientiRows.length;
 
   const clientiOggi =
-    clientiRows.filter((c) => c.created_at?.startsWith(oggi)).length || 0;
+    clientiRows.filter((c) => (c.created_at && romeDate(c.created_at) === oggi)).length || 0;
 
   const whatsappAttivi =
     clientiRows.filter((c) => c.whatsapp_active === true).length || 0;
@@ -66,7 +71,7 @@ export async function GET() {
     clientiPerNegozio[nomeNegozio] =
       (clientiPerNegozio[nomeNegozio] || 0) + 1;
 
-    if (c.created_at?.startsWith(oggi)) {
+    if ((c.created_at && romeDate(c.created_at) === oggi)) {
       clientiOggiPerNegozio[nomeNegozio] =
         (clientiOggiPerNegozio[nomeNegozio] || 0) + 1;
     }

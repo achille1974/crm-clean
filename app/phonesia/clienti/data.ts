@@ -1,6 +1,9 @@
-import { supabase } from "@/app/lib/supabase";
+import { requirePhonesiaAdmin } from "@/lib/phonesia-auth";
+import { createPhonesiaAdminClient } from "@/lib/phonesia/admin-client";
 
 export async function getClienti() {
+  await requirePhonesiaAdmin();
+  const supabase = createPhonesiaAdminClient();
   const { data, error } = await supabase
     .from("phonesia_clienti")
     .select("id, nome, cognome, telefono")

@@ -1,3 +1,4 @@
+import { formatRomeTime, romeDayStart, romeDate, shiftDate } from "@/lib/phonesia/rome-time";
 import Link from "next/link";
 import { createClient } from "@supabase/supabase-js";
 
@@ -67,32 +68,9 @@ function fullName(row: ClienteQrRow): string {
   return [row.nome, row.cognome].filter(Boolean).join(" ").replace(/\s+/g, " ").trim() || "Cliente";
 }
 
-function formatDateTime(value?: string | null): string {
-  if (!value) return "—";
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-
-  return new Intl.DateTimeFormat("it-IT", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
-}
-
-function startOfToday() {
-  const date = new Date();
-  date.setHours(0, 0, 0, 0);
-  return date;
-}
-
-function daysAgo(days: number) {
-  const date = new Date();
-  date.setDate(date.getDate() - days);
-  return date;
-}
+const formatDateTime = formatRomeTime;
+function startOfToday() { return romeDayStart(); }
+function daysAgo(days: number) { return romeDayStart(shiftDate(romeDate(), -days)); }
 
 function isAfter(value: string | null, date: Date): boolean {
   if (!value) return false;
@@ -119,7 +97,7 @@ async function fetchAllQrStatsRows(
       .select("id, negozio_id, qr_id, whatsapp_active, created_at")
       .not("qr_id", "is", null)
       .neq("qr_id", "")
-      .order("created_at", { ascending: false })
+      .order("created_at", { ascending: false }).order("id", { ascending: false })
       .range(from, from + QR_FETCH_PAGE_SIZE - 1);
 
     if (error) {
@@ -144,7 +122,7 @@ async function fetchRecentQrRows(
     .select("id, nome, cognome, telefono, email, negozio_id, qr_id, whatsapp_active, created_at")
     .not("qr_id", "is", null)
     .neq("qr_id", "")
-    .order("created_at", { ascending: false })
+    .order("created_at", { ascending: false }).order("id", { ascending: false })
     .limit(RECENT_QR_ROWS_LIMIT);
 
   if (error) {
@@ -230,6 +208,7 @@ export default async function DashboardQrPage() {
               <h1 className="text-3xl font-black tracking-tight text-slate-950 md:text-5xl">
                 Registrazioni QR compilate
               </h1>
+          <p className="mt-2 text-sm text-slate-500">Dati letti il {formatRomeTime(new Date().toISOString())} · Ora italiana. Ultima registrazione indica l’ultimo modulo ricevuto.</p>
 
               <p className="mt-3 max-w-3xl text-sm leading-relaxed text-slate-600 md:text-base">
                 Conta i clienti che hanno scansionato il QR e completato il form,
@@ -290,7 +269,7 @@ export default async function DashboardQrPage() {
               </div>
 
               <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs font-semibold text-slate-600">
-                Ultimo QR compilato:{" "}
+                Ultima registrazione QR compilato:{" "}
                 <span className="font-black text-slate-900">
                   {formatDateTime(store.ultimoQr)}
                 </span>

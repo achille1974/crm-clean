@@ -1,12 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
-import { supabase } from "../../../lib/supabaseClient";
-import {
-  registraPrivacyAccepted,
-  registraMarketingAccepted,
-} from "../../../lib/phonesia";
+import { browserQrOutbox } from "@/lib/phonesia/qr-browser-storage";
+import { sendQrSubmission } from "@/lib/phonesia/qr-outbox";
+import type { PendingQr, QrAttempt, QrSubmission } from "@/lib/phonesia/qr-outbox";
 
 import QrConsensi from "./QrConsensi";
 
@@ -18,105 +16,6 @@ const NEGOZI: Record<number, string> = {
   5: "Tabacchino Floridia",
 };
 
-type ClienteQrRow = {
-  id: number;
-  nome: string | null;
-  cognome: string | null;
-  telefono: string | null;
-  email: string | null;
-  codice_fiscale: string | null;
-  negozio_id: number | null;
-  qr_id: string | null;
-};
-
-function normalizeEmail(value: FormDataEntryValue | null): string | null {
-  const email = String(value || "").trim().toLowerCase();
-  return email || null;
-}
-
-function normalizeCodiceFiscale(value: FormDataEntryValue | null): string {
-  return String(value || "").trim().toUpperCase();
-}
-
-function isDuplicateInsertError(error: unknown): boolean {
-  if (!error || typeof error !== "object") {
-    return false;
-  }
-
-  const record = error as {
-    code?: unknown;
-    message?: unknown;
-    details?: unknown;
-  };
-
-  const code = typeof record.code === "string" ? record.code : "";
-  const message = typeof record.message === "string" ? record.message : "";
-  const details = typeof record.details === "string" ? record.details : "";
-
-  return (
-    code === "23505" ||
-    message.toLowerCase().includes("duplicate") ||
-    details.toLowerCase().includes("already exists")
-  );
-}
-
-async function findExistingCliente(params: {
-  telefono: string;
-  codiceFiscale: string;
-  email: string | null;
-}): Promise<ClienteQrRow | null> {
-  const { data: byPhone, error: phoneError } = await supabase
-    .from("phonesia_clienti")
-    .select("id, nome, cognome, telefono, email, codice_fiscale, negozio_id, qr_id")
-    .eq("telefono", params.telefono)
-    .limit(1);
-
-  if (phoneError) {
-    throw phoneError;
-  }
-
-  const phoneRows = (byPhone ?? []) as ClienteQrRow[];
-  if (phoneRows[0]) {
-    return phoneRows[0];
-  }
-
-  if (params.codiceFiscale) {
-    const { data: byCf, error: cfError } = await supabase
-      .from("phonesia_clienti")
-      .select("id, nome, cognome, telefono, email, codice_fiscale, negozio_id, qr_id")
-      .ilike("codice_fiscale", params.codiceFiscale)
-      .limit(1);
-
-    if (cfError) {
-      throw cfError;
-    }
-
-    const cfRows = (byCf ?? []) as ClienteQrRow[];
-    if (cfRows[0]) {
-      return cfRows[0];
-    }
-  }
-
-  if (params.email) {
-    const { data: byEmail, error: emailError } = await supabase
-      .from("phonesia_clienti")
-      .select("id, nome, cognome, telefono, email, codice_fiscale, negozio_id, qr_id")
-      .ilike("email", params.email)
-      .limit(1);
-
-    if (emailError) {
-      throw emailError;
-    }
-
-    const emailRows = (byEmail ?? []) as ClienteQrRow[];
-    if (emailRows[0]) {
-      return emailRows[0];
-    }
-  }
-
-  return null;
-}
-
 export default function QrForm({
   negozioId,
 }: {
@@ -127,132 +26,135 @@ export default function QrForm({
   const [loading, setLoading] = useState(false);
   const [privacyAccepted, setPrivacyAccepted] = useState(false);
   const [marketingAccepted, setMarketingAccepted] = useState(false);
+  const [pending, setPending] = useState<PendingQr[]>([]);
+  const [notice, setNotice] = useState("");
+  const [storageUnavailable, setStorageUnavailable] = useState(false);
+  const [heldId, setHeldId] = useState<string | null>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+  const activeId = useRef<string | null>(null);
+  const editingId = useRef<string | undefined>(undefined);
+  const busy = useRef(false);
 
-  async function sendWelcome(clienteId: number | string) {
-    const response = await fetch("/api/phonesia/whatsapp/send-welcome", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        cliente_id: clienteId,
-      }),
-    });
+  const refreshPending = useCallback(async () => {
+    try {
+      const entries = await browserQrOutbox().list();
+      setPending(entries); setStorageUnavailable(false);
+      if (activeId.current && !entries.some((entry) => entry.id === activeId.current)) {
+        activeId.current = null; setHeldId(null);
+      }
+      return entries;
+    } catch { setStorageUnavailable(true); return []; }
+  }, []);
 
-    const result = await response.json().catch(() => null);
-
-    if (!response.ok || result?.ok === false) {
-      console.error("Errore invio welcome WhatsApp:", result);
-      throw new Error(result?.detail || result?.error || "Errore invio welcome WhatsApp");
+  const reportAttempt = useCallback((result: QrAttempt) => {
+    if (result.state === "saved") {
+      if (activeId.current === result.id) window.location.href = "/phonesia/welcome";
+      else setNotice("Una registrazione in attesa è stata confermata dal sistema.");
+    } else if (result.state === "review") {
+      setNotice(result.message || "Un modulo richiede una verifica. Usa «Riprendi modulo» per correggerlo.");
+    } else if (result.state === "waiting") {
+      setNotice("Invio in attesa di conferma. Il modulo è conservato su questo dispositivo per 72 ore. Riproveremo con la pagina aperta, anche dopo averla riaperta.");
     }
+  }, []);
 
-    return result;
+  const retryPending = useCallback(async (force = false) => {
+    if (busy.current || !navigator.onLine) return;
+    busy.current = true;
+    try {
+      const entries = await refreshPending();
+      const due = entries.filter((entry) => !entry.needsReview && (entry.nextAttemptAt <= Date.now()
+        || (force && entry.lastStatus !== 429))).slice(0, 5);
+      if (due.length) setLoading(true);
+      for (const entry of due) reportAttempt(await browserQrOutbox().attempt(entry.id, force));
+      await refreshPending();
+    } catch { setNotice("Gli invii restano in attesa. Riprova tra poco senza cancellare i dati del browser."); }
+    finally { busy.current = false; setLoading(false); }
+  }, [refreshPending, reportAttempt]);
+
+  useEffect(() => {
+    const retry = () => { void retryPending(); };
+    void refreshPending().then(retry);
+    const timer = window.setInterval(retry, 30_000);
+    window.addEventListener("online", retry);
+    window.addEventListener("focus", retry);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("online", retry);
+      window.removeEventListener("focus", retry);
+    };
+  }, [refreshPending, retryPending]);
+
+  function clearForm() {
+    activeId.current = null; editingId.current = undefined; setHeldId(null);
+    formRef.current?.reset(); setPrivacyAccepted(false); setMarketingAccepted(false);
+    setNotice("");
+  }
+
+  async function resumeForm(entry: PendingQr) {
+    if (busy.current) return;
+    busy.current = true; setLoading(true);
+    try {
+      const payload = await browserQrOutbox().resumeForEditing(entry.id, negozioId);
+      activeId.current = null; editingId.current = entry.id; setHeldId(null);
+      for (const name of ["nome", "cognome", "telefono", "email", "codice_fiscale"] as const) {
+        const input = formRef.current?.elements.namedItem(name);
+        if (input instanceof HTMLInputElement) input.value = payload[name];
+      }
+      setPrivacyAccepted(payload.privacy_accepted); setMarketingAccepted(payload.marketing_accepted);
+      setNotice("Controlla i dati e premi «Completa registrazione». L’invio automatico di questo modulo è sospeso durante la modifica.");
+      await refreshPending();
+    } catch { setNotice("Impossibile riaprire questo modulo. I dati conservati non sono stati cancellati."); }
+    finally { busy.current = false; setLoading(false); }
+  }
+
+  async function deletePending(id: string) {
+    if (busy.current || !window.confirm("Eliminare questo modulo dal dispositivo? Non sarà più possibile reinviarlo da qui.")) return;
+    busy.current = true; setLoading(true);
+    try {
+      await browserQrOutbox().remove(id);
+      if (activeId.current === id || editingId.current === id) clearForm();
+      await refreshPending();
+    } catch { setNotice("Il modulo non è stato eliminato. Riprova."); }
+    finally { busy.current = false; setLoading(false); }
   }
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setLoading(true);
-
+    if (busy.current || heldId) return;
     if (!privacyAccepted) {
       alert("Devi confermare di aver letto l’informativa privacy per continuare.");
-      setLoading(false);
       return;
     }
-
-    const form = e.currentTarget;
-    const data = new FormData(form);
-
-    const telefonoRaw = String(data.get("telefono") || "").trim();
-
-    if (!/^[0-9]{9,10}$/.test(telefonoRaw)) {
-      alert("Inserisci un numero di telefono valido.");
-      setLoading(false);
-      return;
-    }
-
-    const telefonoFormatted = `+39${telefonoRaw}`;
-    const codiceFiscale = normalizeCodiceFiscale(data.get("codice_fiscale"));
-    const email = normalizeEmail(data.get("email"));
-
+    const data = new FormData(e.currentTarget);
+    const payload: QrSubmission = {
+      nome: String(data.get("nome") || "").trim(), cognome: String(data.get("cognome") || "").trim(),
+      telefono: String(data.get("telefono") || "").trim(), email: String(data.get("email") || "").trim(),
+      codice_fiscale: String(data.get("codice_fiscale") || "").trim(), negozio_id: negozioId,
+      privacy_accepted: privacyAccepted, marketing_accepted: marketingAccepted,
+    };
+    busy.current = true; setLoading(true); setNotice("");
     try {
-      const clienteEsistente = await findExistingCliente({
-        telefono: telefonoFormatted,
-        codiceFiscale,
-        email,
-      });
-
-      if (clienteEsistente) {
-        alert("Cliente già registrato");
-        setLoading(false);
-        return;
-      }
-
-      const { data: nuovoCliente, error: insertError } = await supabase
-        .from("phonesia_clienti")
-        .insert({
-          nome: data.get("nome"),
-          cognome: data.get("cognome"),
-          telefono: telefonoFormatted,
-          email,
-          codice_fiscale: codiceFiscale,
-          qr_id: "phonesia_qr",
-          negozio_id: negozioId,
-        })
-        .select()
-        .single();
-
-      if (insertError || !nuovoCliente) {
-        console.error("Errore creazione cliente:", insertError);
-
-        if (isDuplicateInsertError(insertError)) {
-          alert("Cliente già registrato");
-        } else {
-          alert("Errore durante la registrazione del cliente");
-        }
-
-        setLoading(false);
-        return;
-      }
-
-      const { error: errConsenso } = await registraPrivacyAccepted({
-        cliente_id: nuovoCliente.id,
-        qr_id: "phonesia_qr",
-      });
-
-      if (errConsenso) {
-        console.error("Errore consenso:", errConsenso);
-        alert("Errore durante la registrazione del consenso");
-        setLoading(false);
-        return;
-      }
-
-      if (marketingAccepted) {
-        const { error: marketingError } = await registraMarketingAccepted({
-          cliente_id: nuovoCliente.id,
-          qr_id: "phonesia_qr",
-          negozio_id: negozioId,
-        });
-
-        if (marketingError) {
-          console.error("Errore consenso marketing:", marketingError);
-        }
-      }
-
+      let id: string;
       try {
-        await sendWelcome(nuovoCliente.id);
-        setLoading(false);
-        window.location.href = `/phonesia/welcome?id=${nuovoCliente.id}`;
-      } catch (error) {
-        console.error(error);
-        alert(
-          "Registrazione completata, ma non siamo riusciti a inviare il messaggio WhatsApp automatico.",
-        );
-        setLoading(false);
+        id = await browserQrOutbox().enqueue(payload, editingId.current);
+        setStorageUnavailable(false);
+      } catch {
+        // Storage is optional: do not block a working server on private/limited browsers.
+        setStorageUnavailable(true);
+        const result = await sendQrSubmission(payload);
+        if (result.saved) window.location.href = "/phonesia/welcome";
+        else setNotice(`${result.message || "Invio non confermato."} Non è stato possibile conservare il modulo: mantieni questa pagina aperta e riprova.`);
+        return;
       }
-    } catch (error) {
-      console.error("Errore imprevisto registrazione QR:", error);
-      alert("Errore imprevisto nella registrazione.");
-      setLoading(false);
+      activeId.current = id; editingId.current = undefined; setHeldId(id);
+      reportAttempt(await browserQrOutbox().attempt(id, true));
+      await refreshPending();
+    } catch {
+      setNotice(activeId.current
+        ? "Invio non confermato. Il modulo è conservato su questo dispositivo; riapri questa pagina per riprovare."
+        : "Invio non confermato e salvataggio sul dispositivo non disponibile. Mantieni questa pagina aperta e riprova.");
+    } finally {
+      busy.current = false; setLoading(false);
     }
   }
 
@@ -291,13 +193,16 @@ export default function QrForm({
               </div>
 
               <div className="mx-auto mt-10 max-w-3xl rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-8">
-                <form onSubmit={handleSubmit} className="space-y-5">
-                  <InputField label="Nome" name="nome" required />
-                  <InputField label="Cognome" name="cognome" required />
-                  <InputField label="Codice Fiscale" name="codice_fiscale" uppercase required />
+                {notice && <p role="status" aria-live="polite" className="mb-5 rounded-xl border border-orange-200 bg-orange-50 p-4 text-sm leading-relaxed">{notice}</p>}
+                {storageUnavailable && <p className="mb-5 text-sm text-amber-800">Il browser non consente il salvataggio temporaneo. Mantieni la pagina aperta fino alla conferma dell’invio.</p>}
+                <form ref={formRef} onSubmit={handleSubmit}>
+                  <fieldset disabled={loading || Boolean(heldId)} className="space-y-5 disabled:opacity-70">
+                  <InputField label="Nome" name="nome" maxLength={100} required />
+                  <InputField label="Cognome" name="cognome" maxLength={100} required />
+                  <InputField label="Codice Fiscale" name="codice_fiscale" maxLength={16} pattern="[A-Z0-9]{16}|[0-9]{11}" uppercase required />
 
                   <div>
-                    <label className="mb-2 block text-sm font-medium text-slate-600">
+                    <label htmlFor="qr-telefono" className="mb-2 block text-sm font-medium text-slate-600">
                       Numero di telefono
                     </label>
 
@@ -305,14 +210,18 @@ export default function QrForm({
                       <span className="border-r bg-slate-50 px-4 py-3">+39</span>
                       <input
                         name="telefono"
+                        id="qr-telefono"
                         type="tel"
+                        pattern="[0-9]{9,10}"
+                        maxLength={10}
+                        autoComplete="tel-national"
                         required
                         className="w-full px-4 py-3 outline-none"
                       />
                     </div>
                   </div>
 
-                  <InputField label="Email" name="email" />
+                  <InputField label="Email" name="email" type="email" maxLength={254} />
 
                   <QrConsensi
                     privacyAccepted={privacyAccepted}
@@ -323,12 +232,27 @@ export default function QrForm({
 
                   <button
                     type="submit"
-                    disabled={loading}
+                    disabled={loading || Boolean(heldId)}
                     className="w-full rounded-xl bg-orange-500 py-3 text-white"
                   >
-                    {loading ? "..." : "Completa registrazione"}
+                    {loading ? "Invio in corso…" : heldId ? "In attesa di conferma" : "Completa registrazione"}
                   </button>
+                  <p className="text-xs leading-relaxed text-slate-500">Quando premi il pulsante, conserviamo una copia cifrata sul dispositivo fino alla conferma dell’invio, per un massimo di 72 ore. Per riprovare serve riaprire questa pagina e avere una connessione. I moduli scaduti vengono rimossi alla riapertura.</p>
+                  </fieldset>
                 </form>
+                {pending.length > 0 && <section aria-label="Registrazioni in attesa" className="mt-6 space-y-3 border-t border-slate-200 pt-5">
+                  <h2 className="font-semibold">Invii in attesa su questo dispositivo: {pending.length}</h2>
+                  <p className="text-sm text-slate-600">La registrazione è completata solo dopo la conferma del sistema. Non cancellare i dati del browser mentre ci sono invii in attesa.</p>
+                  <button type="button" disabled={loading} onClick={() => void retryPending(true)} className="rounded-xl border border-orange-300 px-4 py-2 text-sm font-semibold text-orange-700 disabled:opacity-50">Riprova invii in attesa</button>
+                  {pending.map((entry) => <div key={entry.id} className="rounded-xl bg-slate-50 p-3 text-sm">
+                    <p>{NEGOZI[entry.storeId] || "Punto vendita"} · {new Date(entry.createdAt).toLocaleString("it-IT")} · {entry.needsReview ? "Da verificare" : "In attesa"}</p>
+                    <div className="mt-2 flex flex-wrap gap-4">
+                      {entry.storeId === negozioId && <button type="button" disabled={loading} onClick={() => void resumeForm(entry)} className="font-semibold text-orange-700 underline">Riprendi modulo</button>}
+                      <button type="button" disabled={loading} onClick={() => void deletePending(entry.id)} className="text-slate-500 underline">Elimina dal dispositivo</button>
+                    </div>
+                  </div>)}
+                  <button type="button" disabled={loading} onClick={clearForm} className="rounded-xl border border-slate-300 px-4 py-2 text-sm">Registra un altro cliente</button>
+                </section>}
               </div>
             </div>
           </div>
@@ -343,17 +267,27 @@ function InputField({
   name,
   required = false,
   uppercase = false,
+  type = "text",
+  maxLength,
+  pattern,
 }: {
   label: string;
   name: string;
   required?: boolean;
   uppercase?: boolean;
+  type?: "text" | "email";
+  maxLength?: number;
+  pattern?: string;
 }) {
   return (
     <div>
-      <label className="mb-2 block text-sm">{label}</label>
+      <label htmlFor={`qr-${name}`} className="mb-2 block text-sm">{label}</label>
       <input
+        id={`qr-${name}`}
         name={name}
+        type={type}
+        maxLength={maxLength}
+        pattern={pattern}
         required={required}
         onInput={(e) => {
           if (uppercase) {

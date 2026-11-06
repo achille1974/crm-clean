@@ -1,3 +1,5 @@
+import { isServizioAttivo, isServizioDaVerificare } from "@/lib/phonesia/service-state";
+import { readAll, readByIds } from "@/lib/phonesia/read-all";
 import Link from "next/link";
 import { createClient } from "@supabase/supabase-js";
 import ClientiSelectionForm from "@/components/phonesia/dashboard/ClientiSelectionForm";
@@ -24,9 +26,7 @@ const SERVICE_COLUMNS = [
 
 type ServiceFamily = (typeof SERVICE_COLUMNS)[number];
 
-type SearchParamsInput =
-  | Promise<Record<string, string | string[] | undefined>>
-  | Record<string, string | string[] | undefined>;
+type SearchParamsInput = Promise<Record<string, string | string[] | undefined>>;
 
 type Props = {
   searchParams?: SearchParamsInput;
@@ -138,13 +138,7 @@ function buildSearchBlob(cliente: ClienteRow): string {
     .toLowerCase();
 }
 
-function isServizioAttivo(status?: string | null): boolean {
-  const normalized = normalizeText(status).toUpperCase();
 
-  if (!normalized) return true;
-
-  return !["CESSATO", "DISATTIVO", "CHIUSO", "ANNULLATO"].includes(normalized);
-}
 
 function normalizeServiceFamily(row: ServizioRow): ServiceFamily | null {
   const family = normalizeText(row.service_family).toUpperCase();
@@ -187,7 +181,8 @@ function resolveOperatore(servizi: ServizioRow[], contratti: ContrattoRow[]): st
   return winner?.[0] ?? "—";
 }
 
-function CellFlag({ active }: { active: boolean }) {
+function CellFlag({ active, pending }: { active: boolean; pending?: boolean }) {
+  if (!active && pending) return <span title="Contratto presente; stato del servizio da verificare" className="mx-auto flex h-8 w-8 items-center justify-center rounded-full border border-amber-300 bg-amber-50 font-bold text-amber-800">?</span>;
   return (
     <div
       className={[
@@ -408,7 +403,7 @@ function buildPromoFilterOptions(
     });
 }
 
-function MarketingConsentBadge({ active }: { active: boolean }) {
+function MarketingConsentBadge({ active }: { active: boolean; pending?: boolean }) {
   return (
     <span
       className={[
@@ -433,13 +428,13 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
 
   const supabase = getSupabaseAdmin();
 
-  const { data: clientiData, error: clientiError } = await supabase
+  const { data: clientiData, error: clientiError } = await readAll(supabase
     .from("phonesia_clienti")
     .select(
       "id, nome, cognome, telefono, email, codice_fiscale, negozio_id, whatsapp_active, created_at",
     )
     .order("created_at", { ascending: false })
-    .limit(500);
+    .order("id", { ascending: false }), "anagrafica clienti");
 
   if (clientiError) {
     throw new Error(`Errore lettura clienti: ${clientiError.message}`);
@@ -471,31 +466,30 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
       { data: promoHistoryData, error: promoHistoryError },
     ] =
       await Promise.all([
-        supabase
-          .from("phonesia_servizi_cliente")
+        readByIds(clienteIds, (ids) => supabase
+          .from("phonesia_servizi_cliente_coerenti")
           .select(
             "cliente_id, service_family, service_code, provider_cluster, brand_raw, service_status",
           )
-          .in("cliente_id", clienteIds),
-        supabase
+          .in("cliente_id", ids), "phonesia_servizi_cliente"),
+        readByIds(clienteIds, (ids) => supabase
           .from("phonesia_contratti")
           .select("cliente_id, operatore, data_stipula, created_at")
-          .in("cliente_id", clienteIds)
+          .in("cliente_id", ids)
           .order("data_stipula", { ascending: false })
-          .order("created_at", { ascending: false }),
-        supabase
+          .order("created_at", { ascending: false }), "phonesia_contratti"),
+        readByIds(clienteIds, (ids) => supabase
           .from("phonesia_consensi")
           .select("cliente_id")
           .eq("tipo_evento", "marketing_accepted")
-          .in("cliente_id", clienteIds),
-        supabase
+          .in("cliente_id", ids), "phonesia_consensi"),
+        readByIds(clienteIds, (ids) => supabase
           .from("phonesia_opportunita_inviate")
           .select(
             "cliente_id, opportunita_code, channel, sent_at, created_at, send_mode, inviato_at, messaggio, attachment_public_url, attachment_file_name, promo_key, metadata",
           )
-          .in("cliente_id", clienteIds)
-          .order("inviato_at", { ascending: false })
-          .limit(5000),
+          .in("cliente_id", ids)
+          .order("inviato_at", { ascending: false }), "phonesia_opportunita_inviate"),
       ]);
 
     if (serviziError) {
@@ -571,6 +565,7 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
     );
     const contratti = contrattiByCliente.get(cliente.id) ?? [];
 
+    const pendingFamilies = new Set<ServiceFamily>((serviziByCliente.get(cliente.id) ?? []).filter(row => isServizioDaVerificare(row.service_status)).map(normalizeServiceFamily).filter((family): family is ServiceFamily => family !== null));
     const activeFamilies = new Set<ServiceFamily>();
 
     for (const servizio of servizi) {
@@ -584,6 +579,7 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
       cliente,
       operatore: resolveOperatore(servizi, contratti),
       activeFamilies,
+      pendingFamilies,
       marketingConsented: marketingConsentedIds.has(cliente.id),
       selectedPromoAlreadySent: selectedPromoSentClientIds.has(cliente.id),
     };
@@ -596,6 +592,18 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
   if (onlyMarketingConsent) {
     rows = rows.filter((row) => row.marketingConsented);
   }
+
+  const totalFiltered = rows.length;
+  const pageSize = 100;
+  const pages = Math.max(1, Math.ceil(totalFiltered / pageSize));
+  const rawPage = Number(getSingleValue(resolvedParams.page));
+  const page = Math.min(pages, Math.max(1, Number.isSafeInteger(rawPage) ? rawPage : 1));
+  rows = rows.slice((page - 1) * pageSize, page * pageSize);
+  const pageHref = (target: number) => {
+    const params = new URLSearchParams({ q, negozio, promo_key: selectedPromoKey, page: String(target) });
+    if (onlyMarketingConsent) params.set("solo_marketing", "1");
+    return `/phonesia/dashboard/clienti?${params}`;
+  };
 
   const selectableClientCount = rows.filter(
     (row) => row.marketingConsented && !row.selectedPromoAlreadySent,
@@ -627,15 +635,15 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
                 </h1>
 
                 <p className="mt-2 max-w-3xl text-sm text-slate-600 md:text-base">
-                  Vista compatta con anagrafica essenziale, servizi attivi e accesso
+                  ✓ Servizio attivo confermato · ? Contratto presente, stato da verificare · — Nessun servizio attivo censito. Accesso
                   rapido alla scheda opportunità del cliente.
                 </p>
               </div>
 
               <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                Clienti visibili: {rows.length}
+                Clienti trovati: {totalFiltered} · In pagina: {rows.length}
                 <span className="mx-2 text-slate-300">·</span>
-                Selezionabili: {selectableClientCount}
+                Selezionabili in pagina: {selectableClientCount}
                 {selectedPromoKey ? (
                   <>
                     <span className="mx-2 text-slate-300">·</span>
@@ -752,7 +760,13 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
           ) : null}
         </section>
 
-        <ClientiSelectionForm
+        <nav aria-label="Pagine clienti" className="flex items-center justify-between gap-4 text-sm">
+          {page > 1 ? <Link href={pageHref(page - 1)} className="rounded-xl border bg-white px-4 py-2">← Precedente</Link> : <span />}
+          <span>Pagina {page} di {pages} · La selezione riguarda questa pagina.</span>
+          {page < pages ? <Link href={pageHref(page + 1)} className="rounded-xl border bg-white px-4 py-2">Successiva →</Link> : <span />}
+        </nav>
+        <ClientiSelectionForm key={`${page}:${q}:${negozio}:${selectedPromoKey}`}
+
           promoKey={selectedPromoKey}
           selectableClientCount={selectableClientCount}
           visibleClientCount={rows.length}
@@ -853,7 +867,7 @@ export default async function DashboardClientiPage({ searchParams }: Props) {
 
                         {SERVICE_COLUMNS.map((service) => (
                           <td key={service} className="px-3 py-4 text-center">
-                            <CellFlag active={row.activeFamilies.has(service)} />
+                            <CellFlag active={row.activeFamilies.has(service)} pending={row.pendingFamilies.has(service)} />
                           </td>
                         ))}
 

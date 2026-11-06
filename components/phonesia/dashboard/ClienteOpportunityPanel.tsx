@@ -34,6 +34,7 @@ type Props = {
   clienteId: number;
   clienteNome: string;
   activeServices: ServiceFamily[];
+  pendingServices?: ServiceFamily[];
   whatsappActive: boolean;
   marketingConsented: boolean;
   contactStoreLabel: string;
@@ -487,7 +488,7 @@ function buildOpportunityRecommendations(
   }
 
   for (const service of FALLBACK_ORDER) {
-    add(service, "Servizio non attivo: proposta commerciale disponibile.", "Bassa");
+    add(service, "Servizio non censito come attivo: verificare la situazione prima della proposta.", "Bassa");
   }
 
   return recommendations.sort((a, b) => {
@@ -502,6 +503,7 @@ export default function ClienteOpportunityPanel({
   clienteId,
   clienteNome,
   activeServices,
+  pendingServices = [],
   whatsappActive,
   marketingConsented,
   contactStoreLabel,
@@ -528,8 +530,8 @@ export default function ClienteOpportunityPanel({
   );
 
   const recommendations = useMemo(
-    () => buildOpportunityRecommendations(activeServices),
-    [activeServices],
+    () => buildOpportunityRecommendations(activeServices).filter(item => !pendingServices.includes(item.service)),
+    [activeServices, pendingServices],
   );
 
   const latestSentByService = useMemo(() => {

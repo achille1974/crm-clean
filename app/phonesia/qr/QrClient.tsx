@@ -17,7 +17,7 @@ export default function QrClient() {
 
   const negozioId = Number(negozio);
 
-  if (Number.isNaN(negozioId)) {
+  if (!/^[1-5]$/.test(negozio) || !Number.isInteger(negozioId)) {
     return (
       <p style={{ padding: 20, fontWeight: 700 }}>
         QR non valido: negozio non valido

@@ -1,0 +1,275 @@
+Started: 2026-09-18T10:06:21Z
+PostgreSQL: postgres (PostgreSQL) 16.15 (Homebrew)
+Database: isolated local cluster; socket=/private/tmp/crm-clean-pg-batch-20260918/socket; port=55439; database=crm_batch_isolated
+Migration: /Users/archimede/crm-clean/supabase/migrations/20260918_phonesia_persistent_whatsapp_batches.sql
+CREATE ROLE
+CREATE ROLE
+CREATE ROLE
+CREATE SCHEMA
+CREATE TABLE
+CREATE FUNCTION
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+INSERT 0 900
+INSERT 0 286
+INSERT 0 286
+GRANT
+GRANT
+GRANT
+GRANT
+BEGIN
+CREATE EXTENSION
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+CREATE INDEX
+CREATE INDEX
+CREATE INDEX
+CREATE INDEX
+ALTER TABLE
+ALTER TABLE
+ALTER TABLE
+ALTER TABLE
+CREATE FUNCTION
+CREATE FUNCTION
+psql:/Users/archimede/crm-clean/supabase/migrations/20260918_phonesia_persistent_whatsapp_batches.sql:177: NOTICE:  policy "phonesia_wa_campaigns_admin_read" for relation "public.phonesia_whatsapp_campaigns" does not exist, skipping
+DROP POLICY
+CREATE POLICY
+psql:/Users/archimede/crm-clean/supabase/migrations/20260918_phonesia_persistent_whatsapp_batches.sql:180: NOTICE:  policy "phonesia_wa_recipients_admin_read" for relation "public.phonesia_whatsapp_campaign_recipients" does not exist, skipping
+DROP POLICY
+CREATE POLICY
+psql:/Users/archimede/crm-clean/supabase/migrations/20260918_phonesia_persistent_whatsapp_batches.sql:183: NOTICE:  policy "phonesia_wa_attempts_admin_read" for relation "public.phonesia_whatsapp_campaign_attempts" does not exist, skipping
+DROP POLICY
+CREATE POLICY
+psql:/Users/archimede/crm-clean/supabase/migrations/20260918_phonesia_persistent_whatsapp_batches.sql:186: NOTICE:  policy "phonesia_wa_delivery_admin_read" for relation "public.phonesia_whatsapp_delivery_events" does not exist, skipping
+DROP POLICY
+CREATE POLICY
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE VIEW
+INSERT 0 1
+INSERT 0 286
+INSERT 0 286
+UPDATE 286
+REVOKE
+REVOKE
+REVOKE
+REVOKE
+REVOKE
+REVOKE
+REVOKE
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+GRANT
+COMMIT
+CREATE EXTENSION
+CREATE FUNCTION
+ assert_true 
+-------------
+ 
+(1 row)
+
+ assert_true 
+-------------
+ 
+(1 row)
+
+DO
+ assert_true 
+-------------
+ 
+(1 row)
+
+ assert_true 
+-------------
+ 
+(1 row)
+
+ assert_true 
+-------------
+ 
+(1 row)
+
+DO
+CREATE FUNCTION
+ test_phone_constraint 
+-----------------------
+ 
+(1 row)
+
+ assert_true 
+-------------
+ 
+(1 row)
+
+ assert_true 
+-------------
+ 
+(1 row)
+
+GRANT
+SET
+ assert_true 
+-------------
+ 
+(1 row)
+
+RESET
+INSERT 0 1
+INSERT 0 1
+SET
+              set_config              
+--------------------------------------
+ 10000000-0000-0000-0000-000000000001
+(1 row)
+
+ assert_true 
+-------------
+ 
+(1 row)
+
+RESET
+ dblink_connect 
+----------------
+ OK
+(1 row)
+
+ dblink_connect 
+----------------
+ OK
+(1 row)
+
+ dblink_send_query 
+-------------------
+                 1
+(1 row)
+
+ dblink_send_query 
+-------------------
+                 1
+(1 row)
+
+ claimed 
+---------
+     100
+(1 row)
+
+ claimed 
+---------
+     100
+(1 row)
+
+ dblink_disconnect 
+-------------------
+ OK
+(1 row)
+
+ dblink_disconnect 
+-------------------
+ OK
+(1 row)
+
+ assert_true 
+-------------
+ 
+(1 row)
+
+ assert_true 
+-------------
+ 
+(1 row)
+
+UPDATE 497
+ count 
+-------
+     1
+(1 row)
+
+ assert_true 
+-------------
+ 
+(1 row)
+
+ phonesia_start_whatsapp_attempt 
+---------------------------------
+ 
+(1 row)
+
+ phonesia_finish_whatsapp_attempt 
+----------------------------------
+ 
+(1 row)
+
+ phonesia_start_whatsapp_attempt 
+---------------------------------
+ 
+(1 row)
+
+UPDATE 1
+ count 
+-------
+     1
+(1 row)
+
+ assert_true 
+-------------
+ 
+(1 row)
+
+ assert_true 
+-------------
+ 
+(1 row)
+
+ phonesia_record_whatsapp_delivery_event 
+-----------------------------------------
+ 
+(1 row)
+
+ phonesia_record_whatsapp_delivery_event 
+-----------------------------------------
+ 
+(1 row)
+
+ phonesia_record_whatsapp_delivery_event 
+-----------------------------------------
+ 
+(1 row)
+
+ phonesia_record_whatsapp_delivery_event 
+-----------------------------------------
+ 
+(1 row)
+
+ assert_true 
+-------------
+ 
+(1 row)
+
+ assert_true 
+-------------
+ 
+(1 row)
+
+ assert_true 
+-------------
+ 
+(1 row)
+
+        result        
+----------------------
+ ALL_SQL_TESTS_PASSED
+(1 row)
+
+Completed: 2026-09-18T10:06:21Z

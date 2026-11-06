@@ -1,3 +1,5 @@
+import { readAll, readByIds } from "@/lib/phonesia/read-all";
+import { romeDayStart, shiftDate } from "@/lib/phonesia/rome-time";
 import Link from "next/link";
 import { Fragment, type ReactNode } from "react";
 import { createClient } from "@supabase/supabase-js";
@@ -13,9 +15,7 @@ const BILLABLE_COST_NOTE =
 
 type CampaignSection = "dettaglio" | "clienti" | "errori" | "risposte" | "costi";
 
-type SearchParamsInput =
-  | Promise<Record<string, string | string[] | undefined>>
-  | Record<string, string | string[] | undefined>;
+type SearchParamsInput = Promise<Record<string, string | string[] | undefined>>;
 
 type Props = {
   searchParams?: SearchParamsInput;
@@ -939,10 +939,10 @@ async function fetchClienti(
 ): Promise<Map<number, ClienteRow>> {
   if (clienteIds.length === 0) return new Map();
 
-  const { data, error } = await supabase
+  const { data, error } = await readByIds(clienteIds, (ids) => supabase
     .from("phonesia_clienti")
     .select("id, nome, cognome, telefono, negozio_id")
-    .in("id", clienteIds);
+    .in("id", ids), "clienti campagne");
 
   if (error) {
     throw new Error(`Errore lettura clienti campagne: ${error.message}`);
@@ -960,19 +960,17 @@ async function fetchWhatsappStatuses(
 
   if (normalizedPhones.length === 0 || !minDate) return [];
 
-  const { data, error } = await supabase
+  const { data, error } = await readByIds(normalizedPhones, (phones) => supabase
     .from("phonesia_whatsapp_message_statuses")
     .select(
       "whatsapp_message_id, status, recipient_phone, timestamp_meta, created_at, pricing_category, pricing_billable, error_code, error_title, error_message",
     )
-    .in("recipient_phone", normalizedPhones)
+    .in("recipient_phone", phones)
     .gte("timestamp_meta", minDate)
-    .order("timestamp_meta", { ascending: false })
-    .limit(5000);
+    .order("timestamp_meta", { ascending: false }), "stati WhatsApp");
 
   if (error) {
-    console.warn("Status WhatsApp non disponibili per campagne:", error.message);
-    return [];
+    throw new Error(`Stati WhatsApp non disponibili: ${error.message}`);
   }
 
   return (data ?? []) as WhatsappMessageStatusRow[];
@@ -985,15 +983,14 @@ async function fetchResponseRows(
 ): Promise<ConversationRow[]> {
   if (clienteIds.length === 0 || !minDate) return [];
 
-  const { data, error } = await supabase
+  const { data, error } = await readByIds(clienteIds, (ids) => supabase
     .from("phonesia_conversazioni")
     .select(
       "id, created_at, cliente_id, canale, intent, stato, messaggio_utente, risposta_agente, metadata",
     )
-    .in("cliente_id", clienteIds)
+    .in("cliente_id", ids)
     .gte("created_at", minDate)
-    .order("created_at", { ascending: false })
-    .limit(MAX_RESPONSE_ROWS);
+    .order("created_at", { ascending: false }), "risposte campagne");
 
   if (error) {
     throw new Error(`Errore lettura risposte campagne: ${error.message}`);
@@ -1101,13 +1098,12 @@ export default async function PhonesiaCampagneWhatsappPage({ searchParams }: Pro
   const filters = getFilters(resolvedParams);
   const supabase = getSupabaseAdmin();
 
-  const { data: persistentProgressData, error: persistentProgressError } = await supabase
+  const { data: persistentProgressData, error: persistentProgressError } = await readAll(supabase
     .from("phonesia_whatsapp_campaign_progress")
     .select(
       "id,promo_name,state,selected_declared,pending,processing,accepted,rejected,skipped,uncertain,sent,delivered,read,delivery_failed,can_be_completed",
     )
-    .order("id", { ascending: false })
-    .limit(100);
+    .order("id", { ascending: false }), "avanzamento campagne");
   const persistentProgress = persistentProgressError
     ? []
     : ((persistentProgressData ?? []) as PersistentCampaignProgress[]);
@@ -1117,8 +1113,7 @@ export default async function PhonesiaCampagneWhatsappPage({ searchParams }: Pro
     .select(
       "id, cliente_id, opportunita_code, opportunita_label, send_mode, batch_id, messaggio, attachment_public_url, attachment_file_name, negozio_contatto, negozio_id, inviato_at, sent_at, created_at, metadata",
     )
-    .order("inviato_at", { ascending: false })
-    .limit(MAX_OPPORTUNITY_ROWS);
+    .order("inviato_at", { ascending: false });
 
   let batchLogQuery = supabase
     .from("phonesia_conversazioni")
@@ -1126,23 +1121,22 @@ export default async function PhonesiaCampagneWhatsappPage({ searchParams }: Pro
       "id, created_at, cliente_id, canale, intent, stato, messaggio_utente, risposta_agente, metadata",
     )
     .eq("intent", "dashboard_opportunita_send_batch")
-    .order("created_at", { ascending: false })
-    .limit(MAX_BATCH_LOG_ROWS);
+    .order("created_at", { ascending: false });
 
   if (filters.dataDa) {
-    opportunityQuery = opportunityQuery.gte("inviato_at", `${filters.dataDa}T00:00:00`);
-    batchLogQuery = batchLogQuery.gte("created_at", `${filters.dataDa}T00:00:00`);
+    opportunityQuery = opportunityQuery.gte("inviato_at", romeDayStart(filters.dataDa).toISOString());
+    batchLogQuery = batchLogQuery.gte("created_at", romeDayStart(filters.dataDa).toISOString());
   }
 
   if (filters.dataA) {
-    opportunityQuery = opportunityQuery.lte("inviato_at", `${filters.dataA}T23:59:59`);
-    batchLogQuery = batchLogQuery.lte("created_at", `${filters.dataA}T23:59:59`);
+    opportunityQuery = opportunityQuery.lt("inviato_at", romeDayStart(shiftDate(filters.dataA, 1)).toISOString());
+    batchLogQuery = batchLogQuery.lt("created_at", romeDayStart(shiftDate(filters.dataA, 1)).toISOString());
   }
 
   const [
     { data: opportunityData, error: opportunityError },
     { data: batchLogData, error: batchLogError },
-  ] = await Promise.all([opportunityQuery, batchLogQuery]);
+  ] = await Promise.all([readAll(opportunityQuery, "opportunità campagne"), readAll(batchLogQuery, "log campagne")]);
 
   if (opportunityError) {
     throw new Error(`Errore lettura opportunità inviate: ${opportunityError.message}`);

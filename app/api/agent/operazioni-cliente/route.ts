@@ -1,12 +1,15 @@
 import { NextResponse } from "next/server";
-import { supabase } from "@/lib/supabaseClient";
+import { authorizePhonesiaAgentApi } from "@/lib/phonesia/api-auth";
 
 export async function POST(req: Request) {
+  const auth = await authorizePhonesiaAgentApi(req);
+  if (!auth.ok) return auth.response;
+  const { supabase } = auth;
   try {
     const body = await req.json();
     const cliente_id = body.cliente_id;
 
-    if (!cliente_id) {
+    if (!Number.isSafeInteger(Number(cliente_id)) || Number(cliente_id) <= 0) {
       return NextResponse.json(
         { error: "cliente_id is required" },
         { status: 400 }

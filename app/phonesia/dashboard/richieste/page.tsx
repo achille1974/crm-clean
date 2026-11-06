@@ -1,12 +1,12 @@
+import { readAll } from "@/lib/phonesia/read-all";
+import { parseDatabaseTime } from "@/lib/phonesia/rome-time";
 import Link from "next/link";
 import { createClient } from "@supabase/supabase-js";
 import AgentTaskStatusActions from "@/components/phonesia/dashboard/AgentTaskStatusActions";
 
 export const dynamic = "force-dynamic";
 
-type SearchParamsInput =
-  | Promise<Record<string, string | string[] | undefined>>
-  | Record<string, string | string[] | undefined>;
+type SearchParamsInput = Promise<Record<string, string | string[] | undefined>>;
 
 type Props = {
   searchParams?: SearchParamsInput;
@@ -255,12 +255,13 @@ function formatDate(value: string | null) {
 
   try {
     return new Intl.DateTimeFormat("it-IT", {
+    timeZone: "Europe/Rome",
       day: "2-digit",
       month: "2-digit",
       year: "numeric",
       hour: "2-digit",
       minute: "2-digit",
-    }).format(new Date(value));
+    }).format(parseDatabaseTime(value));
   } catch {
     return value;
   }
@@ -503,13 +504,12 @@ export default async function PhonesiaRichiestePage({ searchParams }: Props) {
 
   const supabase = getSupabaseAdmin();
 
-  const { data: tasksData, error: tasksError } = await supabase
+  const { data: tasksData, error: tasksError } = await readAll(supabase
     .from("phonesia_agent_tasks")
     .select(
       "id, conversation_id, thread_id, cliente_id, negozio_id, negozio_label, customer_name, customer_phone, source, intent, detected_intent, message, reply, next_best_action_code, next_best_action_label, next_best_action_reason, required_data, questions_to_ask, risk_flags, operator_summary, priority, score, score_reasons, sla_due_at, sla_level, sla_status, sla_reason, status, created_at, closed_at, metadata",
     )
-    .order("created_at", { ascending: false })
-    .limit(500);
+    .order("created_at", { ascending: false }), "richieste clienti");
 
   if (tasksError) {
     throw new Error(`Errore lettura task agent: ${tasksError.message}`);
@@ -1238,4 +1238,3 @@ function StatCard({
     </div>
   );
 }
-

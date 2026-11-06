@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import * as XLSX from "xlsx";
-import { createClient } from "@supabase/supabase-js";
+import { authorizePhonesiaAdminApi } from "@/lib/phonesia/api-auth";
 
 /**
  * STEP 6.9A.1 — DRY RUN CON NORMALIZZAZIONE TELEFONO
@@ -8,12 +8,6 @@ import { createClient } from "@supabase/supabase-js";
  * - Nessuna modifica clienti
  * - Solo verifica matching corretto
  */
-
-// Supabase client (SOLO LETTURA)
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
 
 /**
  * Normalizza telefono:
@@ -37,6 +31,9 @@ function normalizzaTelefono(tel: string | null) {
 }
 
 export async function POST(req: Request) {
+  const auth = await authorizePhonesiaAdminApi();
+  if (!auth.ok) return auth.response;
+  const { supabase } = auth;
   /* ===============================
      1️⃣ RICEZIONE FILE
      =============================== */

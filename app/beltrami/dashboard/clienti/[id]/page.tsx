@@ -14,7 +14,7 @@ import { getBeltramiClienteDetail } from "@/lib/beltrami/dashboard";
 
 export const dynamic = "force-dynamic";
 
-type ParamsInput = Promise<{ id: string }> | { id: string };
+type ParamsInput = Promise<{ id: string }>;
 
 function getClienteName(row: { nome: string | null; cognome: string | null }) {
   return [row.nome, row.cognome].filter(Boolean).join(" ").trim() || "Cliente Beltrami";

@@ -5,8 +5,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type PageProps = {
-  params: Promise<{ id: string }> | { id: string };
-  searchParams?: Promise<{ token?: string | string[] }> | { token?: string | string[] };
+params: Promise<{ id: string }>;
+searchParams?: Promise<{ token?: string | string[] }>;
 };
 
 async function resolveParams(params: PageProps["params"]) {
@@ -81,4 +81,3 @@ export default async function BeltramiHandoffDonePage({
     </main>
   );
 }
-

@@ -94,7 +94,7 @@ export async function requirePhonesiaAdmin() {
   const auth = await requirePhonesiaAuth();
 
   if (auth.profile.role !== "admin") {
-    redirect("/phonesia/dashboard/clienti");
+    redirect("/phonesia/access-denied");
   }
 
   return auth;

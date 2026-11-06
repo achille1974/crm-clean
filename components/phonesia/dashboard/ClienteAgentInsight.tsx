@@ -3,6 +3,7 @@ type InsightPriority = "alta" | "buona" | "media" | "bassa";
 type Props = {
   clienteNome: string;
   activeServices: string[];
+  pendingServices?: string[];
   operatore: string;
   contactStoreLabel: string;
   marketingConsented: boolean;
@@ -137,7 +138,7 @@ function buildChecklist(params: {
 
   if (params.missingServices.length > 0) {
     checklist.push(
-      `Servizi mancanti utili: ${params.missingServices
+      `Servizi non censiti, da verificare: ${params.missingServices
         .slice(0, 4)
         .map((service) => SERVICE_LABELS[service] ?? service.toLowerCase())
         .join(", ")}.`,
@@ -190,6 +191,7 @@ function buildSuggestedMessage(params: {
 export default function ClienteAgentInsight({
   clienteNome,
   activeServices,
+  pendingServices = [],
   operatore,
   contactStoreLabel,
   marketingConsented,
@@ -198,7 +200,7 @@ export default function ClienteAgentInsight({
   opportunitaInviateCount,
   ultimaOpportunita,
 }: Props) {
-  const missingServices = buildMissingServices(activeServices);
+  const missingServices = buildMissingServices([...activeServices, ...pendingServices]);
   const priority = getPriority({
     marketingConsented,
     whatsappActive,
@@ -220,6 +222,8 @@ export default function ClienteAgentInsight({
     whatsappActive,
     operatore,
   });
+
+  if (pendingServices.length) checklist.unshift(`Stato da verificare per: ${pendingServices.map(service => SERVICE_LABELS[service] ?? service).join(", ")}. Chiedere conferma al cliente.`);
 
   const suggestedMessage = buildSuggestedMessage({
     clienteNome,

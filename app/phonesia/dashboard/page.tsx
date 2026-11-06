@@ -1,4 +1,5 @@
 import Link from "next/link";
+import DataHealth from "./DataHealth";
 
 export const dynamic = "force-dynamic";
 
@@ -94,6 +95,8 @@ export default function PhonesiaDashboardPage() {
             dell’agent.
           </p>
         </section>
+
+        <DataHealth />
 
         <section className="grid gap-4 md:grid-cols-2">
           {CARDS.map((card) => (

@@ -1,4 +1,5 @@
 "use client";
+import { parseDatabaseTime } from "@/lib/phonesia/rome-time";
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -46,12 +47,13 @@ function formatDate(value: string | null) {
 
   try {
     return new Intl.DateTimeFormat("it-IT", {
+    timeZone: "Europe/Rome",
       day: "2-digit",
       month: "2-digit",
       year: "numeric",
       hour: "2-digit",
       minute: "2-digit",
-    }).format(new Date(value));
+    }).format(parseDatabaseTime(value));
   } catch {
     return value;
   }

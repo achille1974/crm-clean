@@ -1,3 +1,5 @@
+import { parseDatabaseTime } from "@/lib/phonesia/rome-time";
+import { readAll } from "@/lib/phonesia/read-all";
 import Link from "next/link";
 import { createClient } from "@supabase/supabase-js";
 
@@ -76,10 +78,11 @@ function runtimeSlaStatus(task: AgentTaskRow): string {
 function formatDateTime(value?: string | null): string {
   if (!value) return "—";
 
-  const date = new Date(value);
+  const date = parseDatabaseTime(value);
   if (Number.isNaN(date.getTime())) return value;
 
   return new Intl.DateTimeFormat("it-IT", {
+    timeZone: "Europe/Rome",
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
@@ -218,13 +221,12 @@ function buildIntentReport(rows: AgentTaskRow[]) {
 export default async function AgentReportPage() {
   const supabase = getSupabaseAdmin();
 
-  const { data, error } = await supabase
+  const { data, error } = await readAll(supabase
     .from("phonesia_agent_tasks")
     .select(
       "id, cliente_id, negozio_label, customer_name, customer_phone, intent, status, priority, score, sla_due_at, next_best_action_label, created_at",
     )
-    .order("created_at", { ascending: false })
-    .limit(1000);
+    .order("created_at", { ascending: false }), "report agent");
 
   if (error) {
     throw new Error(`Errore lettura report agent: ${error.message}`);

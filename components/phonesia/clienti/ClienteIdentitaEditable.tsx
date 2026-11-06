@@ -1,34 +1,33 @@
 "use client";
 
 import { useState } from "react";
-import { createClient } from "@supabase/supabase-js";
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
 
 export default function ClienteIdentitaEditable({
   cliente,
 }: {
-  cliente: any;
+  cliente: { id: number; telefono: string | null; email: string | null; codice_fiscale: string | null };
 }) {
   const [editing, setEditing] = useState(false);
   const [telefono, setTelefono] = useState(cliente.telefono ?? "");
   const [email, setEmail] = useState(cliente.email ?? "");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   async function salva() {
     setLoading(true);
-
-    await supabase
-      .from("phonesia_clienti")
-      .update({ telefono, email })
-      .eq("id", cliente.id);
-
-    setLoading(false);
-    setEditing(false);
-    location.reload();
+    setError("");
+    try {
+      const response = await fetch(`/api/phonesia/clienti/${cliente.id}/identita`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ telefono, email }),
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(result?.error || "Modifica non riuscita.");
+      setEditing(false);
+      location.reload();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Modifica non riuscita.");
+    } finally { setLoading(false); }
   }
 
   if (!editing) {
@@ -52,6 +51,7 @@ export default function ClienteIdentitaEditable({
 
   return (
     <div className="space-y-2">
+      {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
       <input
         className="border p-2 w-full"
         value={telefono}

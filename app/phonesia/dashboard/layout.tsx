@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
+import RefreshButton from "./RefreshButton";
 
-import { requirePhonesiaAuth } from "@/lib/phonesia-auth";
+import { requirePhonesiaAdmin } from "@/lib/phonesia-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -43,7 +44,7 @@ export default async function PhonesiaDashboardLayout({
 }: {
   children: ReactNode;
 }) {
-  const { profile } = await requirePhonesiaAuth();
+  const { profile } = await requirePhonesiaAdmin();
 
   const displayName =
     profile.nome?.trim() ||
@@ -74,6 +75,7 @@ export default async function PhonesiaDashboardLayout({
             </Link>
           </div>
 
+          <RefreshButton />
           <a
             href="/phonesia/logout"
             className="group inline-flex items-center gap-2 rounded-2xl bg-emerald-600 px-4 py-2.5 text-sm font-black text-white shadow-sm transition hover:bg-emerald-700 focus:outline-none focus:ring-4 focus:ring-emerald-200 md:px-5"
