@@ -7,6 +7,7 @@ import {
   type PersistentBatchRepository,
 } from "@/lib/phonesia/persistent-batch";
 import { authorizeBatchWorker } from "@/lib/phonesia/batch-worker-auth";
+import { cooldownStartIso, hasActiveMarketingConsent, MARKETING_COOLDOWN_DAYS } from "@/lib/phonesia/messaging-hygiene";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -99,20 +100,29 @@ export async function POST(
     async recheckEligibility(recipient) {
       const startOfToday = new Date();
       startOfToday.setHours(0, 0, 0, 0);
-      const [{ data: cliente }, { count: consentCount }, { count: todayCount }, { count: promoCount }] =
+      const cooldownStart = cooldownStartIso();
+      const [{ data: cliente }, { data: consents }, { count: todayCount }, { count: promoCount },
+        { count: recentLegacyCount }, { count: recentCampaignCount }] =
         await Promise.all([
           supabase.from("phonesia_clienti").select("whatsapp_active").eq("id", recipient.clienteId).maybeSingle(),
-          supabase.from("phonesia_consensi").select("cliente_id", { count: "exact", head: true })
-            .eq("cliente_id", recipient.clienteId).eq("tipo_evento", "marketing_accepted"),
+          supabase.from("phonesia_consensi").select("id,tipo_evento,created_at")
+            .eq("cliente_id", recipient.clienteId).in("tipo_evento", ["marketing_accepted", "marketing_revoked"]),
           supabase.from("phonesia_opportunita_inviate").select("cliente_id", { count: "exact", head: true })
             .eq("cliente_id", recipient.clienteId).gte("created_at", startOfToday.toISOString()),
           supabase.from("phonesia_opportunita_inviate").select("cliente_id", { count: "exact", head: true })
             .eq("cliente_id", recipient.clienteId).eq("promo_key", campaign.promo_key),
+          supabase.from("phonesia_opportunita_inviate").select("cliente_id", { count: "exact", head: true })
+            .eq("cliente_id", recipient.clienteId).neq("promo_key", campaign.promo_key).gte("created_at", cooldownStart),
+          supabase.from("phonesia_whatsapp_campaign_recipients").select("cliente_id", { count: "exact", head: true })
+            .eq("cliente_id", recipient.clienteId).neq("campaign_id", campaign.id).gte("accepted_at", cooldownStart),
         ]);
       if (!cliente?.whatsapp_active) return { eligible: false, reason: "WhatsApp non attivo." };
-      if (!consentCount) return { eligible: false, reason: "Consenso marketing mancante." };
+      if (!hasActiveMarketingConsent(consents ?? [])) return { eligible: false, reason: "Consenso marketing mancante o revocato." };
       if (todayCount) return { eligible: false, reason: "Promo WhatsApp già inviata oggi." };
       if (promoCount) return { eligible: false, reason: "Destinatario già accettato nella campagna." };
+      if (recentLegacyCount || recentCampaignCount) {
+        return { eligible: false, reason: `Altra promo ricevuta negli ultimi ${MARKETING_COOLDOWN_DAYS} giorni.` };
+      }
       return { eligible: true };
     },
     async finish(recipient, result) {

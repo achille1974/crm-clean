@@ -1,6 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
-import { probeQr } from "./qr-health.mjs";
+// Silenzia solo l'avviso MODULE_TYPELESS_PACKAGE_JSON (import di .ts da .mjs), ripetuto
+// a ogni ciclo nel log launchd. Gli altri avvisi restano visibili.
+const originalEmitWarning = process.emitWarning.bind(process);
+process.emitWarning = (warning, ...args) => {
+  const code = typeof args[0] === "object" ? args[0]?.code : args[1];
+  if (code === "MODULE_TYPELESS_PACKAGE_JSON" || String(warning).includes("MODULE_TYPELESS_PACKAGE_JSON")) return;
+  return originalEmitWarning(warning, ...args);
+};
+const { probeQr } = await import("./qr-health.mjs");
 const output = process.env.PHONESIA_QR_MONITOR_DIR || "/Users/archimede/phonesia-diagnostics/qr-monitor";
 fs.mkdirSync(output, { recursive: true, mode: 0o700 });
 const report = await probeQr();

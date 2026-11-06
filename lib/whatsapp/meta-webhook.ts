@@ -102,6 +102,8 @@ export type WhatsappStatusCallback = {
   errorCode: string | null;
   errorTitle: string | null;
   errorMessage: string | null;
+  /** phone_number_id del numero aziendale che ha inviato il messaggio (Phonesia o Beltrami). */
+  businessPhoneNumberId: string | null;
   rawJson: MetaWebhookStatus;
 };
 
@@ -243,6 +245,7 @@ export function extractStatusCallbacks(payload: MetaWebhookPayload): WhatsappSta
           errorCode: firstError?.code ? String(firstError.code) : null,
           errorTitle: firstError?.title ?? null,
           errorMessage: firstError?.message ?? firstError?.error_data?.details ?? null,
+          businessPhoneNumberId: change.value?.metadata?.phone_number_id ?? null,
           rawJson: item,
         });
       }

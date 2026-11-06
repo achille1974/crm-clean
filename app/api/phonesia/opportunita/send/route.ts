@@ -14,6 +14,7 @@ import {
   DAILY_WHATSAPP_PROMO_SKIP_REASON,
   type PromoOpportunityHistoryRow,
 } from "@/lib/phonesia/opportunita-promo-history";
+import { hasActiveMarketingConsent } from "@/lib/phonesia/messaging-hygiene";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -1593,11 +1594,9 @@ export async function POST(request: NextRequest) {
         .maybeSingle(),
       supabase
         .from("phonesia_consensi")
-        .select("id")
+        .select("id, tipo_evento, created_at")
         .eq("cliente_id", clienteId)
-        .eq("tipo_evento", "marketing_accepted")
-        .limit(1)
-        .maybeSingle(),
+        .in("tipo_evento", ["marketing_accepted", "marketing_revoked"]),
       supabase
         .from("phonesia_contratti")
         .select("negozio_id, data_stipula, created_at")
@@ -1673,7 +1672,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!marketingConsentData) {
+    if (!hasActiveMarketingConsent(marketingConsentData ?? [])) {
       return NextResponse.json(
         {
           ok: false,

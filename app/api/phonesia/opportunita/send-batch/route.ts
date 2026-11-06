@@ -24,6 +24,7 @@ import {
   resolvePromoReference,
   type PromoCampaignReference,
 } from "@/lib/phonesia/promo-reference";
+import { hasActiveMarketingConsent } from "@/lib/phonesia/messaging-hygiene";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -94,7 +95,10 @@ type SendResultRow = {
 };
 
 type MarketingRow = {
+  id: number | null;
   cliente_id: number | null;
+  tipo_evento: string;
+  created_at: string | null;
 };
 
 type AlreadySentRow = {
@@ -1758,8 +1762,8 @@ export async function POST(request: NextRequest) {
         .in("id", clienteIds),
       supabase
         .from("phonesia_consensi")
-        .select("cliente_id")
-        .eq("tipo_evento", "marketing_accepted")
+        .select("id, cliente_id, tipo_evento, created_at")
+        .in("tipo_evento", ["marketing_accepted", "marketing_revoked"])
         .in("cliente_id", clienteIds),
       supabase
         .from("phonesia_contratti")
@@ -1830,10 +1834,16 @@ export async function POST(request: NextRequest) {
       clientiMap.set(cliente.id, cliente);
     }
 
+    const consentsByCliente = new Map<number, MarketingRow[]>();
+    for (const row of marketingData) {
+      const id = Number(row.cliente_id);
+      if (!Number.isFinite(id)) continue;
+      consentsByCliente.set(id, [...(consentsByCliente.get(id) ?? []), row]);
+    }
     const marketingIds = new Set<number>(
-      marketingData
-        .map((row) => Number(row.cliente_id))
-        .filter((value): value is number => Number.isFinite(value)),
+      [...consentsByCliente.entries()]
+        .filter(([, events]) => hasActiveMarketingConsent(events))
+        .map(([id]) => id),
     );
 
     const contrattiByCliente = new Map<number, ContrattoRow[]>();

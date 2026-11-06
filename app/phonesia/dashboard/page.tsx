@@ -26,6 +26,13 @@ const CARDS = [
       "Controlla invii, costi, errori Meta e risposte generate dalle campagne.",
   },
   {
+    href: "/phonesia/dashboard/esclusi",
+    badge: "WhatsApp",
+    title: "Esclusi dagli invii",
+    description:
+      "Clienti con consenso revocato (STOP o blocco Meta) e numeri sospesi perché non raggiungibili su WhatsApp.",
+  },
+  {
     href: "/phonesia/dashboard/richieste",
     badge: "AI Agent",
     title: "Richieste clienti da gestire",

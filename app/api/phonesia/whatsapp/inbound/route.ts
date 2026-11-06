@@ -19,6 +19,11 @@ import {
   updateHandoffNotification,
   type CreateHandoffRequestResult,
 } from "@/lib/handoff/create-request";
+import {
+  classifyDeliveryFailure,
+  isStopRequest,
+  shouldSuspendUndeliverable,
+} from "@/lib/phonesia/messaging-hygiene";
 
 const GRAPH_API_VERSION = process.env.WHATSAPP_GRAPH_API_VERSION || "v23.0";
 const WHATSAPP_ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN;
@@ -702,6 +707,84 @@ async function saveWhatsappStatusCallbacks(
   }
 }
 
+
+// --- Igiene invii: opt-out Meta (131050), numeri non raggiungibili (131026), STOP ---
+
+function isPhonesiaBusinessNumber(phoneNumberId: string | null | undefined) {
+  return Boolean(phoneNumberId && WHATSAPP_PHONE_NUMBER_ID && phoneNumberId === WHATSAPP_PHONE_NUMBER_ID);
+}
+
+async function revokeMarketingConsent(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  cliente: ClienteRow,
+  telefono: string,
+  metodo: "meta_131050" | "whatsapp_stop",
+  descrizione: string,
+) {
+  const { data: last } = await supabase
+    .from("phonesia_consensi")
+    .select("tipo_evento")
+    .eq("cliente_id", cliente.id)
+    .in("tipo_evento", ["marketing_accepted", "marketing_revoked"])
+    .order("created_at", { ascending: false })
+    .limit(1);
+  const alreadyRevoked = last?.[0]?.tipo_evento === "marketing_revoked";
+
+  if (!alreadyRevoked) {
+    const { error } = await supabase.from("phonesia_consensi").insert({
+      cliente_id: cliente.id,
+      tipo_evento: "marketing_revoked",
+      metodo,
+      negozio_id: cliente.negozio_id ?? null,
+    });
+    if (error) console.error("Revoca consenso marketing non salvata:", error.message);
+  }
+  if (cliente.whatsapp_active !== false) {
+    const { error } = await supabase.from("phonesia_clienti").update({ whatsapp_active: false }).eq("id", cliente.id);
+    if (error) console.error("Disattivazione WhatsApp non salvata:", error.message);
+  }
+  if (!alreadyRevoked || cliente.whatsapp_active !== false) {
+    await logOperazione(supabase, { clienteId: cliente.id, telefono, descrizione, origine: "whatsapp_optout" });
+  }
+}
+
+async function applyDeliveryHygiene(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  statuses: WhatsappStatusCallback[],
+) {
+  for (const item of statuses) {
+    if (!isPhonesiaBusinessNumber(item.businessPhoneNumberId) || !item.recipientPhone) continue;
+    const kind = classifyDeliveryFailure(item.status, item.errorCode);
+    if (!kind) continue;
+    const cliente = await findClienteByWhatsAppNumber(supabase, item.recipientPhone);
+    if (!cliente) continue;
+
+    if (kind === "marketing_opt_out") {
+      await revokeMarketingConsent(supabase, cliente, item.recipientPhone, "meta_131050",
+        "Meta 131050: il cliente ha bloccato i messaggi marketing Phonesia. Consenso marketing revocato, WhatsApp disattivato.");
+      continue;
+    }
+
+    if (cliente.whatsapp_active === false) continue;
+    const { data: recent, error } = await supabase
+      .from("phonesia_whatsapp_message_statuses")
+      .select("status,error_code,timestamp_meta")
+      .eq("recipient_phone", item.recipientPhone)
+      .in("status", ["failed", "delivered", "read"])
+      .order("timestamp_meta", { ascending: false })
+      .limit(5);
+    if (error) { console.error("Storico consegne non leggibile:", error.message); continue; }
+    if (shouldSuspendUndeliverable(recent ?? [])) {
+      const { error: updateError } = await supabase.from("phonesia_clienti").update({ whatsapp_active: false }).eq("id", cliente.id);
+      if (updateError) { console.error("Sospensione numero non salvata:", updateError.message); continue; }
+      await logOperazione(supabase, {
+        clienteId: cliente.id, telefono: item.recipientPhone, origine: "whatsapp_sospeso",
+        descrizione: "Meta 131026 ripetuto: numero non raggiungibile su WhatsApp. Invii sospesi; si riattiva se il cliente scrive OK.",
+      });
+    }
+  }
+}
+
 async function askPhonesiaAgent(params: {
   origin: string;
   telefono: string;
@@ -1264,6 +1347,11 @@ export async function POST(request: Request) {
     if (statusCallbacks.length > 0) {
       try {
         await saveWhatsappStatusCallbacks(supabase, statusCallbacks);
+        try {
+          await applyDeliveryHygiene(supabase, statusCallbacks);
+        } catch (hygieneError) {
+          console.error("Errore gestione opt-out/numeri non raggiungibili:", hygieneError);
+        }
         console.log("WA META STATUS CALLBACKS SAVED:", {
           count: statusCallbacks.length,
           statuses: Array.from(new Set(statusCallbacks.map((item) => item.status))),
@@ -1327,6 +1415,21 @@ export async function POST(request: Request) {
         });
       } else {
         console.log("Cliente non trovato per WhatsApp inbound:", telefono);
+      }
+
+      if (cliente && isStopRequest(bodyOriginal) &&
+          (!inbound.crmPhoneNumberId || isPhonesiaBusinessNumber(inbound.crmPhoneNumberId))) {
+        await revokeMarketingConsent(supabase, cliente, telefono, "whatsapp_stop",
+          `Richiesta STOP via WhatsApp: "${truncateText(bodyOriginal, 80)}". Consenso marketing revocato.`);
+        try {
+          await sendWhatsAppText({
+            to: telefono,
+            body: "Fatto 😊 Non riceverai più promozioni da Phonesia. Per assistenza puoi sempre scriverci qui.",
+          });
+        } catch (stopReplyError) {
+          console.error("Conferma STOP non inviata:", stopReplyError);
+        }
+        continue;
       }
 
       if (bodyCommand === "OK" || bodyCommand === "OK.") {
