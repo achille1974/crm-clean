@@ -1,4 +1,5 @@
 import { isServizioAttivo, isServizioDaVerificare } from "@/lib/phonesia/service-state";
+import { authorizePhonesiaAgentApi } from "@/lib/phonesia/api-auth";
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
@@ -1473,15 +1474,8 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const sharedSecret = process.env.PHONESIA_AGENT_SHARED_SECRET;
-    const requestSecret = request.headers.get("x-phonesia-secret");
-
-    if (sharedSecret && requestSecret !== sharedSecret) {
-      return NextResponse.json(
-        { ok: false, error: "unauthorized" },
-        { status: 401 },
-      );
-    }
+    const auth = await authorizePhonesiaAgentApi(request);
+    if (!auth.ok) return auth.response;
 
     const body = (await request.json()) as AgentRequestBody;
 

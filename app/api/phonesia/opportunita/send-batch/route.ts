@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unused-vars -- legacy sender helpers kept for payload parity while the persistent worker rollout is pending */
+import { authorizePhonesiaAdminApi } from "@/lib/phonesia/api-auth";
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import {
@@ -1465,6 +1466,8 @@ async function logMetaTemplateFailure(
 }
 
 export async function POST(request: NextRequest) {
+  const auth = await authorizePhonesiaAdminApi();
+  if (!auth.ok) return auth.response;
   if (process.env.PHONESIA_BATCH_WORKER_ENABLED !== "true") {
     return NextResponse.json(
       { ok: false, error: "batch_worker_disabled", message: "Invio WhatsApp batch temporaneamente sospeso. Nessuna campagna è stata accodata." },

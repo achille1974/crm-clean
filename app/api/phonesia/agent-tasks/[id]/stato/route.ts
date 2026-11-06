@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { authorizePhonesiaAdminApi } from "@/lib/phonesia/api-auth";
 import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
@@ -106,6 +107,8 @@ function updateConversationMetadataStatus(
 }
 
 export async function PATCH(request: NextRequest, context: RouteContext) {
+  const auth = await authorizePhonesiaAdminApi();
+  if (!auth.ok) return auth.response;
   try {
     const { id } = await resolveParams(context);
     const taskId = Number(id);

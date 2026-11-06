@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { authorizePhonesiaAdminApi } from "@/lib/phonesia/api-auth";
 import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
@@ -35,6 +36,8 @@ function isAllowedContentType(contentType: string): boolean {
 }
 
 export async function POST(request: NextRequest) {
+  const auth = await authorizePhonesiaAdminApi();
+  if (!auth.ok) return auth.response;
   try {
     const body = (await request.json()) as {
       fileName?: string;

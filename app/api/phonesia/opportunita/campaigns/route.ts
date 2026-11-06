@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { authorizePhonesiaAdminApi } from "@/lib/phonesia/api-auth";
 import { createClient } from "@supabase/supabase-js";
 
 type SnapshotRecipient = {
@@ -30,6 +31,8 @@ function validRecipient(value: unknown): value is SnapshotRecipient {
 }
 
 export async function POST(request: NextRequest) {
+  const auth = await authorizePhonesiaAdminApi();
+  if (!auth.ok) return auth.response;
   if (process.env.PHONESIA_BATCH_WORKER_ENABLED !== "true") {
     return NextResponse.json(
       { ok: false, error: "batch_worker_disabled", message: "Invio WhatsApp batch temporaneamente sospeso. Nessuna campagna è stata accodata." },
