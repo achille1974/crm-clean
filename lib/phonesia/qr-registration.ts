@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 import { isIP } from "node:net";
 import { qrAllowedOrigins } from "./qr-origins.ts";
+import { parseRegistrationSource } from "./ctwa.ts";
 
 export class QrRequestError extends Error {
   readonly status: number;
@@ -18,6 +19,8 @@ export type QrRegistration = {
   codiceFiscale: string;
   negozioId: number;
   marketingAccepted: boolean;
+  /** Origine della registrazione (es. "ctwa"); null = QR in negozio come oggi. */
+  src: string | null;
 };
 
 export function parseQrRegistration(body: unknown): QrRegistration {
@@ -53,7 +56,8 @@ export function parseQrRegistration(body: unknown): QrRegistration {
   if (value.privacy_accepted !== true || typeof value.marketing_accepted !== "boolean") {
     throw new QrRequestError("Conferma la lettura dell’informativa privacy.");
   }
-  return { nome, cognome, telefono: `+39${telefono}`, email, codiceFiscale, negozioId, marketingAccepted: value.marketing_accepted };
+  return { nome, cognome, telefono: `+39${telefono}`, email, codiceFiscale, negozioId, marketingAccepted: value.marketing_accepted,
+    src: parseRegistrationSource(value.src) };
 }
 
 type QrEnvironment = {

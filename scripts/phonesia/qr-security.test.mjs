@@ -126,3 +126,11 @@ test("body size cap applies even without Content-Length", async () => {
   await assert.rejects(readQrJson(request({}, JSON.stringify({ value: "x".repeat(9000) }))), status(413));
   await assert.rejects(readQrJson(request({ "content-length": "9000" })), status(413));
 });
+
+test("registration source is optional and only short slugs are kept", () => {
+  assert.equal(parseQrRegistration(valid).src, null);
+  assert.equal(parseQrRegistration({ ...valid, src: "ctwa" }).src, "ctwa");
+  for (const src of ["CTWA", "x".repeat(33), "a b", "<x>", 7, null]) {
+    assert.equal(parseQrRegistration({ ...valid, src }).src, null);
+  }
+});

@@ -72,6 +72,12 @@ export async function POST(request: Request) {
     if (data.status === "created") {
       const clienteId = Number(data.cliente_id);
       if (!Number.isSafeInteger(clienteId) || clienteId <= 0) throw new Error("Invalid registration result");
+      if (registration.src) {
+        // Facoltativo: un errore qui non deve mai far fallire una registrazione già salvata.
+        const { error: srcError } = await supabase.from("phonesia_clienti")
+          .update({ origine_registrazione: registration.src }).eq("id", clienteId);
+        if (srcError) console.error(JSON.stringify({ event: "phonesia_qr_registration_source", request_id: requestId, code: srcError.code }));
+      }
       after(async () => {
         try { await sendPhonesiaWelcome(clienteId); }
         catch { console.error("Phonesia QR welcome delivery failed; registration is saved"); }

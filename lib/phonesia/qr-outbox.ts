@@ -4,6 +4,7 @@ export const QR_PENDING_LIMIT = 100;
 export type QrSubmission = {
   nome: string; cognome: string; telefono: string; email: string; codice_fiscale: string;
   negozio_id: number; privacy_accepted: boolean; marketing_accepted: boolean;
+  src?: string;
 };
 export type PendingQr = {
   id: string; storeId: number; createdAt: number; expiresAt: number;

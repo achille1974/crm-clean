@@ -18,8 +18,10 @@ const NEGOZI: Record<number, string> = {
 
 export default function QrForm({
   negozioId,
+  src = null,
 }: {
   negozioId: number;
+  src?: string | null;
 }) {
   const nomeNegozio = NEGOZI[negozioId] || "Negozio";
 
@@ -131,6 +133,7 @@ export default function QrForm({
       telefono: String(data.get("telefono") || "").trim(), email: String(data.get("email") || "").trim(),
       codice_fiscale: String(data.get("codice_fiscale") || "").trim(), negozio_id: negozioId,
       privacy_accepted: privacyAccepted, marketing_accepted: marketingAccepted,
+      ...(src ? { src } : {}),
     };
     busy.current = true; setLoading(true); setNotice("");
     try {

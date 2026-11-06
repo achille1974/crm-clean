@@ -2,6 +2,7 @@
 
 import { useSearchParams } from "next/navigation";
 import QrForm from "@/components/phonesia/qr/QrForm";
+import { parseRegistrationSource } from "@/lib/phonesia/ctwa";
 
 export default function QrClient() {
   const searchParams = useSearchParams();
@@ -25,5 +26,8 @@ export default function QrClient() {
     );
   }
 
-  return <QrForm negozioId={negozioId} />;
+  // Origine facoltativa (es. src=ctwa dagli annunci WhatsApp); valori non validi ignorati.
+  const src = parseRegistrationSource(searchParams.get("src"));
+
+  return <QrForm negozioId={negozioId} src={src} />;
 }

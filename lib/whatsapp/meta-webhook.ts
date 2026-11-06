@@ -18,6 +18,15 @@ type MetaWebhookMessage = {
     id?: string;
     from?: string;
   };
+  // Presente quando il cliente arriva da un annuncio "clic su WhatsApp".
+  referral?: {
+    source_type?: string;
+    source_id?: string;
+    source_url?: string;
+    headline?: string;
+    body?: string;
+    ctwa_clid?: string;
+  };
 };
 
 type MetaWebhookStatusName = "sent" | "delivered" | "read" | "failed";

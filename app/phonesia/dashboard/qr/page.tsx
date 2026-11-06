@@ -1,5 +1,6 @@
 import { formatRomeTime, romeDayStart, romeDate, shiftDate } from "@/lib/phonesia/rome-time";
 import Link from "next/link";
+import CtwaStats from "@/components/phonesia/dashboard/CtwaStats";
 import { createClient } from "@supabase/supabase-js";
 
 export const dynamic = "force-dynamic";
@@ -246,6 +247,8 @@ export default async function DashboardQrPage() {
             success={whatsappRate >= 80}
           />
         </section>
+
+        <CtwaStats supabase={supabase} />
 
         <section className="grid gap-4 md:grid-cols-3">
           {storeStats.map((store) => (

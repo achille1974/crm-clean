@@ -12,8 +12,10 @@ import {
   extractStatusCallbacks,
   verifyMetaWebhookRequest,
   type MetaWebhookPayload,
+  type WhatsappInboundMessage,
   type WhatsappStatusCallback,
 } from "@/lib/whatsapp/meta-webhook";
+import { CTWA_STORES, detectCtwaArrival, planCtwaResponse } from "@/lib/phonesia/ctwa";
 import {
   createHandoffRequest,
   markHandoffNotificationFailed,
@@ -1334,6 +1336,107 @@ async function notifyStoreIfNeeded(params: {
   }
 }
 
+// --- Arrivi da annuncio "clic su WhatsApp" (CTWA) ---
+// Risposta di testo libero nella finestra di servizio aperta dal cliente: nessun template,
+// nessun invio a chi non ha scritto per primo. True = messaggio gestito qui.
+async function handleCtwaArrival(params: {
+  supabase: ReturnType<typeof getSupabaseAdmin>;
+  inbound: WhatsappInboundMessage;
+  cliente: ClienteRow | null;
+}): Promise<boolean> {
+  const { supabase, inbound, cliente } = params;
+  if (inbound.crmPhoneNumberId && !isPhonesiaBusinessNumber(inbound.crmPhoneNumberId)) return false;
+  if (isStopRequest(inbound.body)) return false;
+  const arrival = detectCtwaArrival({ body: inbound.body, referral: inbound.rawMessage.referral });
+  if (!arrival) return false;
+
+  const digits = normalizePhoneForMeta(inbound.waId);
+  if (!digits || !inbound.messageId) return false;
+  const telefono = `+${digits}`;
+
+  // wa_message_id univoco: un retry del webhook Meta non produce una seconda risposta.
+  const { data: inserted, error: insertError } = await supabase
+    .from("phonesia_ctwa_arrivi")
+    .upsert({
+      telefono,
+      negozio_id: arrival.negozioId,
+      via: arrival.via,
+      negozio_non_determinato: arrival.negozioNonDeterminato,
+      source_type: arrival.sourceType,
+      source_id: arrival.sourceId,
+      ctwa_clid: arrival.ctwaClid,
+      headline: arrival.headline,
+      wa_message_id: inbound.messageId,
+      cliente_id: cliente?.id ?? null,
+    }, { onConflict: "wa_message_id", ignoreDuplicates: true })
+    .select("id");
+  if (insertError) {
+    console.error("CTWA: arrivo non salvato, gestione ordinaria del messaggio.", insertError.message);
+    return false;
+  }
+  const arrivoId = inserted?.[0]?.id;
+  if (!arrivoId) return true;
+
+  const { data: previous, error: previousError } = await supabase
+    .from("phonesia_ctwa_arrivi")
+    .select("risposta_inviata_at")
+    .eq("telefono", telefono)
+    .neq("id", arrivoId)
+    .not("risposta_inviata_at", "is", null)
+    .order("risposta_inviata_at", { ascending: false })
+    .limit(1);
+  if (previousError) {
+    // Nel dubbio non rispondere: meglio una risposta in meno che un doppio invio.
+    await supabase.from("phonesia_ctwa_arrivi")
+      .update({ risposta: "errore", errore: truncateText(`storico non leggibile: ${previousError.message}`, 500) })
+      .eq("id", arrivoId);
+    return true;
+  }
+
+  const plan = planCtwaResponse({
+    arrival,
+    isStop: false,
+    isCliente: Boolean(cliente),
+    clienteNegozioId: cliente?.negozio_id,
+    lastReplyAt: previous?.[0]?.risposta_inviata_at,
+    now: new Date(),
+    baseUrl: process.env.NEXT_PUBLIC_BASE_URL || BASE_URL,
+  });
+
+  console.log("WA PHONESIA CTWA:", {
+    arrivoId, negozioId: arrival.negozioId, via: arrival.via,
+    nonDeterminato: arrival.negozioNonDeterminato, action: plan.action,
+  });
+
+  if (plan.action !== "reply") {
+    await supabase.from("phonesia_ctwa_arrivi").update({ risposta: "saltata_24h" }).eq("id", arrivoId);
+    return true;
+  }
+
+  try {
+    await sendWhatsAppText({ to: digits, body: plan.text });
+    await supabase.from("phonesia_ctwa_arrivi")
+      .update({ risposta: plan.kind, risposta_inviata_at: new Date().toISOString() })
+      .eq("id", arrivoId);
+  } catch (sendError) {
+    console.error("CTWA: risposta automatica non inviata:", sendError);
+    await supabase.from("phonesia_ctwa_arrivi")
+      .update({ risposta: "errore", errore: truncateText(String(sendError instanceof Error ? sendError.message : sendError), 500) })
+      .eq("id", arrivoId);
+  }
+
+  if (cliente) {
+    await logOperazione(supabase, {
+      clienteId: cliente.id,
+      telefono: inbound.waId,
+      descrizione: `Arrivo da annuncio WhatsApp (${CTWA_STORES[arrival.negozioId]}): ${truncateText(inbound.body, 200)}`,
+      origine: "whatsapp_ctwa",
+      messageId: inbound.messageId,
+    });
+  }
+  return true;
+}
+
 export async function GET(request: Request) {
   return verifyMetaWebhookRequest(request);
 }
@@ -1396,6 +1499,11 @@ export async function POST(request: Request) {
       });
 
       const cliente = await findClienteByWhatsAppNumber(supabase, telefono);
+
+      // Arrivi da annuncio Phonesia "clic su WhatsApp": gestiti prima del routing Beltrami.
+      if (await handleCtwaArrival({ supabase, inbound, cliente })) {
+        continue;
+      }
 
       const beltramiRouting = await routeBeltramiInbound({
         waId: telefono,
